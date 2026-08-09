@@ -1,0 +1,19 @@
+# Rust build output
+/target/
+Cargo.lock
+
+# macOS System Files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Game ROMs & Saves
+*.gb
+*.gbc
+*.gba
+*.sav
+
+# IDE & Editor files
+.vscode/
+.idea/
