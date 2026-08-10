@@ -1,4 +1,5 @@
 pub mod cpu;
+pub mod joypad;
 pub mod mmu;
 pub mod ppu;
 
@@ -30,10 +31,14 @@ impl GbcCore {
         }
     }
 
-    /// Load raw ROM byte buffer into memory bus.
+    /// Load raw ROM byte buffer into memory bus and reset core state.
     pub fn load_rom(&mut self, rom_bytes: &[u8]) {
-        info!("Loaded {} bytes into GBC MMU.", rom_bytes.len());
-        self.mmu.load_rom(rom_bytes);
+        info!("Loaded {} bytes into GBC MMU. Resetting CPU, PPU, and Memory state.", rom_bytes.len());
+        self.cpu = Cpu::new();
+        self.ppu = Ppu::new();
+        let mut new_mmu = MemoryBus::new();
+        new_mmu.load_rom(rom_bytes);
+        self.mmu = new_mmu;
     }
 
     /// Load a .gb / .gbc ROM file from disk into memory.
@@ -68,6 +73,7 @@ impl EmulatorCore for GbcCore {
 
     fn handle_input(&mut self, button: Button, pressed: bool) {
         info!("GBC Input: {:?} -> {}", button, if pressed { "Pressed" } else { "Released" });
+        self.mmu.joypad.handle_input(button, pressed);
     }
 
     fn audio_buffer(&mut self) -> Vec<f32> {

@@ -1,3 +1,5 @@
+use super::joypad::Joypad;
+
 /// MemoryBus handles the 64 KB Game Boy memory map routing.
 ///
 /// Memory Map Layout:
@@ -21,6 +23,7 @@ pub struct MemoryBus {
     io: [u8; 0x80],
     hram: [u8; 0x7F],
     ie: u8,
+    pub joypad: Joypad,
 }
 
 #[allow(dead_code)]
@@ -36,6 +39,7 @@ impl MemoryBus {
             io: [0; 0x80],
             hram: [0; 0x7F],
             ie: 0,
+            joypad: Joypad::new(),
         };
 
         // DMG default PPU register values post-boot
@@ -66,7 +70,8 @@ impl MemoryBus {
             0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize], // Echo RAM
             0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize],
             0xFEA0..=0xFEFF => 0x00, // Reserved / Unusable
-            0xFF00..=0xFF7F => self.io[(addr - 0xFF00) as usize],
+            0xFF00 => self.joypad.read_joyp(),
+            0xFF01..=0xFF7F => self.io[(addr - 0xFF00) as usize],
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie,
         }
@@ -84,11 +89,12 @@ impl MemoryBus {
             0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize] = val, // Echo RAM
             0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize] = val,
             0xFEA0..=0xFEFF => {} // Reserved / Unusable
+            0xFF00 => self.joypad.write_joyp(val),
             0xFF44 => {
                 // Any write to LY (0xFF44) resets it to 0
                 self.io[0x44] = 0;
             }
-            0xFF00..=0xFF7F => self.io[(addr - 0xFF00) as usize] = val,
+            0xFF01..=0xFF7F => self.io[(addr - 0xFF00) as usize] = val,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
             0xFFFF => self.ie = val,
         }
@@ -100,3 +106,31 @@ impl Default for MemoryBus {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_memory_bus_read_write() {
+        let mut bus = MemoryBus::new();
+        bus.write_byte(0xC000, 0x42);
+        assert_eq!(bus.read_byte(0xC000), 0x42);
+        // Echo RAM mirror
+        assert_eq!(bus.read_byte(0xE000), 0x42);
+
+        // LY reset on write
+        bus.write_byte(0xFF44, 0x12);
+        assert_eq!(bus.read_byte(0xFF44), 0);
+    }
+
+    #[test]
+    fn test_rom_loading() {
+        let mut bus = MemoryBus::new();
+        let rom = vec![0x00, 0xC3, 0x50, 0x01];
+        bus.load_rom(&rom);
+        assert_eq!(bus.read_byte(0x0000), 0x00);
+        assert_eq!(bus.read_byte(0x0001), 0xC3);
+    }
+}
+

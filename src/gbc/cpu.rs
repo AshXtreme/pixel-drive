@@ -312,3 +312,36 @@ impl Default for Cpu {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_register_pairs() {
+        let mut reg = Registers::new();
+        reg.set_bc(0x1234);
+        assert_eq!(reg.b, 0x12);
+        assert_eq!(reg.c, 0x34);
+        assert_eq!(reg.bc(), 0x1234);
+
+        reg.set_af(0xFFF0);
+        assert_eq!(reg.a, 0xFF);
+        assert_eq!(reg.f, 0xF0);
+        assert_eq!(reg.af(), 0xFFF0);
+    }
+
+    #[test]
+    fn test_cpu_xor_a() {
+        let mut cpu = Cpu::new();
+        let mut bus = MemoryBus::new();
+        bus.load_rom(&[0xAF]); // XOR A opcode
+        cpu.registers.pc = 0x0000;
+
+        let cycles = cpu.step(&mut bus);
+        assert_eq!(cycles, 4);
+        assert_eq!(cpu.registers.a, 0x00);
+        assert!(cpu.registers.flag_z());
+    }
+}
+
