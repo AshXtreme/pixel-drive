@@ -25,9 +25,9 @@ pub struct MemoryBus {
 
 #[allow(dead_code)]
 impl MemoryBus {
-    /// Creates a new, zero-initialized `MemoryBus`.
+    /// Creates a new `MemoryBus` with DMG hardware register defaults.
     pub fn new() -> Self {
-        Self {
+        let mut bus = Self {
             rom: Vec::new(),
             vram: [0; 0x2000],
             ext_ram: [0; 0x2000],
@@ -36,7 +36,12 @@ impl MemoryBus {
             io: [0; 0x80],
             hram: [0; 0x7F],
             ie: 0,
-        }
+        };
+
+        // DMG default PPU register values post-boot
+        bus.io[0x40] = 0x91; // LCDC: LCD on, BG on, Tile map 0x9800, Tile data 0x8000
+        bus.io[0x47] = 0xE4; // BGP: Standard shade palette (11 10 01 00)
+        bus
     }
 
     /// Populates ROM memory space from a raw byte buffer.
@@ -79,6 +84,10 @@ impl MemoryBus {
             0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize] = val, // Echo RAM
             0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize] = val,
             0xFEA0..=0xFEFF => {} // Reserved / Unusable
+            0xFF44 => {
+                // Any write to LY (0xFF44) resets it to 0
+                self.io[0x44] = 0;
+            }
             0xFF00..=0xFF7F => self.io[(addr - 0xFF00) as usize] = val,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
             0xFFFF => self.ie = val,

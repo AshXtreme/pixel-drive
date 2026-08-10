@@ -1,10 +1,12 @@
 pub mod cpu;
 pub mod mmu;
+pub mod ppu;
 
 use crate::core::{Button, EmulatorCore};
 use cpu::Cpu;
 use log::info;
 use mmu::MemoryBus;
+use ppu::Ppu;
 use std::path::Path;
 
 pub const GBC_WIDTH: u32 = 160;
@@ -14,21 +16,18 @@ pub const GBC_CYCLES_PER_FRAME: u32 = 70_224; // 4.194304 MHz / ~59.73 FPS
 pub struct GbcCore {
     pub cpu: Cpu,
     pub mmu: MemoryBus,
-    framebuffer: Vec<u8>,
+    pub ppu: Ppu,
     frame_count: u32,
 }
 
 impl GbcCore {
     pub fn new() -> Self {
-        let size = (GBC_WIDTH * GBC_HEIGHT * 4) as usize;
-        let mut core = Self {
+        Self {
             cpu: Cpu::new(),
             mmu: MemoryBus::new(),
-            framebuffer: vec![0; size],
+            ppu: Ppu::new(),
             frame_count: 0,
-        };
-        core.update_test_pattern();
-        core
+        }
     }
 
     /// Load raw ROM byte buffer into memory bus.
@@ -45,23 +44,6 @@ impl GbcCore {
         self.load_rom(&bytes);
         Ok(())
     }
-
-    fn update_test_pattern(&mut self) {
-        let t = self.frame_count as f32 * 0.05;
-        for y in 0..GBC_HEIGHT {
-            for x in 0..GBC_WIDTH {
-                let idx = ((y * GBC_WIDTH + x) * 4) as usize;
-                let r = ((x as f32 * 0.1 + t).sin() * 127.0 + 128.0) as u8;
-                let g = ((y as f32 * 0.1 + t * 1.5).cos() * 127.0 + 128.0) as u8;
-                let b = (((x + y) as f32 * 0.05 + t * 2.0).sin() * 127.0 + 128.0) as u8;
-
-                self.framebuffer[idx] = r;
-                self.framebuffer[idx + 1] = g;
-                self.framebuffer[idx + 2] = b;
-                self.framebuffer[idx + 3] = 255;
-            }
-        }
-    }
 }
 
 impl EmulatorCore for GbcCore {
@@ -71,14 +53,13 @@ impl EmulatorCore for GbcCore {
         let mut cycles_this_frame: u32 = 0;
         while cycles_this_frame < GBC_CYCLES_PER_FRAME {
             let cycles = self.cpu.step(&mut self.mmu);
+            self.ppu.step(cycles, &mut self.mmu);
             cycles_this_frame = cycles_this_frame.saturating_add(cycles as u32);
         }
-
-        self.update_test_pattern();
     }
 
     fn framebuffer(&self) -> &[u8] {
-        &self.framebuffer
+        self.ppu.framebuffer()
     }
 
     fn display_dimensions(&self) -> (u32, u32) {
