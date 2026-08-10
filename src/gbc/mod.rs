@@ -1,10 +1,19 @@
+pub mod cpu;
+pub mod mmu;
+
 use crate::core::{Button, EmulatorCore};
+use cpu::Cpu;
 use log::info;
+use mmu::MemoryBus;
+use std::path::Path;
 
 pub const GBC_WIDTH: u32 = 160;
 pub const GBC_HEIGHT: u32 = 144;
+pub const GBC_CYCLES_PER_FRAME: u32 = 70_224; // 4.194304 MHz / ~59.73 FPS
 
 pub struct GbcCore {
+    pub cpu: Cpu,
+    pub mmu: MemoryBus,
     framebuffer: Vec<u8>,
     frame_count: u32,
 }
@@ -13,11 +22,28 @@ impl GbcCore {
     pub fn new() -> Self {
         let size = (GBC_WIDTH * GBC_HEIGHT * 4) as usize;
         let mut core = Self {
+            cpu: Cpu::new(),
+            mmu: MemoryBus::new(),
             framebuffer: vec![0; size],
             frame_count: 0,
         };
         core.update_test_pattern();
         core
+    }
+
+    /// Load raw ROM byte buffer into memory bus.
+    pub fn load_rom(&mut self, rom_bytes: &[u8]) {
+        info!("Loaded {} bytes into GBC MMU.", rom_bytes.len());
+        self.mmu.load_rom(rom_bytes);
+    }
+
+    /// Load a .gb / .gbc ROM file from disk into memory.
+    pub fn load_rom_file<P: AsRef<Path>>(&mut self, path: P) -> std::io::Result<()> {
+        let path_ref = path.as_ref();
+        info!("Loading ROM file into GBC Core: {}", path_ref.display());
+        let bytes = std::fs::read(path_ref)?;
+        self.load_rom(&bytes);
+        Ok(())
     }
 
     fn update_test_pattern(&mut self) {
@@ -41,6 +67,13 @@ impl GbcCore {
 impl EmulatorCore for GbcCore {
     fn step_frame(&mut self) {
         self.frame_count = self.frame_count.wrapping_add(1);
+
+        let mut cycles_this_frame: u32 = 0;
+        while cycles_this_frame < GBC_CYCLES_PER_FRAME {
+            let cycles = self.cpu.step(&mut self.mmu);
+            cycles_this_frame = cycles_this_frame.saturating_add(cycles as u32);
+        }
+
         self.update_test_pattern();
     }
 
@@ -60,3 +93,5 @@ impl EmulatorCore for GbcCore {
         Vec::new()
     }
 }
+
+

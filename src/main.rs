@@ -66,6 +66,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match ext.to_lowercase().as_str() {
                             "gb" | "gbc" => {
                                 info!("Ingesting Game Boy / GBC ROM: {}", path.display());
+                                if let Err(err) = gbc_core.load_rom_file(&path) {
+                                    warn!("Failed to load ROM file {}: {}", path.display(), err);
+                                }
                             }
                             "gba" => {
                                 info!("Ingesting Game Boy Advance ROM: {}", path.display());
