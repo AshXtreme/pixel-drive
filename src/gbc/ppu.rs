@@ -32,7 +32,7 @@ impl Ppu {
         if !lcd_enable {
             self.scanline_counter = 0;
             self.ly = 0;
-            bus.write_byte(0xFF44, 0);
+            bus.set_ly_direct(0);
             return;
         }
 
@@ -43,8 +43,14 @@ impl Ppu {
             self.scanline_counter -= 456;
             self.ly = (self.ly + 1) % 154;
 
-            // Sync LY register (0xFF44) to MMU memory space
-            bus.write_byte(0xFF44, self.ly);
+            // Sync LY register (0xFF44) to MMU memory space directly
+            bus.set_ly_direct(self.ly);
+
+            // Trigger VBlank interrupt (Bit 0 of IF 0xFF0F) on scanline 144
+            if self.ly == 144 {
+                let if_reg = bus.read_byte(0xFF0F);
+                bus.write_byte(0xFF0F, if_reg | 0x01);
+            }
 
             // Scanlines 0..=143 are active draw lines
             if self.ly < 144 {
@@ -53,42 +59,38 @@ impl Ppu {
         }
     }
 
-    /// Renders a single background tile scanline into the RGBA framebuffer for current LY.
+    /// Renders background, window, and sprite scanlines into RGBA framebuffer for current LY.
     fn render_scanline(&mut self, bus: &MemoryBus) {
         let lcdc = bus.read_byte(0xFF40);
-
-        // Bit 0 of LCDC: BG & Window Display Enable
-        let bg_enable = (lcdc & 0x01) != 0;
-        if !bg_enable {
-            let y = self.ly as usize;
-            for x in 0..SCREEN_WIDTH {
-                let idx = (y * SCREEN_WIDTH + x) * 4;
-                self.framebuffer[idx] = 255;
-                self.framebuffer[idx + 1] = 255;
-                self.framebuffer[idx + 2] = 255;
-                self.framebuffer[idx + 3] = 255;
-            }
-            return;
-        }
-
         let scy = bus.read_byte(0xFF42);
         let scx = bus.read_byte(0xFF43);
+        let wy = bus.read_byte(0xFF4A);
+        let wx = bus.read_byte(0xFF4B);
         let bgp = bus.read_byte(0xFF47);
 
-        // Bit 3 of LCDC: BG Tile Map Display Select (0 = 0x9800, 1 = 0x9C00)
-        let tile_map_base: u16 = if (lcdc & 0x08) != 0 { 0x9C00 } else { 0x9800 };
-
-        // Bit 4 of LCDC: BG & Window Tile Data Select (0 = 0x8800, 1 = 0x8000)
+        let window_enable = (lcdc & 0x20) != 0 && self.ly >= wy && wx <= 166;
+        let bg_tile_map: u16 = if (lcdc & 0x08) != 0 { 0x9C00 } else { 0x9800 };
+        let win_tile_map: u16 = if (lcdc & 0x40) != 0 { 0x9C00 } else { 0x9800 };
         let unsigned_tile_data = (lcdc & 0x10) != 0;
 
         let y = self.ly;
         let bg_y = y.wrapping_add(scy);
-        let tile_row = (bg_y / 8) as u16;
 
+        // Render Background & Window Scanline
         for x in 0..SCREEN_WIDTH {
-            let bg_x = (x as u8).wrapping_add(scx);
-            let tile_col = (bg_x / 8) as u16;
+            let is_window = window_enable && (x as u8 + 7 >= wx);
 
+            let (tile_map_base, render_x, render_y) = if is_window {
+                let win_x = (x as u8 + 7).wrapping_sub(wx);
+                let win_y = y.wrapping_sub(wy);
+                (win_tile_map, win_x, win_y)
+            } else {
+                let bg_x = (x as u8).wrapping_add(scx);
+                (bg_tile_map, bg_x, bg_y)
+            };
+
+            let tile_row = (render_y / 8) as u16;
+            let tile_col = (render_x / 8) as u16;
             let tile_map_addr = tile_map_base + tile_row * 32 + tile_col;
             let tile_index = bus.read_byte(tile_map_addr);
 
@@ -99,24 +101,21 @@ impl Ppu {
                 (0x9000i32 + (signed_index as i32 * 16)) as u16
             };
 
-            let tile_y = (bg_y % 8) as u16;
+            let tile_y = (render_y % 8) as u16;
             let byte1 = bus.read_byte(tile_data_addr + tile_y * 2);
             let byte2 = bus.read_byte(tile_data_addr + tile_y * 2 + 1);
 
-            let bit_idx = 7 - (bg_x % 8);
+            let bit_idx = 7 - (render_x % 8);
             let bit_low = (byte1 >> bit_idx) & 1;
             let bit_high = (byte2 >> bit_idx) & 1;
             let color_id = (bit_high << 1) | bit_low;
 
-            // Map color_id to 2-bit shade using BGP register (0xFF47)
             let shade = (bgp >> (color_id * 2)) & 0x03;
-
-            // Standard Game Boy monochrome shade mapping to RGBA
             let (r, g, b) = match shade {
-                0 => (255, 255, 255), // White
-                1 => (192, 192, 192), // Light Gray
-                2 => (96, 96, 96),   // Dark Gray
-                _ => (0, 0, 0),       // Black
+                0 => (255, 255, 255),
+                1 => (192, 192, 192),
+                2 => (96, 96, 96),
+                _ => (0, 0, 0),
             };
 
             let idx = (y as usize * SCREEN_WIDTH + x) * 4;
@@ -124,6 +123,65 @@ impl Ppu {
             self.framebuffer[idx + 1] = g;
             self.framebuffer[idx + 2] = b;
             self.framebuffer[idx + 3] = 255;
+        }
+
+        // Render Sprites (OBJ)
+        let obj_enable = (lcdc & 0x02) != 0;
+        if obj_enable {
+            let sprite_height: i16 = if (lcdc & 0x04) != 0 { 16 } else { 8 };
+            let obp0 = bus.read_byte(0xFF48);
+            let obp1 = bus.read_byte(0xFF49);
+
+            for i in (0..40).rev() {
+                let oam_addr = 0xFE00 + i * 4;
+                let sprite_y = bus.read_byte(oam_addr) as i16 - 16;
+                let sprite_x = bus.read_byte(oam_addr + 1) as i16 - 8;
+                let tile_idx = bus.read_byte(oam_addr + 2);
+                let flags = bus.read_byte(oam_addr + 3);
+
+                let cur_y = y as i16;
+                if cur_y >= sprite_y && cur_y < sprite_y + sprite_height {
+                    let palette = if (flags & 0x10) != 0 { obp1 } else { obp0 };
+                    let y_flip = (flags & 0x40) != 0;
+                    let x_flip = (flags & 0x20) != 0;
+
+                    let mut line = cur_y - sprite_y;
+                    if y_flip {
+                        line = sprite_height - 1 - line;
+                    }
+
+                    let tile_addr = 0x8000 + (tile_idx as u16) * 16 + (line as u16) * 2;
+                    let byte1 = bus.read_byte(tile_addr);
+                    let byte2 = bus.read_byte(tile_addr + 1);
+
+                    for px in 0..8 {
+                        let target_x = sprite_x + px;
+                        if target_x >= 0 && target_x < SCREEN_WIDTH as i16 {
+                            let bit_idx = if x_flip { px } else { 7 - px };
+                            let bit_low = (byte1 >> bit_idx) & 1;
+                            let bit_high = (byte2 >> bit_idx) & 1;
+                            let color_id = (bit_high << 1) | bit_low;
+
+                            // Color 0 is transparent for Sprites
+                            if color_id != 0 {
+                                let shade = (palette >> (color_id * 2)) & 0x03;
+                                let (r, g, b) = match shade {
+                                    0 => (255, 255, 255),
+                                    1 => (192, 192, 192),
+                                    2 => (96, 96, 96),
+                                    _ => (0, 0, 0),
+                                };
+
+                                let idx = (y as usize * SCREEN_WIDTH + target_x as usize) * 4;
+                                self.framebuffer[idx] = r;
+                                self.framebuffer[idx + 1] = g;
+                                self.framebuffer[idx + 2] = b;
+                                self.framebuffer[idx + 3] = 255;
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

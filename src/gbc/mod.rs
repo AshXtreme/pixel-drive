@@ -1,7 +1,9 @@
 pub mod cpu;
 pub mod joypad;
+pub mod mbc;
 pub mod mmu;
 pub mod ppu;
+pub mod timer;
 
 use crate::core::{Button, EmulatorCore};
 use cpu::Cpu;
@@ -9,6 +11,7 @@ use log::info;
 use mmu::MemoryBus;
 use ppu::Ppu;
 use std::path::Path;
+use timer::Timer;
 
 pub const GBC_WIDTH: u32 = 160;
 pub const GBC_HEIGHT: u32 = 144;
@@ -18,6 +21,7 @@ pub struct GbcCore {
     pub cpu: Cpu,
     pub mmu: MemoryBus,
     pub ppu: Ppu,
+    pub timer: Timer,
     frame_count: u32,
 }
 
@@ -27,25 +31,63 @@ impl GbcCore {
             cpu: Cpu::new(),
             mmu: MemoryBus::new(),
             ppu: Ppu::new(),
+            timer: Timer::new(),
             frame_count: 0,
         }
     }
 
     /// Load raw ROM byte buffer into memory bus and reset core state.
     pub fn load_rom(&mut self, rom_bytes: &[u8]) {
-        info!("Loaded {} bytes into GBC MMU. Resetting CPU, PPU, and Memory state.", rom_bytes.len());
+        info!("Loaded {} bytes into GBC MMU. Resetting CPU, PPU, Timer, and Memory state.", rom_bytes.len());
         self.cpu = Cpu::new();
         self.ppu = Ppu::new();
+        self.timer = Timer::new();
         let mut new_mmu = MemoryBus::new();
         new_mmu.load_rom(rom_bytes);
         self.mmu = new_mmu;
     }
 
-    /// Load a .gb / .gbc ROM file from disk into memory.
+    /// Load a .gb / .gbc or compressed .zip ROM file from disk into memory.
     pub fn load_rom_file<P: AsRef<Path>>(&mut self, path: P) -> std::io::Result<()> {
         let path_ref = path.as_ref();
         info!("Loading ROM file into GBC Core: {}", path_ref.display());
-        let bytes = std::fs::read(path_ref)?;
+
+        let bytes = if path_ref
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.eq_ignore_ascii_case("zip"))
+            .unwrap_or(false)
+        {
+            info!("Extracting ROM from ZIP archive: {}", path_ref.display());
+            let file = std::fs::File::open(path_ref)?;
+            let mut archive = zip::ZipArchive::new(file)?;
+            let mut rom_bytes = None;
+
+            for i in 0..archive.len() {
+                let mut file_entry = archive.by_index(i)?;
+                let name = file_entry.name().to_lowercase();
+                if name.ends_with(".gb") || name.ends_with(".gbc") {
+                    info!("Found ROM entry in ZIP: {}", file_entry.name());
+                    let mut buffer = Vec::new();
+                    std::io::Read::read_to_end(&mut file_entry, &mut buffer)?;
+                    rom_bytes = Some(buffer);
+                    break;
+                }
+            }
+
+            match rom_bytes {
+                Some(b) => b,
+                None => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "No valid .gb or .gbc ROM file found inside ZIP archive",
+                    ));
+                }
+            }
+        } else {
+            std::fs::read(path_ref)?
+        };
+
         self.load_rom(&bytes);
         Ok(())
     }
@@ -58,6 +100,7 @@ impl EmulatorCore for GbcCore {
         let mut cycles_this_frame: u32 = 0;
         while cycles_this_frame < GBC_CYCLES_PER_FRAME {
             let cycles = self.cpu.step(&mut self.mmu);
+            self.timer.step(cycles, &mut self.mmu);
             self.ppu.step(cycles, &mut self.mmu);
             cycles_this_frame = cycles_this_frame.saturating_add(cycles as u32);
         }
@@ -80,5 +123,74 @@ impl EmulatorCore for GbcCore {
         Vec::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use zip::write::SimpleFileOptions;
+
+    #[test]
+    fn test_load_rom_bytes() {
+        let mut core = GbcCore::new();
+        let rom = vec![0x00, 0xAF, 0xC3, 0x00, 0x01];
+        core.load_rom(&rom);
+        assert_eq!(core.mmu.read_byte(0x0000), 0x00);
+        assert_eq!(core.mmu.read_byte(0x0001), 0xAF);
+    }
+
+    #[test]
+    fn test_load_zip_archive() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir();
+        let zip_path = temp_dir.join("test_game.zip");
+
+        {
+            let file = std::fs::File::create(&zip_path)?;
+            let mut zip = zip::ZipWriter::new(file);
+            zip.start_file("game.gbc", SimpleFileOptions::default())?;
+            zip.write_all(&[0x00, 0xAF, 0x00, 0x18])?;
+            zip.finish()?;
+        }
+
+        let mut core = GbcCore::new();
+        core.load_rom_file(&zip_path)?;
+        assert_eq!(core.mmu.read_byte(0x0001), 0xAF);
+
+        let _ = std::fs::remove_file(zip_path);
+        Ok(())
+    }
+
+    #[test]
+    fn test_pokemon_yellow_execution() {
+        let rom_path = "/Users/ashutoshsamal/Downloads/Pokemon - Yellow Version (UE) [C][!].gbc";
+        if !std::path::Path::new(rom_path).exists() {
+            return;
+        }
+
+        let mut core = GbcCore::new();
+        core.load_rom_file(rom_path).unwrap();
+
+        println!("--- INITIAL STATE ---");
+        println!("PC: 0x{:04X}, SP: 0x{:04X}, A: 0x{:02X}", core.cpu.registers.pc, core.cpu.registers.sp, core.cpu.registers.a);
+        println!("Opcodes at 0x0060..0x0075: {:?}", (0x0060..0x0075).map(|a| format!("{:02X}", core.mmu.read_byte(a))).collect::<Vec<_>>());
+
+        // Step 300 frames (5 seconds of real-time execution)
+        for frame in 1..=300 {
+            core.step_frame();
+            if frame % 30 == 0 || frame == 1 {
+                let lcdc = core.mmu.read_byte(0xFF40);
+                let bgp = core.mmu.read_byte(0xFF47);
+                let obp0 = core.mmu.read_byte(0xFF48);
+                let _obp1 = core.mmu.read_byte(0xFF49);
+                let scy = core.mmu.read_byte(0xFF42);
+                let scx = core.mmu.read_byte(0xFF43);
+                let ly = core.mmu.read_byte(0xFF44);
+                let non_white_pixels = core.ppu.framebuffer().chunks(4).filter(|p| p[0] != 255 || p[1] != 255 || p[2] != 255).count();
+                println!("Frame {:03}: PC=0x{:04X}, LCDC=0x{:02X}, BGP=0x{:02X}, OBP0=0x{:02X}, SCX={}, SCY={}, LY={}, non_white={}", frame, core.cpu.registers.pc, lcdc, bgp, obp0, scx, scy, ly, non_white_pixels);
+            }
+        }
+    }
+}
+
 
 

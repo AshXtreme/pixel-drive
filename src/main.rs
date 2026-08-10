@@ -64,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     info!("ROM Drag & Drop detected: {:?}", path);
                     if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                         match ext.to_lowercase().as_str() {
-                            "gb" | "gbc" => {
+                            "gb" | "gbc" | "zip" => {
                                 info!("Ingesting Game Boy / GBC ROM: {}", path.display());
                                 if let Err(err) = gbc_core.load_rom_file(&path) {
                                     warn!("Failed to load ROM file {}: {}", path.display(), err);
