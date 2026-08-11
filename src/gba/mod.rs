@@ -1,7 +1,9 @@
 #![allow(dead_code)]
 
+pub mod arm;
 pub mod cpu;
 pub mod mmu;
+pub mod thumb;
 
 use crate::core::{Button, EmulatorCore};
 pub use cpu::{Cpu, CpuMode};

@@ -383,7 +383,7 @@ impl Cpu {
             let pc = self.regs.r[15] & !1;
             let instr = bus.read_u16(pc);
             self.regs.r[15] = pc.wrapping_add(2);
-            let cycles = self.execute_thumb(instr, bus);
+            let cycles = super::thumb::execute_thumb(&mut self.regs, bus, instr);
             self.cycle_count += cycles;
             cycles
         } else {
@@ -391,74 +391,10 @@ impl Cpu {
             let pc = self.regs.r[15] & !3;
             let instr = bus.read_u32(pc);
             self.regs.r[15] = pc.wrapping_add(4);
-            let cycles = self.execute_arm(instr, bus);
+            let cycles = super::arm::execute_arm(&mut self.regs, bus, instr);
             self.cycle_count += cycles;
             cycles
         }
-    }
-
-    /// Execute 32-bit ARM instruction
-    fn execute_arm(&mut self, instr: u32, _bus: &mut GbaMemoryBus) -> usize {
-        // Check ARM BX (Branch and Exchange): 1110 0001 0010 1111 1111 1111 0001 Rm
-        if (instr & 0x0FFFFFF0) == 0x012FFF10 {
-            let rm = (instr & 0x0F) as usize;
-            let target = self.regs.r[rm];
-            self.branch_and_exchange(target);
-            return 3;
-        }
-
-        // Check ARM Branch (B / BL): 1110 101L offset24
-        if (instr & 0x0E000000) == 0x0A000000 {
-            let is_link = (instr & 0x01000000) != 0;
-            let offset24 = instr & 0x00FFFFFF;
-            // Sign extend 24-bit to 32-bit
-            let sign_extended = if (offset24 & 0x00800000) != 0 {
-                (offset24 | 0xFF000000) as i32
-            } else {
-                offset24 as i32
-            };
-            let branch_offset = (sign_extended << 2) as u32;
-
-            if is_link {
-                self.regs.r[14] = self.regs.r[15].wrapping_sub(4); // Store return address into LR
-            }
-
-            // Target PC = current PC + 4 + offset (pipeline adjustment offset is included)
-            let curr_pc = self.regs.r[15].wrapping_sub(4);
-            self.regs.r[15] = curr_pc.wrapping_add(8).wrapping_add(branch_offset);
-            return 3;
-        }
-
-        // NOP or baseline instruction fallback
-        1
-    }
-
-    /// Execute 16-bit THUMB instruction
-    fn execute_thumb(&mut self, instr: u16, _bus: &mut GbaMemoryBus) -> usize {
-        // Check THUMB BX (Branch and Exchange): 0100 0111 0 H2 Rm[2:0] 000
-        if (instr & 0xFF80) == 0x4700 {
-            let rm = ((instr >> 3) & 0x0F) as usize;
-            let target = self.regs.r[rm];
-            self.branch_and_exchange(target);
-            return 3;
-        }
-
-        // Check THUMB Unconditional Branch: 1110 0 offset11
-        if (instr & 0xF800) == 0xE000 {
-            let offset11 = (instr & 0x07FF) as u16;
-            let sign_extended = if (offset11 & 0x0400) != 0 {
-                (offset11 | 0xF800) as i16
-            } else {
-                offset11 as i16
-            };
-            let branch_offset = (sign_extended << 1) as i32;
-            let curr_pc = self.regs.r[15].wrapping_sub(2);
-            self.regs.r[15] = (curr_pc.wrapping_add(4) as i32).wrapping_add(branch_offset) as u32;
-            return 3;
-        }
-
-        // NOP or baseline instruction fallback
-        1
     }
 }
 
