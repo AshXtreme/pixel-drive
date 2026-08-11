@@ -1,14 +1,17 @@
 #![allow(dead_code)]
 
+pub mod cpu;
 pub mod mmu;
 
 use crate::core::{Button, EmulatorCore};
+pub use cpu::{Cpu, CpuMode};
 use log::info;
 pub use mmu::GbaMemoryBus;
 use std::path::Path;
 
 pub const GBA_WIDTH: u32 = 240;
 pub const GBA_HEIGHT: u32 = 160;
+pub const GBA_CYCLES_PER_FRAME: usize = 280_896; // 16.78 MHz / 59.73 FPS
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GbaHeader {
@@ -59,6 +62,7 @@ impl GbaHeader {
 }
 
 pub struct GbaCore {
+    pub cpu: Cpu,
     pub mmu: GbaMemoryBus,
     framebuffer: Vec<u8>,
     pub header: Option<GbaHeader>,
@@ -73,27 +77,45 @@ impl Default for GbaCore {
 impl GbaCore {
     pub fn new() -> Self {
         let size = (GBA_WIDTH * GBA_HEIGHT * 4) as usize;
-        Self {
+        let mut core = Self {
+            cpu: Cpu::new(),
             mmu: GbaMemoryBus::new(),
             framebuffer: vec![0; size],
             header: None,
-        }
+        };
+        core.reset_boot_state();
+        core
     }
 
-    /// Load raw ROM byte buffer into GBA MMU memory space.
+    /// Reset CPU registers and CPSR flags to hardware default boot state.
+    pub fn reset_boot_state(&mut self) {
+        self.cpu.regs.reset();
+        self.cpu.regs.set_pc(0x08000000); // Game Pak Entry Point
+        self.cpu.regs.set_sp(0x03007F00); // IWRAM Stack Pointer
+        self.cpu.regs.set_mode(CpuMode::System); // Initial System/Supervisor mode
+    }
+
+    /// Load raw ROM byte buffer into GBA MMU memory space and reset CPU boot state.
     pub fn load_rom(&mut self, rom_bytes: &[u8]) {
         self.header = GbaHeader::parse(rom_bytes);
         self.mmu.load_rom(rom_bytes);
+        self.reset_boot_state();
+
         if let Some(ref header) = self.header {
             info!(
-                "Loaded GBA ROM into MMU: '{}' [GameCode: {}, Maker: {}] ({} bytes)",
+                "Loaded GBA ROM into MMU: '{}' [GameCode: {}, Maker: {}] ({} bytes). Initial PC: 0x{:08X}",
                 header.title,
                 header.game_code,
                 header.maker_code,
-                rom_bytes.len()
+                rom_bytes.len(),
+                self.cpu.regs.r[15]
             );
         } else {
-            info!("Loaded raw GBA ROM into MMU ({} bytes)", rom_bytes.len());
+            info!(
+                "Loaded raw GBA ROM into MMU ({} bytes). Initial PC: 0x{:08X}",
+                rom_bytes.len(),
+                self.cpu.regs.r[15]
+            );
         }
     }
 
@@ -152,7 +174,11 @@ impl GbaCore {
 
 impl EmulatorCore for GbaCore {
     fn step_frame(&mut self) {
-        // Placeholder step logic for GBA Core
+        let mut cycles_this_frame = 0;
+        while cycles_this_frame < GBA_CYCLES_PER_FRAME {
+            let cycles = self.cpu.step(&mut self.mmu);
+            cycles_this_frame += cycles;
+        }
     }
 
     fn framebuffer(&self) -> &[u8] {
@@ -180,8 +206,8 @@ mod tests {
 
     fn create_dummy_gba_rom(title: &str, game_code: &str) -> Vec<u8> {
         let mut rom = vec![0u8; 0x1000]; // 4KB dummy ROM
-        // 0x000 - ARM jump instruction dummy
-        rom[0..4].copy_from_slice(&[0x2E, 0x00, 0x00, 0xEA]);
+        // 0x000 - ARM jump instruction dummy (B +0x2E -> offset +0x24)
+        rom[0..4].copy_from_slice(&[0x09, 0x00, 0x00, 0xEA]); // B instruction
         // 0xB2 - GBA Magic byte
         rom[0x0B2] = 0x96;
 
@@ -214,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn test_load_rom_file() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_load_rom_file_and_cpu_boot_state() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir();
         let rom_path = temp_dir.join("test_game.gba");
         let rom_bytes = create_dummy_gba_rom("ZELDA MINISH", "BZME");
@@ -224,7 +250,9 @@ mod tests {
         let header = core.load_rom_file(&rom_path)?;
         assert_eq!(header.title, "ZELDA MINISH");
         assert_eq!(header.game_code, "BZME");
-        assert_eq!(core.mmu.read_u32(0x08000000), 0xEA00002E);
+        assert_eq!(core.cpu.regs.r[15], 0x08000000); // Initial PC
+        assert_eq!(core.cpu.regs.r[13], 0x03007F00); // Initial SP
+        assert_eq!(core.cpu.regs.mode(), CpuMode::System);
 
         let _ = std::fs::remove_file(rom_path);
         Ok(())
@@ -251,5 +279,17 @@ mod tests {
 
         let _ = std::fs::remove_file(zip_path);
         Ok(())
+    }
+
+    #[test]
+    fn test_gba_step_frame_execution() {
+        let mut core = GbaCore::new();
+        let rom = create_dummy_gba_rom("TEST RUN", "TEST");
+        core.load_rom(&rom);
+        assert_eq!(core.cpu.regs.r[15], 0x08000000);
+
+        core.step_frame();
+        // After 1 frame of stepping, CPU PC should have advanced
+        assert!(core.cpu.regs.r[15] > 0x08000000);
     }
 }
