@@ -1,24 +1,21 @@
 #![allow(dead_code)]
 
-pub const BIOS_SIZE: usize = 16 * 1024;       // 16 KB (0x00000000 - 0x00003FFF)
-pub const EWRAM_SIZE: usize = 256 * 1024;     // 256 KB (0x02000000 - 0x0203FFFF)
-pub const IWRAM_SIZE: usize = 32 * 1024;      // 32 KB (0x03000000 - 0x03007FFF)
-pub const IO_SIZE: usize = 1024;              // 1 KB (0x04000000 - 0x040003FE)
-pub const PALETTE_SIZE: usize = 1024;         // 1 KB (0x05000000 - 0x050003FF)
-pub const VRAM_SIZE: usize = 96 * 1024;        // 96 KB (0x06000000 - 0x06017FFF)
-pub const OAM_SIZE: usize = 1024;             // 1 KB (0x07000000 - 0x070003FF)
-pub const SRAM_SIZE: usize = 64 * 1024;       // 64 KB (0x0E000000 - 0x0E00FFFF)
+use super::ppu::GbaPpu;
+
+pub const BIOS_SIZE: usize = 16 * 1024;   // 16 KB (0x00000000 - 0x00003FFF)
+pub const EWRAM_SIZE: usize = 256 * 1024; // 256 KB (0x02000000 - 0x0203FFFF)
+pub const IWRAM_SIZE: usize = 32 * 1024;  // 32 KB (0x03000000 - 0x03007FFF)
+pub const IO_SIZE: usize = 1024;          // 1 KB (0x04000000 - 0x040003FE)
+pub const SRAM_SIZE: usize = 64 * 1024;   // 64 KB (0x0E000000 - 0x0E00FFFF)
 
 /// GBA 32-bit Memory Bus (MMU) handling mapping, byte/halfword/word access,
-/// and Game Pak ROM loading.
+/// PPU registers/VRAM integration, and Game Pak ROM loading.
 pub struct GbaMemoryBus {
+    pub ppu: GbaPpu,
     pub bios: Vec<u8>,
     pub ewram: Vec<u8>,
     pub iwram: Vec<u8>,
     pub io: Vec<u8>,
-    pub palette: Vec<u8>,
-    pub vram: Vec<u8>,
-    pub oam: Vec<u8>,
     pub rom: Vec<u8>,
     pub sram: Vec<u8>,
 }
@@ -32,13 +29,11 @@ impl Default for GbaMemoryBus {
 impl GbaMemoryBus {
     pub fn new() -> Self {
         Self {
+            ppu: GbaPpu::new(),
             bios: vec![0; BIOS_SIZE],
             ewram: vec![0; EWRAM_SIZE],
             iwram: vec![0; IWRAM_SIZE],
             io: vec![0; IO_SIZE],
-            palette: vec![0; PALETTE_SIZE],
-            vram: vec![0; VRAM_SIZE],
-            oam: vec![0; OAM_SIZE],
             rom: Vec::new(),
             sram: vec![0; SRAM_SIZE],
         }
@@ -76,7 +71,9 @@ impl GbaMemoryBus {
             }
             0x04 => {
                 let offset = (addr & 0x3FF) as usize;
-                if offset < self.io.len() {
+                if offset <= 0x56 {
+                    self.ppu.read_io(addr)
+                } else if offset < self.io.len() {
                     self.io[offset]
                 } else {
                     0
@@ -84,22 +81,30 @@ impl GbaMemoryBus {
             }
             0x05 => {
                 let offset = (addr & 0x3FF) as usize;
-                self.palette[offset]
+                if offset < self.ppu.palette.len() {
+                    self.ppu.palette[offset]
+                } else {
+                    0
+                }
             }
             0x06 => {
                 let mut offset = (addr & 0x1FFFF) as usize;
-                if offset >= VRAM_SIZE {
+                if offset >= self.ppu.vram.len() {
                     offset -= 0x8000;
                 }
-                if offset < self.vram.len() {
-                    self.vram[offset]
+                if offset < self.ppu.vram.len() {
+                    self.ppu.vram[offset]
                 } else {
                     0
                 }
             }
             0x07 => {
                 let offset = (addr & 0x3FF) as usize;
-                self.oam[offset]
+                if offset < self.ppu.oam.len() {
+                    self.ppu.oam[offset]
+                } else {
+                    0
+                }
             }
             0x08..=0x0D => {
                 let offset = (addr & 0x01FFFFFF) as usize;
@@ -137,26 +142,32 @@ impl GbaMemoryBus {
             }
             0x04 => {
                 let offset = (addr & 0x3FF) as usize;
-                if offset < self.io.len() {
+                if offset <= 0x56 {
+                    self.ppu.write_io(addr, val);
+                } else if offset < self.io.len() {
                     self.io[offset] = val;
                 }
             }
             0x05 => {
                 let offset = (addr & 0x3FF) as usize;
-                self.palette[offset] = val;
+                if offset < self.ppu.palette.len() {
+                    self.ppu.palette[offset] = val;
+                }
             }
             0x06 => {
                 let mut offset = (addr & 0x1FFFF) as usize;
-                if offset >= VRAM_SIZE {
+                if offset >= self.ppu.vram.len() {
                     offset -= 0x8000;
                 }
-                if offset < self.vram.len() {
-                    self.vram[offset] = val;
+                if offset < self.ppu.vram.len() {
+                    self.ppu.vram[offset] = val;
                 }
             }
             0x07 => {
                 let offset = (addr & 0x3FF) as usize;
-                self.oam[offset] = val;
+                if offset < self.ppu.oam.len() {
+                    self.ppu.oam[offset] = val;
+                }
             }
             0x08..=0x0D => {
                 // Game Pak ROM is read-only
@@ -328,6 +339,13 @@ mod tests {
 
         bus.write_u16(0x06000000, 0x03E0); // Green pixel
         assert_eq!(bus.read_u16(0x06000000), 0x03E0);
+    }
+
+    #[test]
+    fn test_ppu_io_registers() {
+        let mut bus = GbaMemoryBus::new();
+        bus.write_u16(0x04000000, 0x0003); // DISPCNT Mode 3
+        assert_eq!(bus.read_u16(0x04000000), 3);
     }
 
     #[test]

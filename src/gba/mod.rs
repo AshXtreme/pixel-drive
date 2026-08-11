@@ -3,6 +3,7 @@
 pub mod arm;
 pub mod cpu;
 pub mod mmu;
+pub mod ppu;
 pub mod thumb;
 
 use crate::core::{Button, EmulatorCore};
@@ -66,7 +67,6 @@ impl GbaHeader {
 pub struct GbaCore {
     pub cpu: Cpu,
     pub mmu: GbaMemoryBus,
-    framebuffer: Vec<u8>,
     pub header: Option<GbaHeader>,
 }
 
@@ -78,11 +78,9 @@ impl Default for GbaCore {
 
 impl GbaCore {
     pub fn new() -> Self {
-        let size = (GBA_WIDTH * GBA_HEIGHT * 4) as usize;
         let mut core = Self {
             cpu: Cpu::new(),
             mmu: GbaMemoryBus::new(),
-            framebuffer: vec![0; size],
             header: None,
         };
         core.reset_boot_state();
@@ -92,6 +90,7 @@ impl GbaCore {
     /// Reset CPU registers and CPSR flags to hardware default boot state.
     pub fn reset_boot_state(&mut self) {
         self.cpu.regs.reset();
+        self.mmu.ppu.reset();
         self.cpu.regs.set_pc(0x08000000); // Game Pak Entry Point
         self.cpu.regs.set_sp(0x03007F00); // IWRAM Stack Pointer
         self.cpu.regs.set_mode(CpuMode::System); // Initial System/Supervisor mode
@@ -179,12 +178,13 @@ impl EmulatorCore for GbaCore {
         let mut cycles_this_frame = 0;
         while cycles_this_frame < GBA_CYCLES_PER_FRAME {
             let cycles = self.cpu.step(&mut self.mmu);
+            self.mmu.ppu.step(cycles);
             cycles_this_frame += cycles;
         }
     }
 
     fn framebuffer(&self) -> &[u8] {
-        &self.framebuffer
+        self.mmu.ppu.framebuffer()
     }
 
     fn display_dimensions(&self) -> (u32, u32) {
@@ -293,5 +293,7 @@ mod tests {
         core.step_frame();
         // After 1 frame of stepping, CPU PC should have advanced
         assert!(core.cpu.regs.r[15] > 0x08000000);
+        // Framebuffer size must match 240x160x4
+        assert_eq!(core.framebuffer().len(), 240 * 160 * 4);
     }
 }
