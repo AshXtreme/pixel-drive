@@ -44,6 +44,11 @@ impl GbcCore {
         self.timer = Timer::new();
         let mut new_mmu = MemoryBus::new();
         new_mmu.load_rom(rom_bytes);
+
+        if new_mmu.is_gbc {
+            self.cpu.registers.init_gbc_defaults();
+        }
+
         self.mmu = new_mmu;
     }
 
@@ -169,26 +174,17 @@ mod tests {
 
         let mut core = GbcCore::new();
         core.load_rom_file(rom_path).unwrap();
+        assert!(core.mmu.is_gbc);
+        assert_eq!(core.cpu.registers.a, 0x11);
 
-        println!("--- INITIAL STATE ---");
-        println!("PC: 0x{:04X}, SP: 0x{:04X}, A: 0x{:02X}", core.cpu.registers.pc, core.cpu.registers.sp, core.cpu.registers.a);
-        println!("Opcodes at 0x0060..0x0075: {:?}", (0x0060..0x0075).map(|a| format!("{:02X}", core.mmu.read_byte(a))).collect::<Vec<_>>());
-
-        // Step 300 frames (5 seconds of real-time execution)
-        for frame in 1..=300 {
+        // Step 120 frames (~2 seconds of execution)
+        for _ in 0..120 {
             core.step_frame();
-            if frame % 30 == 0 || frame == 1 {
-                let lcdc = core.mmu.read_byte(0xFF40);
-                let bgp = core.mmu.read_byte(0xFF47);
-                let obp0 = core.mmu.read_byte(0xFF48);
-                let _obp1 = core.mmu.read_byte(0xFF49);
-                let scy = core.mmu.read_byte(0xFF42);
-                let scx = core.mmu.read_byte(0xFF43);
-                let ly = core.mmu.read_byte(0xFF44);
-                let non_white_pixels = core.ppu.framebuffer().chunks(4).filter(|p| p[0] != 255 || p[1] != 255 || p[2] != 255).count();
-                println!("Frame {:03}: PC=0x{:04X}, LCDC=0x{:02X}, BGP=0x{:02X}, OBP0=0x{:02X}, SCX={}, SCY={}, LY={}, non_white={}", frame, core.cpu.registers.pc, lcdc, bgp, obp0, scx, scy, ly, non_white_pixels);
-            }
         }
+
+        assert!(core.cpu.registers.pc != 0x0100);
+        let active_pixels = core.ppu.framebuffer().chunks(4).filter(|p| p[0] != 255 || p[1] != 255 || p[2] != 255).count();
+        assert!(active_pixels > 0);
     }
 }
 

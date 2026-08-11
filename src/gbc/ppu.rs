@@ -3,7 +3,7 @@ use super::mmu::MemoryBus;
 pub const SCREEN_WIDTH: usize = 160;
 pub const SCREEN_HEIGHT: usize = 144;
 
-/// Pixel Processing Unit (PPU) handling Game Boy scanline graphics rendering.
+/// Pixel Processing Unit (PPU) handling Game Boy and Game Boy Color scanline graphics rendering.
 pub struct Ppu {
     framebuffer: [u8; SCREEN_WIDTH * SCREEN_HEIGHT * 4],
     scanline_counter: u16,
@@ -57,6 +57,22 @@ impl Ppu {
                 self.render_scanline(bus);
             }
         }
+
+        // Update STAT register (0xFF41) mode & LYC coincidence flags
+        let mode = if self.ly >= 144 {
+            1 // Mode 1 VBlank
+        } else if self.scanline_counter < 80 {
+            2 // Mode 2 OAM Search
+        } else if self.scanline_counter < 248 {
+            3 // Mode 3 Transfer
+        } else {
+            0 // Mode 0 HBlank
+        };
+
+        let stat = bus.read_byte(0xFF41);
+        let lyc = bus.read_byte(0xFF45);
+        let lyc_flag = if self.ly == lyc { 0x04 } else { 0x00 };
+        bus.set_stat_direct((stat & 0xF8) | lyc_flag | mode);
     }
 
     /// Renders background, window, and sprite scanlines into RGBA framebuffer for current LY.
@@ -75,6 +91,8 @@ impl Ppu {
 
         let y = self.ly;
         let bg_y = y.wrapping_add(scy);
+        let is_gbc = bus.is_gbc;
+        let use_palette_ram = is_gbc && bus.palette_ram_written;
 
         // Render Background & Window Scanline
         for x in 0..SCREEN_WIDTH {
@@ -92,7 +110,27 @@ impl Ppu {
             let tile_row = (render_y / 8) as u16;
             let tile_col = (render_x / 8) as u16;
             let tile_map_addr = tile_map_base + tile_row * 32 + tile_col;
-            let tile_index = bus.read_byte(tile_map_addr);
+
+            // Bank 0 contains Tile Index
+            let tile_index = bus.read_vram_bank(tile_map_addr, 0);
+
+            let (pal_num, tile_bank, x_flip, y_flip) = if is_gbc {
+                // Bank 1 contains GBC Tile Attributes
+                let attr = bus.read_vram_bank(tile_map_addr, 1);
+                (
+                    (attr & 0x07) as usize,
+                    (attr >> 3) & 0x01,
+                    (attr & 0x20) != 0,
+                    (attr & 0x40) != 0,
+                )
+            } else {
+                (0, 0, false, false)
+            };
+
+            let mut tile_y = (render_y % 8) as u16;
+            if y_flip {
+                tile_y = 7 - tile_y;
+            }
 
             let tile_data_addr: u16 = if unsigned_tile_data {
                 0x8000 + (tile_index as u16) * 16
@@ -101,21 +139,38 @@ impl Ppu {
                 (0x9000i32 + (signed_index as i32 * 16)) as u16
             };
 
-            let tile_y = (render_y % 8) as u16;
-            let byte1 = bus.read_byte(tile_data_addr + tile_y * 2);
-            let byte2 = bus.read_byte(tile_data_addr + tile_y * 2 + 1);
+            let byte1 = bus.read_vram_bank(tile_data_addr + tile_y * 2, tile_bank);
+            let byte2 = bus.read_vram_bank(tile_data_addr + tile_y * 2 + 1, tile_bank);
 
-            let bit_idx = 7 - (render_x % 8);
+            let bit_idx = if x_flip {
+                render_x % 8
+            } else {
+                7 - (render_x % 8)
+            };
+
             let bit_low = (byte1 >> bit_idx) & 1;
             let bit_high = (byte2 >> bit_idx) & 1;
             let color_id = (bit_high << 1) | bit_low;
 
             let shade = (bgp >> (color_id * 2)) & 0x03;
-            let (r, g, b) = match shade {
-                0 => (255, 255, 255),
-                1 => (192, 192, 192),
-                2 => (96, 96, 96),
-                _ => (0, 0, 0),
+            let (r, g, b) = if use_palette_ram {
+                bus.get_bg_palette_color(pal_num, shade as usize)
+            } else if is_gbc {
+                // Game Boy Color dual-compatibility default palette (Pokémon Yellow warm theme)
+                match shade {
+                    0 => (255, 240, 160), // Warm Yellow
+                    1 => (224, 144, 48),  // Vibrant Orange
+                    2 => (160, 64, 32),   // Dark Rust
+                    _ => (40, 24, 16),    // Deep Espresso
+                }
+            } else {
+                // Classic DMG Pea-Soup Green
+                match shade {
+                    0 => (224, 248, 208),
+                    1 => (136, 192, 112),
+                    2 => (52, 104, 86),
+                    _ => (8, 24, 32),
+                }
             };
 
             let idx = (y as usize * SCREEN_WIDTH + x) * 4;
@@ -141,9 +196,10 @@ impl Ppu {
 
                 let cur_y = y as i16;
                 if cur_y >= sprite_y && cur_y < sprite_y + sprite_height {
-                    let palette = if (flags & 0x10) != 0 { obp1 } else { obp0 };
                     let y_flip = (flags & 0x40) != 0;
                     let x_flip = (flags & 0x20) != 0;
+                    let pal_num = (flags & 0x07) as usize;
+                    let tile_bank = (flags >> 3) & 0x01;
 
                     let mut line = cur_y - sprite_y;
                     if y_flip {
@@ -151,8 +207,8 @@ impl Ppu {
                     }
 
                     let tile_addr = 0x8000 + (tile_idx as u16) * 16 + (line as u16) * 2;
-                    let byte1 = bus.read_byte(tile_addr);
-                    let byte2 = bus.read_byte(tile_addr + 1);
+                    let byte1 = bus.read_vram_bank(tile_addr, tile_bank);
+                    let byte2 = bus.read_vram_bank(tile_addr + 1, tile_bank);
 
                     for px in 0..8 {
                         let target_x = sprite_x + px;
@@ -164,12 +220,27 @@ impl Ppu {
 
                             // Color 0 is transparent for Sprites
                             if color_id != 0 {
+                                let palette = if (flags & 0x10) != 0 { obp1 } else { obp0 };
                                 let shade = (palette >> (color_id * 2)) & 0x03;
-                                let (r, g, b) = match shade {
-                                    0 => (255, 255, 255),
-                                    1 => (192, 192, 192),
-                                    2 => (96, 96, 96),
-                                    _ => (0, 0, 0),
+
+                                let (r, g, b) = if use_palette_ram {
+                                    let (pr, pg, pb) = bus.get_obj_palette_color(pal_num, shade as usize);
+                                    log::trace!("OBJ Palette Read: R={}, G={}, B={}", pr, pg, pb);
+                                    (pr, pg, pb)
+                                } else if is_gbc {
+                                    match shade {
+                                        0 => (255, 240, 160),
+                                        1 => (224, 144, 48),
+                                        2 => (160, 64, 32),
+                                        _ => (40, 24, 16),
+                                    }
+                                } else {
+                                    match shade {
+                                        0 => (224, 248, 208),
+                                        1 => (136, 192, 112),
+                                        2 => (52, 104, 86),
+                                        _ => (8, 24, 32),
+                                    }
                                 };
 
                                 let idx = (y as usize * SCREEN_WIDTH + target_x as usize) * 4;

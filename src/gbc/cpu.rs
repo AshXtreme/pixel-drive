@@ -35,6 +35,17 @@ impl Registers {
         }
     }
 
+    /// Initializes CGB hardware post-boot register values (A = 0x11 indicates CGB hardware).
+    pub fn init_gbc_defaults(&mut self) {
+        self.a = 0x11;
+        self.b = 0x00;
+        self.c = 0x00;
+        self.d = 0x00;
+        self.e = 0x08;
+        self.h = 0x00;
+        self.l = 0x7C;
+    }
+
     // 16-bit register pair getters and setters
     pub fn af(&self) -> u16 {
         ((self.a as u16) << 8) | (self.f as u16)
