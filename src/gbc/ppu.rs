@@ -24,6 +24,29 @@ impl Ppu {
         &self.framebuffer
     }
 
+    /// Renders animated retro splash pattern into framebuffer during idle app state.
+    pub fn draw_splash_pattern(&mut self, frame: u32) {
+        for y in 0..SCREEN_HEIGHT {
+            for x in 0..SCREEN_WIDTH {
+                let idx = (y * SCREEN_WIDTH + x) * 4;
+                let grid = ((x / 16) + (y / 16)) % 2 == 0;
+                let shift = (frame as usize / 2) % 32;
+                let wave = (((x + shift) ^ (y + shift)) % 32) as u8 * 4;
+
+                if grid {
+                    self.framebuffer[idx] = 30 + wave / 2;
+                    self.framebuffer[idx + 1] = 40 + wave;
+                    self.framebuffer[idx + 2] = 80 + wave;
+                } else {
+                    self.framebuffer[idx] = 15 + wave / 4;
+                    self.framebuffer[idx + 1] = 20 + wave / 2;
+                    self.framebuffer[idx + 2] = 45 + wave / 2;
+                }
+                self.framebuffer[idx + 3] = 255;
+            }
+        }
+    }
+
     /// Advances PPU simulation by `cycles` CPU dots and renders scanlines when due.
     pub fn step(&mut self, cycles: u8, bus: &mut MemoryBus) {
         let lcdc = bus.read_byte(0xFF40);

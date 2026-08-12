@@ -254,7 +254,13 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
 
                 match op {
                     0 => { // ADD
-                        regs.r[rd] = regs.r[rd].wrapping_add(val2);
+                        let res = regs.r[rd].wrapping_add(val2);
+                        if rd == 15 {
+                            regs.r[15] = regs.r[15].wrapping_add(val2) & !1;
+                            return 3;
+                        } else {
+                            regs.r[rd] = res;
+                        }
                     }
                     1 => { // CMP
                         let val1 = regs.r[rd];
@@ -266,17 +272,19 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                         regs.set_v_flag(((val1 ^ val2) & (val1 ^ res) & 0x80000000) != 0);
                     }
                     2 => { // MOV
-                        regs.r[rd] = val2;
-                    }
-                    3 => { // BX
-                        let target = val2;
-                        let thumb = (target & 1) != 0;
-                        regs.set_thumb_mode(thumb);
-                        if thumb {
-                            regs.r[15] = target & !1;
+                        if rd == 15 {
+                            regs.r[15] = val2 & !1;
+                            return 3;
                         } else {
-                            regs.r[15] = target & !3;
+                            regs.r[rd] = val2;
                         }
+                    }
+                    3 => { // BX / BLX
+                        if h1 {
+                            regs.r[14] = (regs.r[15].wrapping_sub(2)) | 1;
+                        }
+                        let target = val2;
+                        regs.set_pc_interworking(target);
                         return 3;
                     }
                     _ => {}
@@ -286,9 +294,10 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                 // Format 6: PC-Relative Load (LDR Rd, [PC, #imm8])
                 let rd = ((instr >> 8) & 7) as usize;
                 let word8 = ((instr & 0xFF) as u32) * 4;
-                let pc_base = (regs.r[15].wrapping_sub(2)) & !2; // Alignment to 4 bytes
-                let addr = pc_base.wrapping_add(word8);
-                regs.r[rd] = bus.read_u32(addr);
+                let aligned_pc = (regs.r[15].wrapping_sub(2).wrapping_add(2)) & !2; // Force 4-byte alignment
+                let addr = aligned_pc.wrapping_add(word8);
+                let val = bus.read_u32(addr);
+                regs.r[rd] = val;
                 2
             }
         }
@@ -396,7 +405,7 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                 let base = if use_sp {
                     regs.r[13]
                 } else {
-                    (regs.r[15].wrapping_sub(2)) & !2
+                    regs.r[15] & !2
                 };
                 regs.r[rd] = base.wrapping_add(word8);
                 1
@@ -480,14 +489,15 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                 let cond = (instr >> 8) & 0x0F;
                 if cond == 0x0F {
                     // Format 17: Software Interrupt (SWI)
-                    1
+                    let swi_num = (instr & 0xFF) as u8;
+                    super::bios::handle_swi(swi_num, regs, bus);
+                    3
                 } else {
                     // Format 16: Conditional Branch (B<cond>)
                     if check_condition(cond as u32, regs) {
                         let s8 = (instr & 0xFF) as i8 as i32;
                         let offset = (s8 << 1) as u32;
-                        let curr_pc = regs.r[15].wrapping_sub(2);
-                        regs.r[15] = curr_pc.wrapping_add(4).wrapping_add(offset);
+                        regs.r[15] = regs.r[15].wrapping_add(offset);
                         3
                     } else {
                         1
@@ -502,28 +512,48 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                     offset11 as i32
                 };
                 let branch_offset = (sign_extended << 1) as u32;
-                let curr_pc = regs.r[15].wrapping_sub(2);
-                regs.r[15] = curr_pc.wrapping_add(4).wrapping_add(branch_offset);
+                regs.r[15] = regs.r[15].wrapping_add(branch_offset);
                 3
             } else {
-                // Format 19: Long Branch with Link (BL)
+                // Format 19: Long Branch with Link (BL / BLX)
                 let is_second_half = (instr & (1 << 11)) != 0;
                 let offset11 = (instr & 0x07FF) as u32;
 
                 if !is_second_half {
-                    // First 16-bit instruction: LR = PC + (sign_extend(offset11) << 12)
+                    let pc = regs.r[15].wrapping_sub(4);
+                    let next_instr = bus.read_u16(pc.wrapping_add(2));
+                    if (next_instr & 0xF000) == 0xF800 || (next_instr & 0xF000) == 0xE800 {
+                        let sign_extended = if (offset11 & 0x0400) != 0 {
+                            (offset11 | 0xFFFFF800) as i32
+                        } else {
+                            offset11 as i32
+                        };
+                        let tmp_lr = (regs.r[15] as i32).wrapping_add(sign_extended << 12) as u32;
+                        let offset2 = (next_instr & 0x07FF) as u32;
+                        let is_blx = (next_instr & (1 << 12)) == 0;
+
+                        let target = tmp_lr.wrapping_add(offset2 << 1);
+                        regs.r[14] = (pc.wrapping_add(4)) | 1;
+                        if is_blx {
+                            regs.set_thumb_mode(false);
+                            regs.r[15] = target & !3;
+                        } else {
+                            regs.r[15] = target & !1;
+                        }
+                        return 4;
+                    }
+
+                    // Fallback single half
                     let sign_extended = if (offset11 & 0x0400) != 0 {
                         (offset11 | 0xFFFFF800) as i32
                     } else {
                         offset11 as i32
                     };
-                    let curr_pc = regs.r[15].wrapping_sub(2);
-                    regs.r[14] = (curr_pc.wrapping_add(4) as i32).wrapping_add(sign_extended << 12) as u32;
+                    regs.r[14] = (regs.r[15] as i32).wrapping_add(sign_extended << 12) as u32;
                 } else {
-                    // Second 16-bit instruction: PC = LR + (offset11 << 1), LR = old_PC | 1
-                    let curr_pc = regs.r[15].wrapping_sub(2);
+                    // Second 16-bit instruction standalone fallback
                     let target = regs.r[14].wrapping_add(offset11 << 1);
-                    regs.r[14] = curr_pc.wrapping_add(2) | 1;
+                    regs.r[14] = (regs.r[15].wrapping_sub(2)) | 1;
                     regs.r[15] = target;
                 }
                 2

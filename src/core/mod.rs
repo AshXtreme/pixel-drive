@@ -8,6 +8,8 @@ pub enum Button {
     Left,
     Up,
     Down,
+    L,
+    R,
 }
 
 pub trait EmulatorCore {

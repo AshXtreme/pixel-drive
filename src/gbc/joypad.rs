@@ -44,6 +44,7 @@ impl Joypad {
             Button::Left => self.left = pressed,
             Button::Up => self.up = pressed,
             Button::Down => self.down = pressed,
+            Button::L | Button::R => {}
         }
     }
 

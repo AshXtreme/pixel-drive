@@ -95,7 +95,7 @@ impl Registers {
             r14_fiq: 0,
             spsr_fiq: 0x1F,
 
-            r13_svc: 0x03007F00,
+            r13_svc: 0x03007FE0,
             r14_svc: 0,
             spsr_svc: 0x1F,
 
@@ -112,7 +112,7 @@ impl Registers {
             spsr_und: 0x1F,
         };
         regs.r[13] = 0x03007F00; // Default IWRAM Stack Pointer
-        regs.r[15] = 0x08000000; // Default Game Pak ROM entry point
+        regs.r[15] = 0x08000000; // GBA Game Pak Entry Point (0x08000000)
         regs
     }
 
@@ -127,6 +127,12 @@ impl Registers {
 
     pub fn set_pc(&mut self, val: u32) {
         self.r[15] = val;
+    }
+
+    /// Set PC with automatic ARM/THUMB interworking (Bit 0 selects THUMB vs ARM mode)
+    pub fn set_pc_interworking(&mut self, target_addr: u32) {
+        self.set_thumb_mode((target_addr & 1) != 0);
+        self.r[15] = target_addr & !1;
     }
 
     pub fn sp(&self) -> u32 {
@@ -349,6 +355,8 @@ impl Registers {
 pub struct Cpu {
     pub regs: Registers,
     pub cycle_count: usize,
+    pub last_pc: u32,
+    pub pc_repeat_count: usize,
 }
 
 impl Default for Cpu {
@@ -362,6 +370,8 @@ impl Cpu {
         Self {
             regs: Registers::new(),
             cycle_count: 0,
+            last_pc: 0,
+            pc_repeat_count: 0,
         }
     }
 
@@ -376,22 +386,77 @@ impl Cpu {
         }
     }
 
+    /// Raise CPU Hardware IRQ Exception (vector 0x00000018).
+    pub fn trigger_irq(&mut self) {
+        if self.regs.irq_disabled() {
+            return;
+        }
+
+        let old_cpsr = self.regs.cpsr;
+        let return_pc = self.regs.r[15];
+
+        self.regs.set_mode(CpuMode::IRQ);
+        self.regs.set_spsr(old_cpsr);
+        self.regs.set_irq_disabled(true);
+        self.regs.set_thumb_mode(false); // ARM mode
+        self.regs.r[14] = return_pc.wrapping_add(4); // LR_irq = next_pc + 4
+        self.regs.r[15] = 0x00000018; // ARM IRQ Exception Vector
+    }
+
     /// Execute single CPU instruction step (ARM 32-bit or THUMB 16-bit).
     pub fn step(&mut self, bus: &mut GbaMemoryBus) -> usize {
+        let pc = if self.regs.thumb_mode() {
+            self.regs.r[15] & !1
+        } else {
+            self.regs.r[15] & !3
+        };
+
+        if pc == self.last_pc {
+            self.pc_repeat_count += 1;
+            if self.pc_repeat_count == 100 {
+                let is_thumb = self.regs.thumb_mode();
+                let opcode = if is_thumb {
+                    bus.read_u16(pc) as u32
+                } else {
+                    bus.read_u32(pc)
+                };
+                log::warn!(
+                    "CPU Loop Warning: PC=0x{:08X} executed 100+ times sequentially! Mode={} CPSR=0x{:08X} Opcode=0x{:08X} R0=0x{:08X} R1=0x{:08X} R2=0x{:08X} R3=0x{:08X}",
+                    pc,
+                    if is_thumb { "THUMB" } else { "ARM" },
+                    self.regs.cpsr,
+                    opcode,
+                    self.regs.r[0],
+                    self.regs.r[1],
+                    self.regs.r[2],
+                    self.regs.r[3]
+                );
+            }
+        } else {
+            self.last_pc = pc;
+            self.pc_repeat_count = 1;
+        }
+
         if self.regs.thumb_mode() {
-            // THUMB Mode: 16-bit instruction, 2-byte aligned
-            let pc = self.regs.r[15] & !1;
+            // THUMB Mode: 16-bit instruction, 2-byte aligned (R15 reads as pc + 4)
             let instr = bus.read_u16(pc);
-            self.regs.r[15] = pc.wrapping_add(2);
+            let expected_pc = pc.wrapping_add(4);
+            self.regs.r[15] = expected_pc;
             let cycles = super::thumb::execute_thumb(&mut self.regs, bus, instr);
+            if self.regs.r[15] == expected_pc {
+                self.regs.r[15] = pc.wrapping_add(2);
+            }
             self.cycle_count += cycles;
             cycles
         } else {
-            // ARM Mode: 32-bit instruction, 4-byte aligned
-            let pc = self.regs.r[15] & !3;
+            // ARM Mode: 32-bit instruction, 4-byte aligned (R15 reads as pc + 8)
             let instr = bus.read_u32(pc);
-            self.regs.r[15] = pc.wrapping_add(4);
+            let expected_pc = pc.wrapping_add(8);
+            self.regs.r[15] = expected_pc;
             let cycles = super::arm::execute_arm(&mut self.regs, bus, instr);
+            if self.regs.r[15] == expected_pc {
+                self.regs.r[15] = pc.wrapping_add(4);
+            }
             self.cycle_count += cycles;
             cycles
         }

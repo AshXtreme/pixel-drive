@@ -3,6 +3,7 @@ mod gba;
 mod gbc;
 
 use core::{Button, EmulatorCore};
+use gba::GbaCore;
 use gbc::GbcCore;
 use log::{info, warn};
 use pixels::{Pixels, SurfaceTexture};
@@ -20,15 +21,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Starting PixelDrive Handheld Emulator...");
 
     let event_loop = EventLoop::new()?;
-    let mut gbc_core = GbcCore::new();
-    let (core_width, core_height) = gbc_core.display_dimensions();
+
+    // Active emulator core defaults to GBC Core (160x144)
+    let mut active_core: Box<dyn EmulatorCore> = Box::new(GbcCore::new());
+    let (mut core_width, mut core_height) = active_core.display_dimensions();
 
     // Default window size: 4x scale for GBC (640x576)
     let window_width = core_width * 4;
     let window_height = core_height * 4;
 
     let window = WindowBuilder::new()
-        .with_title("PixelDrive - Game Boy Color / GBA Emulator")
+        .with_title("PixelDrive - Game Boy Color / Game Boy Advance Emulator")
         .with_inner_size(LogicalSize::new(window_width, window_height))
         .with_min_inner_size(LogicalSize::new(core_width, core_height))
         .build(&event_loop)?;
@@ -64,14 +67,75 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     info!("ROM Drag & Drop detected: {:?}", path);
                     if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
                         match ext.to_lowercase().as_str() {
-                            "gb" | "gbc" | "zip" => {
+                            "gb" | "gbc" => {
                                 info!("Ingesting Game Boy / GBC ROM: {}", path.display());
-                                if let Err(err) = gbc_core.load_rom_file(&path) {
-                                    warn!("Failed to load ROM file {}: {}", path.display(), err);
+                                let mut gbc = GbcCore::new();
+                                match gbc.load_rom_file(&path) {
+                                    Ok(_) => {
+                                        active_core = Box::new(gbc);
+                                        let (w, h) = active_core.display_dimensions();
+                                        if w != core_width || h != core_height {
+                                            core_width = w;
+                                            core_height = h;
+                                            if let Err(err) = pixels.resize_buffer(w, h) {
+                                                warn!("Failed to resize pixel buffer: {:?}", err);
+                                            }
+                                        }
+                                        window.set_title("PixelDrive - Game Boy Color Engine");
+                                    }
+                                    Err(err) => warn!("Failed to load GBC ROM: {}", err),
                                 }
                             }
                             "gba" => {
                                 info!("Ingesting Game Boy Advance ROM: {}", path.display());
+                                let mut gba = GbaCore::new();
+                                match gba.load_rom_file(&path) {
+                                    Ok(header) => {
+                                        let title = format!(
+                                            "PixelDrive - GBA: {} [{}]",
+                                            header.title, header.game_code
+                                        );
+                                        active_core = Box::new(gba);
+                                        let (w, h) = active_core.display_dimensions();
+                                        if w != core_width || h != core_height {
+                                            core_width = w;
+                                            core_height = h;
+                                            if let Err(err) = pixels.resize_buffer(w, h) {
+                                                warn!("Failed to resize pixel buffer: {:?}", err);
+                                            }
+                                        }
+                                        window.set_title(&title);
+                                    }
+                                    Err(err) => warn!("Failed to load GBA ROM: {}", err),
+                                }
+                            }
+                            "zip" => {
+                                info!("Ingesting ZIP ROM archive: {}", path.display());
+                                let mut gba = GbaCore::new();
+                                if let Ok(header) = gba.load_rom_file(&path) {
+                                    let title = format!(
+                                        "PixelDrive - GBA: {} [{}]",
+                                        header.title, header.game_code
+                                    );
+                                    active_core = Box::new(gba);
+                                    let (w, h) = active_core.display_dimensions();
+                                    core_width = w;
+                                    core_height = h;
+                                    let _ = pixels.resize_buffer(w, h);
+                                    window.set_title(&title);
+                                } else {
+                                    let mut gbc = GbcCore::new();
+                                    if let Ok(_) = gbc.load_rom_file(&path) {
+                                        active_core = Box::new(gbc);
+                                        let (w, h) = active_core.display_dimensions();
+                                        core_width = w;
+                                        core_height = h;
+                                        let _ = pixels.resize_buffer(w, h);
+                                        window.set_title("PixelDrive - Game Boy Color Engine");
+                                    } else {
+                                        warn!("No valid GBC or GBA ROM found inside ZIP: {}", path.display());
+                                    }
+                                }
                             }
                             _ => {
                                 warn!("Unsupported file extension '.{}' for ROM: {}", ext, path.display());
@@ -93,25 +157,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let button = match key_code {
                         KeyCode::KeyZ | KeyCode::KeyJ => Some(Button::A),
                         KeyCode::KeyX | KeyCode::KeyK => Some(Button::B),
+                        KeyCode::KeyA | KeyCode::KeyQ => Some(Button::L),
+                        KeyCode::KeyS | KeyCode::KeyE => Some(Button::R),
                         KeyCode::Backspace | KeyCode::ShiftRight => Some(Button::Select),
                         KeyCode::Enter => Some(Button::Start),
                         KeyCode::ArrowUp | KeyCode::KeyW => Some(Button::Up),
-                        KeyCode::ArrowDown | KeyCode::KeyS => Some(Button::Down),
-                        KeyCode::ArrowLeft | KeyCode::KeyA => Some(Button::Left),
+                        KeyCode::ArrowDown => Some(Button::Down),
+                        KeyCode::ArrowLeft => Some(Button::Left),
                         KeyCode::ArrowRight | KeyCode::KeyD => Some(Button::Right),
                         _ => None,
                     };
 
                     if let Some(btn) = button {
-                        gbc_core.handle_input(btn, pressed);
+                        active_core.handle_input(btn, pressed);
                     }
                 }
 
                 WindowEvent::RedrawRequested => {
-                    gbc_core.step_frame();
+                    active_core.step_frame();
 
                     let frame = pixels.frame_mut();
-                    frame.copy_from_slice(gbc_core.framebuffer());
+                    frame.copy_from_slice(active_core.framebuffer());
 
                     if let Err(err) = pixels.render() {
                         warn!("Pixels render error: {:?}", err);

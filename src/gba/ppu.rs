@@ -52,6 +52,7 @@ pub struct GbaPpu {
     pub bg3vofs: u16,
 
     pub scanline_cycles: usize,
+    pub vblank_irq_requested: bool,
 }
 
 impl Default for GbaPpu {
@@ -72,6 +73,7 @@ impl GbaPpu {
             dispcnt: 0,
             dispstat: 0,
             vcount: 0,
+            vblank_irq_requested: false,
 
             bg0cnt: 0,
             bg1cnt: 0,
@@ -119,6 +121,10 @@ impl GbaPpu {
             self.dispstat = (self.dispstat & !0x05)
                 | (if is_vblank { 1 } else { 0 })
                 | (if is_vmatch { 4 } else { 0 });
+
+            if self.vcount == 160 {
+                self.vblank_irq_requested = true;
+            }
         }
     }
 
@@ -230,7 +236,7 @@ impl GbaPpu {
             };
 
             let char_block = ((bgcnt >> 2) & 3) as usize * 0x4000;
-            let screen_block = ((bgcnt >> 8) & 0x1F) as usize * 0x8000;
+            let screen_block = ((bgcnt >> 8) & 0x1F) as usize * 0x800;
             let is_8bpp = (bgcnt & (1 << 7)) != 0;
 
             let (hofs, vofs) = match bg {
@@ -348,7 +354,7 @@ impl GbaPpu {
         match addr {
             0x04000000 => self.dispcnt = (self.dispcnt & 0xFF00) | val as u16,
             0x04000001 => self.dispcnt = (self.dispcnt & 0x00FF) | ((val as u16) << 8),
-            0x04000004 => self.dispstat = (self.dispstat & 0xFF08) | ((val as u16) & 0xF7),
+            0x04000004 => self.dispstat = (self.dispstat & 0xFF07) | ((val as u16) & 0x38),
             0x04000005 => self.dispstat = (self.dispstat & 0x00FF) | ((val as u16) << 8),
             0x04000008 => self.bg0cnt = (self.bg0cnt & 0xFF00) | val as u16,
             0x04000009 => self.bg0cnt = (self.bg0cnt & 0x00FF) | ((val as u16) << 8),

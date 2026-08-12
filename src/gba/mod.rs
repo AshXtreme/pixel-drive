@@ -1,7 +1,10 @@
 #![allow(dead_code)]
 
 pub mod arm;
+pub mod bios;
 pub mod cpu;
+pub mod dma;
+pub mod keypad;
 pub mod mmu;
 pub mod ppu;
 pub mod thumb;
@@ -90,10 +93,11 @@ impl GbaCore {
     /// Reset CPU registers and CPSR flags to hardware default boot state.
     pub fn reset_boot_state(&mut self) {
         self.cpu.regs.reset();
-        self.mmu.ppu.reset();
-        self.cpu.regs.set_pc(0x08000000); // Game Pak Entry Point
+        self.mmu.reset();
+        self.cpu.regs.set_pc(0x08000000); // GBA Game Pak Entry Point (0x08000000)
         self.cpu.regs.set_sp(0x03007F00); // IWRAM Stack Pointer
-        self.cpu.regs.set_mode(CpuMode::System); // Initial System/Supervisor mode
+        self.cpu.regs.set_mode(CpuMode::System); // Initial System mode (0x1F)
+        self.cpu.regs.set_thumb_mode(false); // Initial ARM 32-bit execution mode
     }
 
     /// Load raw ROM byte buffer into GBA MMU memory space and reset CPU boot state.
@@ -179,6 +183,23 @@ impl EmulatorCore for GbaCore {
         while cycles_this_frame < GBA_CYCLES_PER_FRAME {
             let cycles = self.cpu.step(&mut self.mmu);
             self.mmu.ppu.step(cycles);
+            if self.mmu.ppu.vblank_irq_requested {
+                self.mmu.ppu.vblank_irq_requested = false;
+
+                let current_if = self.mmu.read_u16(0x04000202);
+                let new_if = current_if | 1;
+                self.mmu.io[0x202] = new_if as u8;
+                self.mmu.io[0x203] = (new_if >> 8) as u8;
+
+                let check = self.mmu.read_u16(0x03007FF8);
+                self.mmu.write_u16(0x03007FF8, check | 1);
+
+                let ime = self.mmu.read_u32(0x04000208) & 1 != 0;
+                let ie = self.mmu.read_u16(0x04000200);
+                if ime && (ie & 1) != 0 && !self.cpu.regs.irq_disabled() {
+                    self.cpu.trigger_irq();
+                }
+            }
             cycles_this_frame += cycles;
         }
     }
@@ -193,6 +214,7 @@ impl EmulatorCore for GbaCore {
 
     fn handle_input(&mut self, button: Button, pressed: bool) {
         info!("GBA Input: {:?} -> {}", button, if pressed { "Pressed" } else { "Released" });
+        self.mmu.keypad.handle_input(button, pressed);
     }
 
     fn audio_buffer(&mut self) -> Vec<f32> {
@@ -294,6 +316,30 @@ mod tests {
         // After 1 frame of stepping, CPU PC should have advanced
         assert!(core.cpu.regs.r[15] > 0x08000000);
         // Framebuffer size must match 240x160x4
+        assert_eq!(core.framebuffer().len(), 240 * 160 * 4);
+    }
+
+    #[test]
+    fn test_pokemon_firered_execution() {
+        let rom_path = "Pokemon_Fire_Red_1[romsretro.com].zip";
+        if !std::path::Path::new(rom_path).exists() {
+            return;
+        }
+
+        let mut core = GbaCore::new();
+        let header = core.load_rom_file(rom_path).unwrap();
+        assert_eq!(header.title, "POKEMON FIRE");
+
+        println!("--- RUNNING 120 FRAMES OF POKEMON FIRE RED ---");
+        for frame in 0..120 {
+            core.step_frame();
+            if frame % 30 == 0 {
+                println!("Frame {:3}: PC=0x{:08X} DISPCNT=0x{:04X}",
+                    frame, core.cpu.regs.pc(), core.mmu.ppu.dispcnt);
+            }
+        }
+
+        assert!(core.cpu.regs.pc() != 0x08000000);
         assert_eq!(core.framebuffer().len(), 240 * 160 * 4);
     }
 }

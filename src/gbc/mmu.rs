@@ -20,7 +20,8 @@ pub struct MemoryBus {
     pub is_gbc: bool,
     vram: [u8; 0x4000], // 2 banks of 8 KB (0x2000 bytes each)
     vbk: u8,            // 0xFF4F VRAM Bank Select (0 or 1)
-    wram: [u8; 0x2000],
+    wram: [u8; 0x8000], // 32 KB GBC WRAM (Bank 0 at 0xC000..0xCFFF, Banks 1-7 at 0xD000..0xDFFF)
+    svbk: u8,           // 0xFF70 WRAM Bank Select (1 to 7)
     oam: [u8; 0xA0],
     io: [u8; 0x80],
     hram: [u8; 0x7F],
@@ -44,7 +45,8 @@ impl MemoryBus {
             is_gbc: false,
             vram: [0; 0x4000],
             vbk: 0,
-            wram: [0; 0x2000],
+            wram: [0; 0x8000],
+            svbk: 1,
             oam: [0; 0xA0],
             io: [0; 0x80],
             hram: [0; 0x7F],
@@ -85,8 +87,20 @@ impl MemoryBus {
                 self.vram[bank_offset + (addr - 0x8000) as usize]
             }
             0xA000..=0xBFFF => self.mbc.read_ram(addr),
-            0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize],
-            0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize], // Echo RAM
+            0xC000..=0xCFFF => self.wram[(addr - 0xC000) as usize],
+            0xD000..=0xDFFF => {
+                let bank = if self.is_gbc {
+                    let b = self.svbk & 0x07;
+                    if b == 0 { 1 } else { b as usize }
+                } else {
+                    1
+                };
+                self.wram[bank * 0x1000 + (addr - 0xD000) as usize]
+            }
+            0xE000..=0xFDFF => {
+                let norm_addr = addr - 0x2000;
+                self.read_byte(norm_addr)
+            }
             0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize],
             0xFEA0..=0xFEFF => 0x00,
             0xFF00 => self.joypad.read_joyp(),
@@ -101,6 +115,7 @@ impl MemoryBus {
                 let idx = (self.obpi & 0x3F) as usize;
                 self.obj_palette_ram[idx]
             }
+            0xFF70 => self.svbk | 0xF8,
             0xFF01..=0xFF7F => self.io[(addr - 0xFF00) as usize],
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie,
@@ -116,8 +131,20 @@ impl MemoryBus {
                 self.vram[bank_offset + (addr - 0x8000) as usize] = val;
             }
             0xA000..=0xBFFF => self.mbc.write_ram(addr, val),
-            0xC000..=0xDFFF => self.wram[(addr - 0xC000) as usize] = val,
-            0xE000..=0xFDFF => self.wram[(addr - 0xE000) as usize] = val, // Echo RAM
+            0xC000..=0xCFFF => self.wram[(addr - 0xC000) as usize] = val,
+            0xD000..=0xDFFF => {
+                let bank = if self.is_gbc {
+                    let b = self.svbk & 0x07;
+                    if b == 0 { 1 } else { b as usize }
+                } else {
+                    1
+                };
+                self.wram[bank * 0x1000 + (addr - 0xD000) as usize] = val;
+            }
+            0xE000..=0xFDFF => {
+                let norm_addr = addr - 0x2000;
+                self.write_byte(norm_addr, val);
+            }
             0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize] = val,
             0xFEA0..=0xFEFF => {} // Reserved / Unusable
             0xFF00 => self.joypad.write_joyp(val),
@@ -161,6 +188,10 @@ impl MemoryBus {
                     let next_idx = (self.obpi & 0x3F).wrapping_add(1) & 0x3F;
                     self.obpi = 0x80 | next_idx;
                 }
+            }
+            0xFF70 => {
+                self.svbk = val & 0x07;
+                self.io[0x70] = val;
             }
             0xFF01..=0xFF7F => self.io[(addr - 0xFF00) as usize] = val,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,

@@ -127,17 +127,31 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
         return 1;
     }
 
-    // 1. Branch Exchange (BX): cond 0001 0001 0010 1111 1111 1111 0001 Rm
-    if (instr & 0x0FFFFFF0) == 0x012FFF10 {
+    // 1. Branch Exchange (BX / BLX reg): cond 0001 0001 0010 1111 1111 1111 001x Rm
+    if (instr & 0x0FFFFF90) == 0x012FFF10 {
+        let is_blx = (instr & 0x20) != 0;
         let rm = (instr & 0x0F) as usize;
         let target = regs.r[rm];
-        let thumb = (target & 1) != 0;
-        regs.set_thumb_mode(thumb);
-        if thumb {
-            regs.r[15] = target & !1;
-        } else {
-            regs.r[15] = target & !3;
+        if is_blx {
+            regs.r[14] = regs.r[15].wrapping_sub(4);
         }
+        regs.set_pc_interworking(target);
+        return 3;
+    }
+
+    // 1b. Branch with Link and Exchange Immediate (BLX label): 1111 101H offset24
+    if (instr & 0xFE000000) == 0xFA000000 {
+        let h = ((instr >> 24) & 1) << 1;
+        let offset24 = instr & 0x00FFFFFF;
+        let sign_extended = if (offset24 & 0x00800000) != 0 {
+            (offset24 | 0xFF000000) as i32
+        } else {
+            offset24 as i32
+        };
+        let branch_offset = ((sign_extended << 2) as u32) | h;
+        regs.r[14] = regs.r[15].wrapping_sub(4);
+        let target = regs.r[15].wrapping_add(branch_offset) | 1; // Bit 0 set for THUMB
+        regs.set_pc_interworking(target);
         return 3;
     }
 
@@ -374,8 +388,7 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
             regs.r[14] = regs.r[15].wrapping_sub(4);
         }
 
-        let curr_pc = regs.r[15].wrapping_sub(4);
-        regs.r[15] = curr_pc.wrapping_add(8).wrapping_add(branch_offset);
+        regs.r[15] = regs.r[15].wrapping_add(branch_offset);
         return 3;
     }
 
@@ -488,16 +501,42 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
         };
 
         if write_rd {
-            regs.r[rd] = res;
+            if rd == 15 {
+                if set_flags {
+                    let old_mode = regs.mode();
+                    let cur_spsr = regs.spsr();
+                    regs.cpsr = cur_spsr;
+                    let new_mode = CpuMode::from_bits(cur_spsr & 0x1F);
+                    if old_mode != new_mode {
+                        regs.set_mode(new_mode);
+                    }
+                    if regs.thumb_mode() {
+                        regs.r[15] = res & !1;
+                    } else {
+                        regs.r[15] = res & !3;
+                    }
+                } else {
+                    regs.r[15] = res & !3;
+                }
+            } else {
+                regs.r[rd] = res;
+            }
         }
 
-        if set_flags {
+        if set_flags && rd != 15 {
             regs.set_n_flag((res & (1 << 31)) != 0);
             regs.set_z_flag(res == 0);
             regs.set_c_flag(carry_out);
             regs.set_v_flag(overflow_out);
         }
         return 1;
+    }
+
+    // 9. Software Interrupt (SWI)
+    if (instr & 0x0F000000) == 0x0F000000 {
+        let swi_num = ((instr >> 16) & 0xFF) as u8;
+        super::bios::handle_swi(swi_num, regs, bus);
+        return 3;
     }
 
     1

@@ -22,6 +22,7 @@ pub struct GbcCore {
     pub mmu: MemoryBus,
     pub ppu: Ppu,
     pub timer: Timer,
+    pub is_rom_loaded: bool,
     frame_count: u32,
 }
 
@@ -32,6 +33,7 @@ impl GbcCore {
             mmu: MemoryBus::new(),
             ppu: Ppu::new(),
             timer: Timer::new(),
+            is_rom_loaded: false,
             frame_count: 0,
         }
     }
@@ -50,6 +52,7 @@ impl GbcCore {
         }
 
         self.mmu = new_mmu;
+        self.is_rom_loaded = true;
     }
 
     /// Load a .gb / .gbc or compressed .zip ROM file from disk into memory.
@@ -101,6 +104,11 @@ impl GbcCore {
 impl EmulatorCore for GbcCore {
     fn step_frame(&mut self) {
         self.frame_count = self.frame_count.wrapping_add(1);
+
+        if !self.is_rom_loaded {
+            self.ppu.draw_splash_pattern(self.frame_count);
+            return;
+        }
 
         let mut cycles_this_frame: u32 = 0;
         while cycles_this_frame < GBC_CYCLES_PER_FRAME {
@@ -185,6 +193,26 @@ mod tests {
         assert!(core.cpu.registers.pc != 0x0100);
         let active_pixels = core.ppu.framebuffer().chunks(4).filter(|p| p[0] != 255 || p[1] != 255 || p[2] != 255).count();
         assert!(active_pixels > 0);
+    }
+
+    #[test]
+    fn test_pokemon_crystal_execution() {
+        let rom_path = "/Users/ashutoshsamal/Downloads/Pokemon - Crystal Version (USA, Europe) (Rev A).zip";
+        if !std::path::Path::new(rom_path).exists() {
+            return;
+        }
+
+        let mut core = GbcCore::new();
+        core.load_rom_file(rom_path).unwrap();
+        assert!(core.mmu.is_gbc);
+        assert_eq!(core.cpu.registers.a, 0x11);
+
+        // Step 120 frames
+        for _ in 0..120 {
+            core.step_frame();
+        }
+
+        assert!(core.cpu.registers.pc != 0x0100);
     }
 }
 
