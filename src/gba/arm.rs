@@ -392,7 +392,14 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
         return 3;
     }
 
-    // 8. Data Processing Operations
+    // 8. Software Interrupt (SWI): cond 1111 xxxx xxxx xxxx xxxx xxxx xxxx
+    if (instr & 0x0F000000) == 0x0F000000 {
+        let swi_num = ((instr >> 16) & 0xFF) as u8;
+        super::bios::handle_swi(swi_num, regs, bus);
+        return 3;
+    }
+
+    // 9. Data Processing Operations
     if (instr & 0x0C000000) == 0x00000000 {
         let is_imm = (instr & (1 << 25)) != 0;
         let opcode = (instr >> 21) & 0x0F;
@@ -530,13 +537,6 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
             regs.set_v_flag(overflow_out);
         }
         return 1;
-    }
-
-    // 9. Software Interrupt (SWI)
-    if (instr & 0x0F000000) == 0x0F000000 {
-        let swi_num = ((instr >> 16) & 0xFF) as u8;
-        super::bios::handle_swi(swi_num, regs, bus);
-        return 3;
     }
 
     1

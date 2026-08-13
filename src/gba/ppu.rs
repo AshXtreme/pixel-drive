@@ -144,6 +144,11 @@ impl GbaPpu {
             5 => self.render_mode5(line),
             _ => self.render_fallback_backdrop(line),
         }
+
+        // Render OAM Sprites if OBJ enable bit (bit 12) is set in DISPCNT
+        if (self.dispcnt & (1 << 12)) != 0 {
+            self.render_oam(line);
+        }
     }
 
     /// Mode 3: 240x160 16-bit BGR555 Direct Bitmap
@@ -238,6 +243,14 @@ impl GbaPpu {
             let char_block = ((bgcnt >> 2) & 3) as usize * 0x4000;
             let screen_block = ((bgcnt >> 8) & 0x1F) as usize * 0x800;
             let is_8bpp = (bgcnt & (1 << 7)) != 0;
+            let screen_size = ((bgcnt >> 14) & 3) as usize;
+
+            let (max_x, max_y) = match screen_size {
+                0 => (256, 256),
+                1 => (512, 256),
+                2 => (256, 512),
+                _ => (512, 512),
+            };
 
             let (hofs, vofs) = match bg {
                 0 => (self.bg0hofs as usize, self.bg0vofs as usize),
@@ -246,16 +259,29 @@ impl GbaPpu {
                 _ => (self.bg3hofs as usize, self.bg3vofs as usize),
             };
 
-            let curr_y = (line + vofs) & 0xFF;
+            let curr_y = (line + vofs) % max_y;
             let tile_y = curr_y / 8;
             let ty = curr_y % 8;
 
             for x in 0..GBA_SCREEN_WIDTH {
-                let curr_x = (x + hofs) & 0xFF;
+                let curr_x = (x + hofs) % max_x;
                 let tile_x = curr_x / 8;
                 let tx = curr_x % 8;
 
-                let map_idx = screen_block + (tile_y * 32 + tile_x) * 2;
+                let block_x = tile_x / 32;
+                let block_y = tile_y / 32;
+
+                let block_offset = match screen_size {
+                    0 => 0,
+                    1 => block_x * 0x800,
+                    2 => block_y * 0x800,
+                    _ => (block_y * 2 + block_x) * 0x800,
+                };
+
+                let local_tx = tile_x % 32;
+                let local_ty = tile_y % 32;
+
+                let map_idx = screen_block + block_offset + (local_ty * 32 + local_tx) * 2;
                 if map_idx + 1 >= self.vram.len() {
                     continue;
                 }
@@ -299,6 +325,127 @@ impl GbaPpu {
                             | ((self.palette[pal_byte_idx + 1] as u16) << 8);
                         let (r, g, b, a) = bgr555_to_rgba(color);
                         let pixel_idx = (line * GBA_SCREEN_WIDTH + x) * 4;
+                        self.framebuffer[pixel_idx] = r;
+                        self.framebuffer[pixel_idx + 1] = g;
+                        self.framebuffer[pixel_idx + 2] = b;
+                        self.framebuffer[pixel_idx + 3] = a;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Render OAM (OBJ) Sprites for the given scanline
+    pub fn render_oam(&mut self, line: usize) {
+        const SPRITE_SIZES: [[(usize, usize); 4]; 3] = [
+            [(8, 8), (16, 16), (32, 32), (64, 64)],  // Square
+            [(16, 8), (32, 8), (32, 16), (64, 32)],  // Horizontal
+            [(8, 16), (8, 32), (16, 32), (32, 64)],  // Vertical
+        ];
+
+        let is_1d_mapping = (self.dispcnt & (1 << 6)) != 0;
+
+        for oam_idx in (0..128).rev() {
+            let base = oam_idx * 8;
+            if base + 5 >= self.oam.len() {
+                continue;
+            }
+
+            let attr0 = self.oam[base] as u16 | ((self.oam[base + 1] as u16) << 8);
+            let attr1 = self.oam[base + 2] as u16 | ((self.oam[base + 3] as u16) << 8);
+            let attr2 = self.oam[base + 4] as u16 | ((self.oam[base + 5] as u16) << 8);
+
+            let is_affine = (attr0 & (1 << 8)) != 0;
+            let is_disabled = !is_affine && (attr0 & (1 << 9)) != 0;
+            if is_disabled {
+                continue;
+            }
+
+            let shape = ((attr0 >> 14) & 3) as usize;
+            let size = ((attr1 >> 14) & 3) as usize;
+            if shape >= 3 {
+                continue;
+            }
+
+            let (width, height) = SPRITE_SIZES[shape][size];
+
+            let y_raw = (attr0 & 0xFF) as i32;
+            let y_pos = if y_raw >= 160 { y_raw - 256 } else { y_raw };
+
+            let x_raw = (attr1 & 0x01FF) as i32;
+            let x_pos = if x_raw >= 240 { x_raw - 512 } else { x_raw };
+
+            let line_i32 = line as i32;
+            if line_i32 < y_pos || line_i32 >= y_pos + height as i32 {
+                continue;
+            }
+
+            let h_flip = !is_affine && (attr1 & (1 << 12)) != 0;
+            let v_flip = !is_affine && (attr1 & (1 << 13)) != 0;
+
+            let is_256_color = (attr0 & (1 << 13)) != 0;
+            let tile_idx = (attr2 & 0x03FF) as usize;
+            let pal_bank = ((attr2 >> 12) & 0x0F) as usize;
+
+            let py_rel = (line_i32 - y_pos) as usize;
+            let py = if v_flip { height - 1 - py_rel } else { py_rel };
+            let tile_y = py / 8;
+            let sub_y = py % 8;
+
+            for px_rel in 0..width {
+                let screen_x = x_pos + px_rel as i32;
+                if screen_x < 0 || screen_x >= GBA_SCREEN_WIDTH as i32 {
+                    continue;
+                }
+
+                let px = if h_flip { width - 1 - px_rel } else { px_rel };
+                let tile_x = px / 8;
+                let sub_x = px % 8;
+
+                let tile_addr = if is_1d_mapping {
+                    let tiles_per_row = width / 8;
+                    let num_tiles = if is_256_color {
+                        tile_y * tiles_per_row * 2 + tile_x * 2
+                    } else {
+                        tile_y * tiles_per_row + tile_x
+                    };
+                    0x10000 + (tile_idx + num_tiles) * 32
+                } else {
+                    let tile_row = (tile_idx & !0x1F) + tile_y * 32;
+                    let tile_col = ((tile_idx & 0x1F) + tile_x) % 32;
+                    0x10000 + (tile_row + tile_col) * 32
+                };
+
+                let (color_idx, is_transparent) = if is_256_color {
+                    let addr = tile_addr + sub_y * 8 + sub_x;
+                    if addr < self.vram.len() {
+                        let idx = self.vram[addr] as usize;
+                        (idx, idx == 0)
+                    } else {
+                        (0, true)
+                    }
+                } else {
+                    let addr = tile_addr + sub_y * 4 + sub_x / 2;
+                    if addr < self.vram.len() {
+                        let byte = self.vram[addr];
+                        let idx = if sub_x % 2 == 0 {
+                            (byte & 0x0F) as usize
+                        } else {
+                            ((byte >> 4) & 0x0F) as usize
+                        };
+                        (pal_bank * 16 + idx, idx == 0)
+                    } else {
+                        (0, true)
+                    }
+                };
+
+                if !is_transparent {
+                    let pal_byte_idx = 0x200 + color_idx * 2;
+                    if pal_byte_idx + 1 < self.palette.len() {
+                        let color = self.palette[pal_byte_idx] as u16
+                            | ((self.palette[pal_byte_idx + 1] as u16) << 8);
+                        let (r, g, b, a) = bgr555_to_rgba(color);
+                        let pixel_idx = (line * GBA_SCREEN_WIDTH + screen_x as usize) * 4;
                         self.framebuffer[pixel_idx] = r;
                         self.framebuffer[pixel_idx + 1] = g;
                         self.framebuffer[pixel_idx + 2] = b;
@@ -435,5 +582,35 @@ mod tests {
         assert_eq!(ppu.framebuffer[fb_idx], 0);   // Red
         assert_eq!(ppu.framebuffer[fb_idx + 1], 255); // Green
         assert_eq!(ppu.framebuffer[fb_idx + 2], 0);   // Blue
+    }
+
+    #[test]
+    fn test_oam_sprite_rendering() {
+        let mut ppu = GbaPpu::new();
+        ppu.dispcnt = (1 << 12) | (1 << 6); // Enable OBJ (bit 12) + 1D Mapping (bit 6)
+
+        // Set OBJ Palette Index 1 (at palette offset 0x200 + 2) to Pure Blue (0x7C00)
+        ppu.palette[0x202] = 0x00;
+        ppu.palette[0x203] = 0x7C;
+
+        // Set VRAM tile 0 at 0x10000 to non-zero pixel index 1
+        ppu.vram[0x10000] = 0x11; // 4bpp pixels: low nibble 1, high nibble 1
+
+        // OAM entry 0: Y=20, X=30, Shape=0 (Square), Size=0 (8x8), Tile=0
+        ppu.oam[0] = 20; // Attr0 Y=20
+        ppu.oam[1] = 0;
+        ppu.oam[2] = 30; // Attr1 X=30
+        ppu.oam[3] = 0;
+        ppu.oam[4] = 0;  // Attr2 Tile=0
+        ppu.oam[5] = 0;
+
+        ppu.render_scanline(20);
+
+        // Pixel at (30, 20) in framebuffer should be Pure Blue (0, 0, 255, 255)
+        let fb_idx = (20 * GBA_SCREEN_WIDTH + 30) * 4;
+        assert_eq!(ppu.framebuffer[fb_idx], 0);     // Red
+        assert_eq!(ppu.framebuffer[fb_idx + 1], 0); // Green
+        assert_eq!(ppu.framebuffer[fb_idx + 2], 255); // Blue
+        assert_eq!(ppu.framebuffer[fb_idx + 3], 255); // Alpha
     }
 }

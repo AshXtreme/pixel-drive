@@ -2,10 +2,27 @@
 
 use super::cpu::Registers;
 use super::mmu::GbaMemoryBus;
-use log::info;
 
 /// High-Level Emulation (HLE) for GBA BIOS Software Interrupts (SWI).
 pub fn handle_swi(comment: u8, regs: &mut Registers, bus: &mut GbaMemoryBus) {
+    if bus.has_real_bios {
+        let old_cpsr = regs.cpsr;
+        let is_thumb = regs.thumb_mode();
+        let return_pc = if is_thumb {
+            regs.r[15].wrapping_sub(2)
+        } else {
+            regs.r[15].wrapping_sub(4)
+        };
+
+        regs.set_mode(super::cpu::CpuMode::Supervisor);
+        regs.set_spsr(old_cpsr);
+        regs.set_irq_disabled(true);
+        regs.set_thumb_mode(false); // Switch to ARM mode
+        regs.r[14] = return_pc;     // LR_svc
+        regs.r[15] = 0x00000008;    // Hardware SWI Exception Vector
+        return;
+    }
+
     let is_thumb = regs.thumb_mode();
     let swi_pc = if is_thumb {
         regs.r[15].wrapping_sub(4)
@@ -20,20 +37,21 @@ pub fn handle_swi(comment: u8, regs: &mut Registers, bus: &mut GbaMemoryBus) {
         swi_pc.wrapping_add(4)
     };
 
-    if comment > 0x2A {
+    // Only warn for SWI numbers above 0x2B (documented GBA BIOS limit)
+    if comment > 0x2B {
         let sp = regs.sp();
         let val0 = bus.read_u32(sp);
         let val1 = bus.read_u32(sp.wrapping_add(4));
         let val2 = bus.read_u32(sp.wrapping_add(8));
         let val3 = bus.read_u32(sp.wrapping_add(12));
-        log::warn!(
+        log::debug!(
             "Invalid SWI 0x{:02X} requested at PC=0x{:08X}! Stack: [SP+0=0x{:08X}, SP+4=0x{:08X}, SP+8=0x{:08X}, SP+12=0x{:08X}]",
             comment, swi_pc, val0, val1, val2, val3
         );
         return;
     }
 
-    info!("GBA BIOS SWI 0x{:02X} invoked at PC=0x{:08X}", comment, swi_pc);
+    log::debug!("GBA BIOS SWI 0x{:02X} invoked at PC=0x{:08X}", comment, swi_pc);
 
     match comment {
         0x01 => {
@@ -90,8 +108,15 @@ pub fn handle_swi(comment: u8, regs: &mut Registers, bus: &mut GbaMemoryBus) {
         }
 
         0x02 => {
-            // SWI 0x02: Halt
-            // Put CPU into low-power state until an interrupt occurs
+            // SWI 0x02: Halt — HLE: immediately satisfy by signaling VBlank IRQ
+            // In HLE mode we cannot truly halt the CPU; instead we pre-satisfy the
+            // VBlank interrupt so any subsequent IntrWait/VBlankIntrWait returns instantly.
+            hle_signal_vblank(bus);
+        }
+
+        0x03 => {
+            // SWI 0x03: Stop — treated same as Halt in HLE
+            hle_signal_vblank(bus);
         }
 
         0x04 => {
@@ -101,11 +126,28 @@ pub fn handle_swi(comment: u8, regs: &mut Registers, bus: &mut GbaMemoryBus) {
         }
 
         0x05 => {
-            // SWI 0x05: VBlankIntrWait
-            // Equivalent to IntrWait(1, 1) - Wait for VBlank IRQ (bit 0)
+            // SWI 0x05: VBlankIntrWait — wait for VBlank IRQ (bit 0)
             regs.r[0] = 1;
             regs.r[1] = 1;
             handle_intr_wait(regs, bus);
+        }
+
+        0x06 | 0x07 => {
+            // SWI 0x06: Div / SWI 0x07: DivArm
+            // Input: R0 = Num (signed 32-bit), R1 = Denom (signed 32-bit)
+            // Output: R0 = Num / Denom, R1 = Num % Denom, R3 = ABS(Num / Denom)
+            let num = regs.r[0] as i32;
+            let denom = regs.r[1] as i32;
+
+            if denom != 0 {
+                let div = num / denom;
+                let rem = num % denom;
+                let abs_div = div.abs();
+
+                regs.r[0] = div as u32;
+                regs.r[1] = rem as u32;
+                regs.r[3] = abs_div as u32;
+            }
         }
 
         0x0B | 0x0E => {
@@ -164,6 +206,28 @@ pub fn handle_swi(comment: u8, regs: &mut Registers, bus: &mut GbaMemoryBus) {
             }
         }
 
+        0x08 => {
+            // SWI 0x08: Sqrt — R0 = sqrt(R0), result in R0
+            let val = regs.r[0];
+            regs.r[0] = (val as f64).sqrt() as u32;
+        }
+
+        0x09 => {
+            // SWI 0x09: ArcTan — R0 = ArcTan(R0), result in R0
+            // Input is 1.14 fixed-point; output is 0.14 fixed-point (range: -0x4000..0x4000)
+            let input = regs.r[0] as i32;
+            let angle = (input as f64 / 16384.0).atan();
+            regs.r[0] = ((angle / std::f64::consts::PI * 16384.0) as i32) as u32;
+        }
+
+        0x0A => {
+            // SWI 0x0A: ArcTan2 — R0 = ArcTan2(R1, R0), result in R0
+            let x = regs.r[0] as i32 as f64 / 16384.0;
+            let y = regs.r[1] as i32 as f64 / 16384.0;
+            let angle = y.atan2(x);
+            regs.r[0] = ((angle / (2.0 * std::f64::consts::PI) * 65536.0) as u32) & 0xFFFF;
+        }
+
         0x11 | 0x12 => {
             // SWI 0x11 / 0x12: LZ77UncompWram / LZ77UncompVram
             let src = regs.r[0];
@@ -171,28 +235,53 @@ pub fn handle_swi(comment: u8, regs: &mut Registers, bus: &mut GbaMemoryBus) {
             decompress_lz77(src, dst, bus);
         }
 
-        _ => {}
+        0x1D => {
+            // SWI 0x1D: CustomHalt / SoundDriverMain (Pokemon-specific extension)
+            // In HLE mode: no-op — sound driver is not emulated; just return cleanly.
+            // This prevents the CPU from spinning in an invalid-SWI loop.
+        }
+
+        _ => {
+            // All other recognised-range SWIs (0x00..=0x2B) not explicitly handled:
+            // silently ignore so the game can continue rather than spinning.
+        }
     }
 }
 
-/// Helper function for IntrWait (SWI 0x04) and VBlankIntrWait (SWI 0x05)
-/// Helper function for IntrWait (SWI 0x04) and VBlankIntrWait (SWI 0x05)
+/// HLE helper: pre-satisfy the VBlank interrupt so IntrWait loops exit immediately.
+/// In a real GBA the CPU would halt; in HLE mode we cannot do that, so we signal
+/// the interrupt as already fired so the game's wait loop sees it satisfied.
+fn hle_signal_vblank(bus: &mut GbaMemoryBus) {
+    // Set IF bit 0 (VBlank) in the hardware Interrupt Flag register
+    let cur_if = bus.read_u16(0x04000202);
+    bus.io[0x202] = (cur_if | 0x0001) as u8;
+    bus.io[0x203] = ((cur_if | 0x0001) >> 8) as u8;
+
+    // Set bit 0 in the BIOS interrupt check word used by IntrWait / VBlankIntrWait
+    let intr_check = bus.read_u16(0x03007FF8);
+    let lo = (intr_check | 0x0001) as u8;
+    let hi = ((intr_check | 0x0001) >> 8) as u8;
+    bus.iwram[0x7FF8] = lo;
+    bus.iwram[0x7FF9] = hi;
+}
+
+/// Helper function for IntrWait (SWI 0x04) and VBlankIntrWait (SWI 0x05).
+/// In HLE mode, pre-satisfy the requested interrupt mask so the game's wait loop
+/// exits on the very next check rather than spinning forever.
 fn handle_intr_wait(regs: &mut Registers, bus: &mut GbaMemoryBus) {
-    let clear_flags = regs.r[0] != 0;
     let irq_mask = regs.r[1] as u16;
 
-    let intr_check = bus.read_u16(0x03007FF8);
-    if clear_flags {
-        bus.write_u16(0x04000202, irq_mask); // Clear IF
-        bus.write_u16(0x03007FF8, (intr_check & !irq_mask) | irq_mask);
-    } else {
-        bus.write_u16(0x03007FF8, intr_check | irq_mask);
-    }
-
-    // Also update PPU IF register
+    // Pre-satisfy: write the requested IRQ bits into IF so the game sees them fired
     let cur_if = bus.read_u16(0x04000202);
-    bus.io[0x202] = (cur_if | irq_mask) as u8;
-    bus.io[0x203] = ((cur_if | irq_mask) >> 8) as u8;
+    let new_if = cur_if | irq_mask;
+    bus.io[0x202] = new_if as u8;
+    bus.io[0x203] = (new_if >> 8) as u8;
+
+    // Also set the BIOS interrupt check word at 0x03007FF8
+    let intr_check = bus.read_u16(0x03007FF8);
+    let new_check = intr_check | irq_mask;
+    bus.iwram[0x7FF8] = new_check as u8;
+    bus.iwram[0x7FF9] = (new_check >> 8) as u8;
 }
 
 /// GBA BIOS LZ77 Decompressor (used by GBA games for graphics & WRAM loading)

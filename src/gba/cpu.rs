@@ -386,21 +386,49 @@ impl Cpu {
         }
     }
 
+    /// Raise CPU Hardware SWI Exception (vector 0x00000008).
+    pub fn trigger_swi(&mut self) {
+        let old_cpsr = self.regs.cpsr;
+        let is_thumb = self.regs.thumb_mode();
+        let return_pc = if is_thumb {
+            self.regs.r[15].wrapping_sub(2) // LR_svc = next instruction after THUMB SWI
+        } else {
+            self.regs.r[15].wrapping_sub(4) // LR_svc = next instruction after ARM SWI
+        };
+
+        self.regs.set_mode(CpuMode::Supervisor);
+        self.regs.set_spsr(old_cpsr);
+        self.regs.set_irq_disabled(true);
+        self.regs.set_thumb_mode(false); // ARM mode
+        self.regs.r[14] = return_pc;      // LR_svc
+        self.regs.r[15] = 0x00000008;     // ARM SWI Exception Vector
+    }
+
     /// Raise CPU Hardware IRQ Exception (vector 0x00000018).
     pub fn trigger_irq(&mut self) {
         if self.regs.irq_disabled() {
             return;
         }
 
+        let is_thumb = self.regs.thumb_mode();
         let old_cpsr = self.regs.cpsr;
-        let return_pc = self.regs.r[15];
+        let current_pc = if is_thumb {
+            self.regs.r[15].wrapping_sub(4)
+        } else {
+            self.regs.r[15].wrapping_sub(8)
+        };
+        let return_pc = if is_thumb {
+            current_pc.wrapping_add(4)
+        } else {
+            current_pc.wrapping_add(4)
+        };
 
         self.regs.set_mode(CpuMode::IRQ);
         self.regs.set_spsr(old_cpsr);
         self.regs.set_irq_disabled(true);
         self.regs.set_thumb_mode(false); // ARM mode
-        self.regs.r[14] = return_pc.wrapping_add(4); // LR_irq = next_pc + 4
-        self.regs.r[15] = 0x00000018; // ARM IRQ Exception Vector
+        self.regs.r[14] = return_pc;      // LR_irq
+        self.regs.r[15] = 0x00000018;     // ARM IRQ Exception Vector
     }
 
     /// Execute single CPU instruction step (ARM 32-bit or THUMB 16-bit).
@@ -411,31 +439,6 @@ impl Cpu {
             self.regs.r[15] & !3
         };
 
-        if pc == self.last_pc {
-            self.pc_repeat_count += 1;
-            if self.pc_repeat_count == 100 {
-                let is_thumb = self.regs.thumb_mode();
-                let opcode = if is_thumb {
-                    bus.read_u16(pc) as u32
-                } else {
-                    bus.read_u32(pc)
-                };
-                log::warn!(
-                    "CPU Loop Warning: PC=0x{:08X} executed 100+ times sequentially! Mode={} CPSR=0x{:08X} Opcode=0x{:08X} R0=0x{:08X} R1=0x{:08X} R2=0x{:08X} R3=0x{:08X}",
-                    pc,
-                    if is_thumb { "THUMB" } else { "ARM" },
-                    self.regs.cpsr,
-                    opcode,
-                    self.regs.r[0],
-                    self.regs.r[1],
-                    self.regs.r[2],
-                    self.regs.r[3]
-                );
-            }
-        } else {
-            self.last_pc = pc;
-            self.pc_repeat_count = 1;
-        }
 
         if self.regs.thumb_mode() {
             // THUMB Mode: 16-bit instruction, 2-byte aligned (R15 reads as pc + 4)
@@ -530,6 +533,7 @@ mod tests {
         let mut cpu = Cpu::new();
         let mut bus = GbaMemoryBus::new();
 
+        cpu.regs.set_pc(0x08000000);
         // Target THUMB address: 0x08000101
         cpu.regs.r[0] = 0x08000101;
         // Load ARM opcode for BX r0 (0xE12FFF10) into ROM at 0x08000000

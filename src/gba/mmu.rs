@@ -10,6 +10,105 @@ pub const IWRAM_SIZE: usize = 32 * 1024;  // 32 KB (0x03000000 - 0x03007FFF)
 pub const IO_SIZE: usize = 1024;          // 1 KB (0x04000000 - 0x040003FE)
 pub const SRAM_SIZE: usize = 64 * 1024;   // 64 KB (0x0E000000 - 0x0E00FFFF)
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlashState {
+    Ready,
+    Cmd1,
+    Cmd2,
+    Erase,
+    Write,
+    Bank,
+}
+
+pub struct FlashMemory {
+    pub data: Vec<u8>,
+    pub state: FlashState,
+    pub identity_mode: bool,
+    pub bank: usize,
+}
+
+impl Default for FlashMemory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FlashMemory {
+    pub fn new() -> Self {
+        Self {
+            data: vec![0xFF; 128 * 1024],
+            state: FlashState::Ready,
+            identity_mode: false,
+            bank: 0,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.state = FlashState::Ready;
+        self.identity_mode = false;
+        self.bank = 0;
+    }
+
+    pub fn read_u8(&self, addr: u32) -> u8 {
+        let offset = (addr & 0xFFFF) as usize;
+        if self.identity_mode {
+            if offset == 0 {
+                return 0x62; // Sanyo Flash 128K chip ID
+            } else if offset == 1 {
+                return 0x13; // Sanyo Manufacturer ID
+            }
+        }
+        let full_idx = offset + self.bank * 0x10000;
+        if full_idx < self.data.len() {
+            self.data[full_idx]
+        } else {
+            0xFF
+        }
+    }
+
+    pub fn write_u8(&mut self, addr: u32, val: u8) {
+        let offset = (addr & 0xFFFF) as usize;
+
+        if offset == 0x5555 && val == 0xAA && self.state == FlashState::Ready {
+            self.state = FlashState::Cmd1;
+        } else if offset == 0x2AAA && val == 0x55 && self.state == FlashState::Cmd1 {
+            self.state = FlashState::Cmd2;
+        } else if offset == 0x5555 && self.state == FlashState::Cmd2 {
+            self.state = FlashState::Ready;
+            match val {
+                0x90 => self.identity_mode = true,
+                0xF0 => self.identity_mode = false,
+                0x80 => self.state = FlashState::Erase,
+                0xA0 => self.state = FlashState::Write,
+                0xB0 => self.state = FlashState::Bank,
+                _ => {}
+            }
+        } else if self.state == FlashState::Erase && offset == 0x5555 && val == 0x10 {
+            self.data.fill(0xFF);
+            self.state = FlashState::Ready;
+        } else if self.state == FlashState::Erase && (offset & 0x0FFF) == 0 && val == 0x30 {
+            let sector_start = (offset & 0xF000) + self.bank * 0x10000;
+            let sector_end = (sector_start + 0x1000).min(self.data.len());
+            self.data[sector_start..sector_end].fill(0xFF);
+            self.state = FlashState::Ready;
+        } else if self.state == FlashState::Write {
+            let full_idx = offset + self.bank * 0x10000;
+            if full_idx < self.data.len() {
+                self.data[full_idx] = val;
+            }
+            self.state = FlashState::Ready;
+        } else if self.state == FlashState::Bank && offset == 0x0000 {
+            self.bank = (val & 1) as usize;
+            self.state = FlashState::Ready;
+        } else if self.state == FlashState::Ready {
+            let full_idx = offset + self.bank * 0x10000;
+            if full_idx < self.data.len() {
+                self.data[full_idx] = val;
+            }
+        }
+    }
+}
+
 /// GBA 32-bit Memory Bus (MMU) handling mapping, byte/halfword/word access,
 /// PPU, Keypad, DMA integration, and Game Pak ROM loading.
 pub struct GbaMemoryBus {
@@ -22,6 +121,8 @@ pub struct GbaMemoryBus {
     pub io: Vec<u8>,
     pub rom: Vec<u8>,
     pub sram: Vec<u8>,
+    pub flash: FlashMemory,
+    pub has_real_bios: bool,
 }
 
 impl Default for GbaMemoryBus {
@@ -42,31 +143,54 @@ impl GbaMemoryBus {
             io: vec![0; IO_SIZE],
             rom: Vec::new(),
             sram: vec![0; SRAM_SIZE],
+            flash: FlashMemory::new(),
+            has_real_bios: false,
         };
         bus.init_hle_bios();
         bus
     }
 
+    /// Check if optional `gba_bios.bin` (16,384 bytes) exists in project root or `bios/` folder.
+    pub fn check_and_load_bios(&mut self) -> bool {
+        let candidate_paths = ["gba_bios.bin", "bios/gba_bios.bin"];
+        for path in &candidate_paths {
+            if let Ok(bytes) = std::fs::read(path) {
+                if bytes.len() == BIOS_SIZE {
+                    self.load_bios(&bytes);
+                    self.has_real_bios = true;
+                    log::info!("Loaded real GBA BIOS (16KB). Booting hardware BIOS sequence.");
+                    return true;
+                }
+            }
+        }
+
+        self.has_real_bios = false;
+        self.init_hle_bios();
+        log::info!("No gba_bios.bin found. Falling back to High-Level Emulation (HLE).");
+        false
+    }
+
     /// Initialize default HLE BIOS ARM IRQ vector at 0x00000018
     pub fn init_hle_bios(&mut self) {
-        let irq_vector_code: [u32; 17] = [
+        let irq_vector_code: [u32; 18] = [
             0xE92D400F, // 0x18: STMFD sp!, {r0-r3, r12, lr}
             0xE3A00604, // 0x1C: MOV r0, #0x04000000
             0xE5901200, // 0x20: LDR r1, [r0, #0x200]
             0xE0012821, // 0x24: AND r2, r1, r1, LSR #16
             0xE1C020B2, // 0x28: STRH r2, [r0, #0x202]
-            0xE59F0024, // 0x2C: LDR r0, [pc, #36] -> 0x03007FF8
+            0xE59F0028, // 0x2C: LDR r0, [pc, #40] -> 0x03007FF8
             0xE1D010B0, // 0x30: LDRH r1, [r0]
             0xE1811002, // 0x34: ORR r1, r1, r2
             0xE1C010B0, // 0x38: STRH r1, [r0]
             0xE5903004, // 0x3C: LDR r3, [r0, #4] -> 0x03007FFC
             0xE3530000, // 0x40: CMP r3, #0
-            0x11A0E00F, // 0x44: MOVNE lr, pc
+            0x128FE005, // 0x44: ADDNE lr, pc, #5 -> 0x0000004D (bit 0 set for THUMB interworking)
             0x112FFF13, // 0x48: BXNE r3
-            0xE8BD400F, // 0x4C: LDMFD sp!, {r0-r3, r12, lr}
-            0xE25EF004, // 0x50: SUBS pc, lr, #4
-            0x00000000, // 0x54: NOP
-            0x03007FF8, // 0x58: Literal pointer to BIOS flags 0x03007FF8
+            0x46C04778, // 0x4C: THUMB [0x4778 = BX PC, 0x46C0 = NOP] (swaps THUMB -> ARM at 0x50)
+            0xE8BD400F, // 0x50: LDMFD sp!, {r0-r3, r12, lr} (ARM mode)
+            0xE25EF004, // 0x54: SUBS pc, lr, #4 (ARM mode)
+            0x00000000, // 0x58: NOP
+            0x03007FF8, // 0x5C: Pointer to 0x03007FF8
         ];
 
         for (i, &instr) in irq_vector_code.iter().enumerate() {
@@ -218,14 +342,54 @@ impl GbaMemoryBus {
                 }
             }
             0x0E | 0x0F => {
-                let offset = (addr & 0xFFFF) as usize;
-                if offset < self.sram.len() {
-                    self.sram[offset]
-                } else {
-                    0
-                }
+                self.flash.read_u8(addr)
             }
             _ => 0,
+        }
+    }
+
+    /// Step hardware timers 0..3 by CPU cycle count and request IRQs on overflow
+    pub fn step_timers(&mut self, cycles: usize) {
+        for i in 0..4 {
+            let cnt_h_addr = 0x04000102 + i * 4;
+            let cnt_h = self.read_u16(cnt_h_addr);
+            let enabled = (cnt_h & (1 << 7)) != 0;
+            let count_up = (cnt_h & (1 << 2)) != 0;
+
+            if enabled && !count_up {
+                let prescaler_shift = match cnt_h & 3 {
+                    0 => 0,
+                    1 => 6,
+                    2 => 8,
+                    _ => 10,
+                };
+
+                let ticks = cycles >> prescaler_shift;
+                if ticks > 0 {
+                    let cnt_l_addr = 0x04000100 + i * 4;
+                    let current_cnt = self.read_u16(cnt_l_addr);
+                    let (next_cnt, overflow) = current_cnt.overflowing_add(ticks as u16);
+                    if overflow {
+                        let reload_lo = self.io[(cnt_l_addr & 0x3FF) as usize] as u16;
+                        let reload_hi = self.io[((cnt_l_addr + 1) & 0x3FF) as usize] as u16;
+                        let reload = reload_lo | (reload_hi << 8);
+
+                        self.io[(cnt_l_addr & 0x3FF) as usize] = reload as u8;
+                        self.io[((cnt_l_addr + 1) & 0x3FF) as usize] = (reload >> 8) as u8;
+
+                        // Trigger Timer IRQ if bit 6 enabled
+                        if (cnt_h & (1 << 6)) != 0 {
+                            let cur_if = self.read_u16(0x04000202);
+                            let new_if = cur_if | (1 << (3 + i));
+                            self.io[0x202] = new_if as u8;
+                            self.io[0x203] = (new_if >> 8) as u8;
+                        }
+                    } else {
+                        self.io[(cnt_l_addr & 0x3FF) as usize] = next_cnt as u8;
+                        self.io[((cnt_l_addr + 1) & 0x3FF) as usize] = (next_cnt >> 8) as u8;
+                    }
+                }
+            }
         }
     }
 
@@ -293,10 +457,7 @@ impl GbaMemoryBus {
                 // Game Pak ROM is read-only
             }
             0x0E | 0x0F => {
-                let offset = (addr & 0xFFFF) as usize;
-                if offset < self.sram.len() {
-                    self.sram[offset] = val;
-                }
+                self.flash.write_u8(addr, val);
             }
             _ => {}
         }
@@ -316,6 +477,11 @@ impl GbaMemoryBus {
                 let b0 = self.iwram[off];
                 let b1 = self.iwram[(off + 1) & 0x7FFF];
                 u16::from_le_bytes([b0, b1])
+            }
+            0x04 => {
+                let lo = self.read_u8(addr) as u16;
+                let hi = self.read_u8(addr.wrapping_add(1)) as u16;
+                lo | (hi << 8)
             }
             0x08..=0x0D => {
                 let rom_off = (addr & 0x01FFFFFF) as usize;
@@ -507,5 +673,30 @@ mod tests {
         assert_eq!(bus.read_u16(0x04000130), 0x03FF); // KEYINPUT active-low default
         bus.keypad.handle_input(crate::core::Button::A, true);
         assert_eq!(bus.read_u16(0x04000130), 0x03FE);
+    }
+
+    #[test]
+    fn test_flash_128k_identity_handshake() {
+        let mut bus = GbaMemoryBus::new();
+
+        // 1. Initial read should return 0xFF
+        assert_eq!(bus.read_u8(0x0E000000), 0xFF);
+
+        // 2. Flash identity handshake sequence (0x5555 -> 0xAA, 0x2AAA -> 0x55, 0x5555 -> 0x90)
+        bus.write_u8(0x0E005555, 0xAA);
+        bus.write_u8(0x0E002AAA, 0x55);
+        bus.write_u8(0x0E005555, 0x90);
+
+        // 3. Verify Sanyo Flash 128K chip identity response
+        assert_eq!(bus.read_u8(0x0E000000), 0x62); // Device ID
+        assert_eq!(bus.read_u8(0x0E000001), 0x13); // Manufacturer ID
+
+        // 4. Exit identity mode (0x5555 -> 0xAA, 0x2AAA -> 0x55, 0x5555 -> 0xF0)
+        bus.write_u8(0x0E005555, 0xAA);
+        bus.write_u8(0x0E002AAA, 0x55);
+        bus.write_u8(0x0E005555, 0xF0);
+
+        // 5. Normal reads should exit identity mode
+        assert_eq!(bus.read_u8(0x0E000000), 0xFF);
     }
 }

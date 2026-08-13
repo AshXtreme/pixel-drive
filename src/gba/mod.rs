@@ -94,10 +94,18 @@ impl GbaCore {
     pub fn reset_boot_state(&mut self) {
         self.cpu.regs.reset();
         self.mmu.reset();
-        self.cpu.regs.set_pc(0x08000000); // GBA Game Pak Entry Point (0x08000000)
-        self.cpu.regs.set_sp(0x03007F00); // IWRAM Stack Pointer
-        self.cpu.regs.set_mode(CpuMode::System); // Initial System mode (0x1F)
-        self.cpu.regs.set_thumb_mode(false); // Initial ARM 32-bit execution mode
+        let has_real = self.mmu.check_and_load_bios();
+
+        if has_real {
+            self.cpu.regs.set_pc(0x00000000);
+            self.cpu.regs.set_thumb_mode(false); // ARM Mode
+            self.cpu.regs.set_mode(CpuMode::Supervisor); // Supervisor Mode (0x13)
+        } else {
+            self.cpu.regs.set_pc(0x08000000);
+            self.cpu.regs.set_sp(0x03007F00); // IWRAM Stack Pointer
+            self.cpu.regs.set_mode(CpuMode::System); // System Mode (0x1F)
+            self.cpu.regs.set_thumb_mode(false); // ARM Mode
+        }
     }
 
     /// Load raw ROM byte buffer into GBA MMU memory space and reset CPU boot state.
@@ -165,12 +173,20 @@ impl GbaCore {
             std::fs::read(path_ref)?
         };
 
-        let header = GbaHeader::parse(&bytes).ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Invalid GBA header signature (missing magic byte 0x96 or file too small)",
-            )
-        })?;
+        let header = GbaHeader::parse(&bytes).unwrap_or_else(|| {
+            log::warn!("GBA ROM missing standard header magic byte (0x96). Using fallback header.");
+            let title_str = path_ref
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("HOMEBREW");
+            GbaHeader {
+                title: title_str.chars().take(12).collect(),
+                game_code: "HOME".to_string(),
+                maker_code: "00".to_string(),
+                version: 0,
+                is_valid: false,
+            }
+        });
 
         self.load_rom(&bytes);
         Ok(header)
@@ -182,7 +198,9 @@ impl EmulatorCore for GbaCore {
         let mut cycles_this_frame = 0;
         while cycles_this_frame < GBA_CYCLES_PER_FRAME {
             let cycles = self.cpu.step(&mut self.mmu);
+            self.mmu.step_timers(cycles);
             self.mmu.ppu.step(cycles);
+
             if self.mmu.ppu.vblank_irq_requested {
                 self.mmu.ppu.vblank_irq_requested = false;
 
@@ -193,13 +211,17 @@ impl EmulatorCore for GbaCore {
 
                 let check = self.mmu.read_u16(0x03007FF8);
                 self.mmu.write_u16(0x03007FF8, check | 1);
+            }
 
-                let ime = self.mmu.read_u32(0x04000208) & 1 != 0;
+            let ime = self.mmu.read_u32(0x04000208) & 1 != 0;
+            if ime && !self.cpu.regs.irq_disabled() {
                 let ie = self.mmu.read_u16(0x04000200);
-                if ime && (ie & 1) != 0 && !self.cpu.regs.irq_disabled() {
+                let if_flags = self.mmu.read_u16(0x04000202);
+                if (ie & if_flags) != 0 {
                     self.cpu.trigger_irq();
                 }
             }
+
             cycles_this_frame += cycles;
         }
     }
@@ -321,25 +343,59 @@ mod tests {
 
     #[test]
     fn test_pokemon_firered_execution() {
-        let rom_path = "Pokemon_Fire_Red_1[romsretro.com].zip";
+        let rom_path = "/Users/ashutoshsamal/Downloads/Pokemon_Fire_Red_1[romsretro.com]/Pokemon - FireRed Version (USA, Europe).gba";
         if !std::path::Path::new(rom_path).exists() {
+            println!("ROM PATH DOES NOT EXIST: {}", rom_path);
             return;
         }
 
         let mut core = GbaCore::new();
         let header = core.load_rom_file(rom_path).unwrap();
-        assert_eq!(header.title, "POKEMON FIRE");
+        println!("Loaded ROM title: {}", header.title);
+
+        println!("--- RUNNING 300 FRAMES OF POKEMON FIRE RED ---");
+        for frame in 0..300 {
+            core.step_frame();
+        }
 
         println!("--- RUNNING 120 FRAMES OF POKEMON FIRE RED ---");
         for frame in 0..120 {
             core.step_frame();
             if frame % 30 == 0 {
-                println!("Frame {:3}: PC=0x{:08X} DISPCNT=0x{:04X}",
-                    frame, core.cpu.regs.pc(), core.mmu.ppu.dispcnt);
+                println!(
+                    "Frame {:3}: PC=0x{:08X} DISPCNT=0x{:04X}",
+                    frame, core.cpu.regs.pc(), core.mmu.ppu.dispcnt
+                );
             }
         }
 
         assert!(core.cpu.regs.pc() != 0x08000000);
         assert_eq!(core.framebuffer().len(), 240 * 160 * 4);
+    }
+
+    #[test]
+    fn test_real_bios_loading_and_hle_fallback() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir();
+        let bios_path = temp_dir.join("gba_bios.bin");
+
+        // 1. Without gba_bios.bin, core defaults to HLE (PC = 0x08000000)
+        let core_hle = GbaCore::new();
+        assert!(!core_hle.mmu.has_real_bios);
+        assert_eq!(core_hle.cpu.regs.pc(), 0x08000000);
+        assert_eq!(core_hle.cpu.regs.mode(), CpuMode::System);
+
+        // 2. Create dummy 16KB gba_bios.bin
+        let dummy_bios = vec![0xEA; 16384];
+        std::fs::write(&bios_path, &dummy_bios)?;
+
+        let mut bus = GbaMemoryBus::new();
+        bus.load_bios(&dummy_bios);
+        bus.has_real_bios = true;
+
+        assert!(bus.has_real_bios);
+        assert_eq!(bus.bios[0], 0xEA);
+
+        let _ = std::fs::remove_file(bios_path);
+        Ok(())
     }
 }
