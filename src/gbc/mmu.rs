@@ -34,6 +34,16 @@ pub struct MemoryBus {
     obj_palette_ram: [u8; 64],
     obpi: u8, // 0xFF6A OBJ Palette Index
     pub palette_ram_written: bool,
+
+    // GBC VRAM DMA (HDMA / GDMA)
+    pub hdma_src: u16,
+    pub hdma_dst: u16,
+    pub hdma_active: bool,
+    pub hdma_blocks_remaining: u8,
+    pub hdma5: u8,
+
+    // GBC Speed Switch (KEY1 - 0xFF4D)
+    pub key1: u8,
 }
 
 #[allow(dead_code)]
@@ -57,6 +67,12 @@ impl MemoryBus {
             obj_palette_ram: [0xFF; 64],
             obpi: 0,
             palette_ram_written: false,
+            hdma_src: 0,
+            hdma_dst: 0,
+            hdma_active: false,
+            hdma_blocks_remaining: 0,
+            hdma5: 0xFF,
+            key1: 0,
         };
 
         // DMG default hardware register values post-boot
@@ -104,7 +120,29 @@ impl MemoryBus {
             0xFE00..=0xFE9F => self.oam[(addr - 0xFE00) as usize],
             0xFEA0..=0xFEFF => 0x00,
             0xFF00 => self.joypad.read_joyp(),
+            0xFF4D => {
+                if self.is_gbc {
+                    (self.key1 & 0x81) | 0x7E
+                } else {
+                    0xFF
+                }
+            }
             0xFF4F => self.vbk | 0xFE,
+            0xFF51 => (self.hdma_src >> 8) as u8,
+            0xFF52 => (self.hdma_src & 0xF0) as u8,
+            0xFF53 => ((self.hdma_dst >> 8) & 0x1F) as u8,
+            0xFF54 => (self.hdma_dst & 0xF0) as u8,
+            0xFF55 => {
+                if self.is_gbc {
+                    if self.hdma_active {
+                        self.hdma_blocks_remaining.wrapping_sub(1) & 0x7F
+                    } else {
+                        0xFF
+                    }
+                } else {
+                    0xFF
+                }
+            }
             0xFF68 => self.bgpi,
             0xFF69 => {
                 let idx = (self.bgpi & 0x3F) as usize;
@@ -165,9 +203,67 @@ impl MemoryBus {
                     self.oam[i as usize] = byte;
                 }
             }
+            0xFF4D => {
+                if self.is_gbc {
+                    self.key1 = (self.key1 & 0x80) | (val & 0x01);
+                }
+            }
             0xFF4F => {
                 self.vbk = val & 0x01;
                 self.io[0x4F] = val;
+            }
+            0xFF51 => {
+                self.hdma_src = (self.hdma_src & 0x00F0) | ((val as u16) << 8);
+            }
+            0xFF52 => {
+                self.hdma_src = (self.hdma_src & 0xFF00) | ((val as u16) & 0xF0);
+            }
+            0xFF53 => {
+                self.hdma_dst = (self.hdma_dst & 0x00F0) | (((val as u16) & 0x1F) << 8);
+            }
+            0xFF54 => {
+                self.hdma_dst = (self.hdma_dst & 0x1F00) | ((val as u16) & 0xF0);
+            }
+            0xFF55 => {
+                if self.is_gbc {
+                    if self.hdma_active {
+                        if (val & 0x80) == 0 {
+                            // Cancel active HDMA transfer
+                            self.hdma_active = false;
+                            self.hdma5 = (self.hdma_blocks_remaining.wrapping_sub(1) & 0x7F) | 0x80;
+                            return;
+                        }
+                    }
+
+                    let blocks = (val & 0x7F) + 1;
+                    let is_hblank_dma = (val & 0x80) != 0;
+
+                    if is_hblank_dma {
+                        self.hdma_active = true;
+                        self.hdma_blocks_remaining = blocks;
+                        self.hdma5 = val & 0x7F;
+                    } else {
+                        // General Purpose DMA (GDMA) - immediate copy
+                        let bytes_to_copy = blocks as usize * 16;
+                        let src_base = self.hdma_src & 0xFFF0;
+                        let dst_base = 0x8000 | (self.hdma_dst & 0x1FF0);
+                        let bank_offset = (self.vbk & 1) as usize * 0x2000;
+
+                        for i in 0..bytes_to_copy {
+                            let byte = self.read_byte(src_base.wrapping_add(i as u16));
+                            let offset = (dst_base.wrapping_add(i as u16) - 0x8000) as usize;
+                            if offset < 0x2000 {
+                                self.vram[bank_offset + offset] = byte;
+                            }
+                        }
+
+                        self.hdma_src = self.hdma_src.wrapping_add(bytes_to_copy as u16);
+                        self.hdma_dst = self.hdma_dst.wrapping_add(bytes_to_copy as u16);
+                        self.hdma_active = false;
+                        self.hdma_blocks_remaining = 0;
+                        self.hdma5 = 0xFF;
+                    }
+                }
             }
             0xFF68 => self.bgpi = val,
             0xFF69 => {
@@ -197,6 +293,46 @@ impl MemoryBus {
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
             0xFFFF => self.ie = val,
         }
+    }
+
+    /// Performs a single 16-byte HBlank DMA transfer if HDMA is currently active.
+    pub fn step_hdma_block(&mut self) {
+        if self.is_gbc && self.hdma_active && self.hdma_blocks_remaining > 0 {
+            let src_base = self.hdma_src & 0xFFF0;
+            let dst_base = 0x8000 | (self.hdma_dst & 0x1FF0);
+            let bank_offset = (self.vbk & 1) as usize * 0x2000;
+
+            for i in 0..16 {
+                let byte = self.read_byte(src_base.wrapping_add(i));
+                let offset = (dst_base.wrapping_add(i) - 0x8000) as usize;
+                if offset < 0x2000 {
+                    self.vram[bank_offset + offset] = byte;
+                }
+            }
+
+            self.hdma_src = self.hdma_src.wrapping_add(16);
+            self.hdma_dst = self.hdma_dst.wrapping_add(16);
+            self.hdma_blocks_remaining -= 1;
+
+            if self.hdma_blocks_remaining == 0 {
+                self.hdma_active = false;
+                self.hdma5 = 0xFF;
+            }
+        }
+    }
+
+    /// Checks if KEY1 is prepared for speed switch, toggles speed, and clears prepare bit.
+    pub fn switch_speed_if_prepared(&mut self) -> bool {
+        if self.is_gbc && (self.key1 & 0x01) != 0 {
+            self.key1 = (self.key1 ^ 0x80) & 0x80;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn is_double_speed(&self) -> bool {
+        (self.key1 & 0x80) != 0
     }
 
     /// Directly sets STAT register without triggering write logic.
@@ -232,9 +368,13 @@ impl MemoryBus {
         let byte_high = self.bg_palette_ram[offset + 1] as u16;
         let raw_color = (byte_high << 8) | byte_low;
 
-        let r = ((raw_color & 0x001F) as u8) * 8;
-        let g = (((raw_color >> 5) & 0x001F) as u8) * 8;
-        let b = (((raw_color >> 10) & 0x001F) as u8) * 8;
+        let r5 = (raw_color & 0x001F) as u8;
+        let g5 = ((raw_color >> 5) & 0x001F) as u8;
+        let b5 = ((raw_color >> 10) & 0x001F) as u8;
+
+        let r = (r5 << 3) | (r5 >> 2);
+        let g = (g5 << 3) | (g5 >> 2);
+        let b = (b5 << 3) | (b5 >> 2);
 
         (r, g, b)
     }
@@ -246,9 +386,13 @@ impl MemoryBus {
         let byte_high = self.obj_palette_ram[offset + 1] as u16;
         let raw_color = (byte_high << 8) | byte_low;
 
-        let r = ((raw_color & 0x001F) as u8) * 8;
-        let g = (((raw_color >> 5) & 0x001F) as u8) * 8;
-        let b = (((raw_color >> 10) & 0x001F) as u8) * 8;
+        let r5 = (raw_color & 0x001F) as u8;
+        let g5 = ((raw_color >> 5) & 0x001F) as u8;
+        let b5 = ((raw_color >> 10) & 0x001F) as u8;
+
+        let r = (r5 << 3) | (r5 >> 2);
+        let g = (g5 << 3) | (g5 >> 2);
+        let b = (b5 << 3) | (b5 >> 2);
 
         (r, g, b)
     }
@@ -302,8 +446,32 @@ mod tests {
         bus.write_byte(0xFF69, 0x00); // High byte
 
         let (r, g, b) = bus.get_bg_palette_color(0, 0);
-        assert_eq!(r, 248);
+        assert_eq!(r, 255);
         assert_eq!(g, 0);
         assert_eq!(b, 0);
+    }
+
+    #[test]
+    fn test_gbc_gdma_transfer() {
+        let mut bus = MemoryBus::new();
+        bus.is_gbc = true;
+
+        // Write 32 bytes to WRAM at 0xC000
+        for i in 0..32 {
+            bus.write_byte(0xC000 + i, (i + 1) as u8);
+        }
+
+        // Setup GDMA from 0xC000 to VRAM 0x8000 (2 blocks of 16 bytes = 32 bytes)
+        bus.write_byte(0xFF51, 0xC0); // Source High
+        bus.write_byte(0xFF52, 0x00); // Source Low
+        bus.write_byte(0xFF53, 0x00); // Dest High (0x8000)
+        bus.write_byte(0xFF54, 0x00); // Dest Low
+        bus.write_byte(0xFF55, 0x01); // 2 blocks, GDMA (bit 7 = 0)
+
+        // Verify VRAM received the 32 bytes
+        for i in 0..32 {
+            assert_eq!(bus.read_vram_bank(0x8000 + i, 0), (i + 1) as u8);
+        }
+        assert_eq!(bus.read_byte(0xFF55), 0xFF);
     }
 }

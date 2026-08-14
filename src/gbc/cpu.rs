@@ -438,6 +438,7 @@ impl Cpu {
             // STOP (2-byte instruction)
             0x10 => {
                 let _ = self.fetch_u8(bus);
+                bus.switch_speed_if_prepared();
                 4
             }
 

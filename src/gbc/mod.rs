@@ -207,12 +207,27 @@ mod tests {
         assert!(core.mmu.is_gbc);
         assert_eq!(core.cpu.registers.a, 0x11);
 
-        // Step 120 frames
-        for _ in 0..120 {
+        // Step 240 frames and trigger inputs
+        for f in 0..240 {
+            if f == 60 {
+                core.handle_input(Button::Start, true);
+            } else if f == 70 {
+                core.handle_input(Button::Start, false);
+            } else if f == 120 {
+                core.handle_input(Button::A, true);
+            } else if f == 130 {
+                core.handle_input(Button::A, false);
+            }
             core.step_frame();
         }
 
         assert!(core.cpu.registers.pc != 0x0100);
+        // Verify VRAM received font and map data via HDMA / GDMA
+        let vram_non_zero = (0x8000..0x9FFF).filter(|&a| core.mmu.read_byte(a) != 0).count();
+        assert!(vram_non_zero > 0, "VRAM should contain tile data loaded by HDMA");
+
+        let active_pixels = core.ppu.framebuffer().chunks(4).filter(|p| p[0] != 255 || p[1] != 255 || p[2] != 255).count();
+        assert!(active_pixels > 0, "Framebuffer should have rendered pixels");
     }
 }
 
