@@ -1,107 +1,79 @@
-# PixelDrive
+# 🕹️ PixelDrive
 
 ![Rust](https://img.shields.io/badge/Language-Rust-orange.svg)
-![Platform](https://img.shields.io/badge/Platform-macOS-lightgrey.svg)
+![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)
 ![License](https://img.shields.io/badge/License-MIT-blue.svg)
 ![Target](https://img.shields.io/badge/Target-60%20FPS-green.svg)
 
-> **Unified macOS GBC/GBA Emulator in Rust**
-
-PixelDrive is a high-performance, single-window macOS handheld emulator built entirely in safe Rust. It unifies Game Boy / Game Boy Color (8-bit) and Game Boy Advance (32-bit) emulation into a single, cohesive desktop application.
+A modern, high-performance Game Boy (GB / GBC) and Game Boy Advance (GBA) emulator built in **Rust**, powered by **WGPU** for hardware-accelerated rendering and a dynamic **Libretro Core Bridge**.
 
 ---
 
-## 🔑 Key Features
+## ✨ Features
 
-- **Single Native Window:** Unified macOS app window handling game selection, rendering, audio, and inputs.
-- **Metal Acceleration:** Hardware-accelerated 2D surface rendering targeting a rock-solid 60 FPS via `pixels` / `wgpu`.
-- **Drag-and-Drop ROM Ingestion:** Seamlessly drag `.gb`, `.gbc`, or `.gba` files directly into the window to hot-swap cores automatically.
-- **Trait-Based Core Architecture:** Clean decoupling of windowing system and hardware emulation engines.
-- **Low-Latency Stereo Audio:** Direct audio sample piping via `cpal` to macOS audio outputs.
+- **Multi-System Architecture:**
+  - **Game Boy / Game Boy Color:** Native pure-Rust cycle-accurate emulation core with full HDMA, GBC palette RAM, and MBC1/3/5 support.
+  - **Game Boy Advance:** High-performance dynamic Libretro core bridge (mGBA) via `libloading` with automatic fallback.
+- **Modern Hardware Rendering:** Built on `wgpu` with native support for **Metal (macOS / Apple Silicon)**, **Vulkan (Linux / Windows)**, and **DirectX 12**.
+- **Archive & ROM Support:** Drag-and-drop `.gb`, `.gbc`, `.gba` files, or compressed `.zip` archives directly into the window.
+- **Low Latency & High FPS:** Smooth 60 FPS frame synchronization with zero tearing.
+- **Cross-Platform:** Designed for macOS, Linux, and Windows.
 
 ---
 
-## 🏗 Architecture Overview
+## 🎮 Controls
 
-PixelDrive separates the macOS application shell (`src/frontend/`) from hardware emulation engines through a shared `EmulatorCore` trait (`src/core/`):
+| GBA / GBC Button | Keyboard Mapping | Secondary Mapping |
+| :--- | :--- | :--- |
+| **D-Pad Up** | `Up Arrow` | `W` |
+| **D-Pad Down** | `Down Arrow` | `S` |
+| **D-Pad Left** | `Left Arrow` | `A` |
+| **D-Pad Right** | `Right Arrow` | `D` |
+| **A Button** | `Z` | `J` |
+| **B Button** | `X` | `K` |
+| **L Shoulder** | `A` | `Q` |
+| **R Shoulder** | `S` | `E` |
+| **Start** | `Enter` | — |
+| **Select** | `Right Shift` | `Backspace` |
 
-```text
-┌────────────────────────────────────────────────────────────────────────┐
-│                        PixelDrive macOS Frontend                       │
-│            (winit event loop + pixels framebuffer + cpal)              │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    │
-                     ┌──────────────┴──────────────┐
-                     │  EmulatorCore (Rust Trait) │
-                     └──────────────┬──────────────┘
-                                    │
-                   ┌────────────────┴────────────────┐
-                   ▼                                 ▼
-        ┌─────────────────────┐           ┌─────────────────────┐
-        │     GbcCore         │           │     GbaCore         │
-        │  - Sharp LR35902    │           │  - ARM7TDMI Core    │
-        │  - 160x144 Frame    │           │  - 240x160 Frame    │
-        │  - 4-Channel APU    │           │  - DirectSound APU  │
-        └─────────────────────┘           └─────────────────────┘
+---
+
+## 🚀 Getting Started
+
+### 1. Prerequisites
+
+- [Rust & Cargo](https://www.rust-lang.org/tools/install) (1.75+ recommended)
+
+### 2. Setting Up GBA Cores
+
+PixelDrive uses dynamic Libretro cores for GBA emulation. Place the compiled core library for your platform inside the `cores/` directory in the project root:
+
+```bash
+mkdir -p cores
+# macOS (Apple Silicon / Intel):
+# Place mgba_libretro.dylib in cores/
+
+# Linux:
+# Place mgba_libretro.so in cores/
+
+# Windows:
+# Place mgba_libretro.dll in cores/
 ```
 
-- **Frontend (`src/frontend/`):** Manages `winit` event loop, Metal pixel scaling, drag-and-drop file ingestion, and `cpal` audio buffers.
-- **Unified Trait (`src/core/`):** `EmulatorCore` trait defines `step_frame()`, `framebuffer()`, `display_dimensions()`, `handle_input()`, and `audio_buffer()`.
-- **Hardware Cores (`src/gbc/`, `src/gba/`):**
-  - **GBC Engine:** Sharp LR35902 CPU, 64 KB memory bus, scanline PPU, and 4-channel APU.
-  - **GBA Engine:** 32-bit ARM7TDMI processor (ARM & THUMB modes), 32-bit memory layout, tilemap & bitmap PPU modes, DirectSound APU.
+### 3. Build & Run
 
----
-
-## 🛠 Tech Stack
-
-- **`Rust`** (2021 edition): Safe, zero-cost abstractions for fast emulation logic.
-- **`winit`**: Native macOS window management and event loop handling.
-- **`pixels`**: Metal-backed hardware-accelerated 2D pixel buffer surface.
-- **`cpal`**: Low-latency cross-platform audio output rendering.
-- **`log` / `env_logger`**: Standard logging abstractions and stdout formatting.
-
----
-
-## 🚀 How to Build & Run
-
-### Prerequisites
-- macOS (Apple Silicon M1/M2/M3/M4 or Intel)
-- Rust toolchain (`cargo` & `rustc`)
-
-### Build
 ```bash
+# Build release binary
 cargo build --release
-```
 
-### Run
-```bash
+# Run emulator
 cargo run --release
+
+# Or launch directly with a ROM:
+cargo run --release -- path/to/game.gba
+# or
+cargo run --release -- path/to/game.gbc
 ```
-
----
-
-## 🗺 Project Roadmap
-
-- [x] **Phase 1: Project Setup & Window Shell**
-  - Initialize Cargo workspace and module structure.
-  - Setup `winit` event loop and `pixels` framebuffer renderer.
-  - Define `EmulatorCore` trait interface and fallback animated test grid.
-
-- [ ] **Phase 2: Game Boy / GBC Core Engine**
-  - Implement Sharp LR35902 opcode interpreter.
-  - Build 64 KB memory bus & MBC bank switching (MBC1/3/5).
-  - Add scanline PPU renderer, keyboard input mapping, and ROM parsing.
-
-- [ ] **Phase 3: Game Boy Advance Core Engine**
-  - Build ARM7TDMI execution pipeline (ARM and THUMB mode decoders).
-  - Implement 32-bit memory map (EWRAM, IWRAM, VRAM, ROM).
-  - Add GBA PPU modes (0–5 tilemap & affine bitmap rendering) and DirectSound FIFO.
-
-- [ ] **Phase 4: Audio, Persistence & App Packaging**
-  - Connect low-latency `cpal` audio stream buffers.
-  - Enable persistent `.sav` SRAM battery saves.
-  - Package standalone macOS `PixelDrive.app` bundle.
 
 ---
 
