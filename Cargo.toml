@@ -11,4 +11,6 @@ pixels = "0.13"
 log = "0.4"
 env_logger = "0.11"
 zip = "2.1"
+libloading = "0.8"
+
 

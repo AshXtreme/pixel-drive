@@ -81,9 +81,14 @@ fn load_rom_from_path(
             let mut gba = GbaCore::new();
             match gba.load_rom_file(path) {
                 Ok(header) => {
+                    let backend_label = if let Some(ref lr) = gba.libretro {
+                        format!(" [Libretro: {}]", lr.library_name)
+                    } else {
+                        "".to_string()
+                    };
                     let title = format!(
-                        "PixelDrive - GBA: {} [{}]",
-                        header.title, header.game_code
+                        "PixelDrive - GBA: {} [{}]{}",
+                        header.title, header.game_code, backend_label
                     );
                     *active_core = Box::new(gba);
                     apply_core_switch(active_core, core_width, core_height, pixels, window);
@@ -100,9 +105,14 @@ fn load_rom_from_path(
             info!("Ingesting ZIP ROM archive: {}", path.display());
             let mut gba = GbaCore::new();
             if let Ok(header) = gba.load_rom_file(path) {
+                let backend_label = if let Some(ref lr) = gba.libretro {
+                    format!(" [Libretro: {}]", lr.library_name)
+                } else {
+                    "".to_string()
+                };
                 let title = format!(
-                    "PixelDrive - GBA: {} [{}]",
-                    header.title, header.game_code
+                    "PixelDrive - GBA: {} [{}]{}",
+                    header.title, header.game_code, backend_label
                 );
                 *active_core = Box::new(gba);
                 apply_core_switch(active_core, core_width, core_height, pixels, window);
@@ -128,9 +138,14 @@ fn load_rom_from_path(
             info!("Unknown extension '.{}', auto-detecting core: {}", ext, path.display());
             let mut gba = GbaCore::new();
             if let Ok(header) = gba.load_rom_file(path) {
+                let backend_label = if let Some(ref lr) = gba.libretro {
+                    format!(" [Libretro: {}]", lr.library_name)
+                } else {
+                    "".to_string()
+                };
                 let title = format!(
-                    "PixelDrive - GBA: {} [{}]",
-                    header.title, header.game_code
+                    "PixelDrive - GBA: {} [{}]{}",
+                    header.title, header.game_code, backend_label
                 );
                 *active_core = Box::new(gba);
                 apply_core_switch(active_core, core_width, core_height, pixels, window);

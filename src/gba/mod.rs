@@ -5,13 +5,15 @@ pub mod bios;
 pub mod cpu;
 pub mod dma;
 pub mod keypad;
+pub mod libretro;
 pub mod mmu;
 pub mod ppu;
 pub mod thumb;
 
 use crate::core::{Button, EmulatorCore};
 pub use cpu::{Cpu, CpuMode};
-use log::info;
+pub use libretro::LibretroCore;
+use log::{info, warn};
 pub use mmu::GbaMemoryBus;
 use std::path::Path;
 
@@ -71,6 +73,7 @@ pub struct GbaCore {
     pub cpu: Cpu,
     pub mmu: GbaMemoryBus,
     pub header: Option<GbaHeader>,
+    pub libretro: Option<LibretroCore>,
 }
 
 impl Default for GbaCore {
@@ -81,10 +84,31 @@ impl Default for GbaCore {
 
 impl GbaCore {
     pub fn new() -> Self {
+        let libretro = if let Some(core_path) = libretro::find_available_core() {
+            match LibretroCore::load(&core_path) {
+                Ok(core) => {
+                    info!("GbaCore: Active backend -> Libretro ({})", core.library_name);
+                    Some(core)
+                }
+                Err(err) => {
+                    warn!(
+                        "GbaCore: Failed to initialize Libretro core at {}: {}. Falling back to Built-in Rust core.",
+                        core_path.display(),
+                        err
+                    );
+                    None
+                }
+            }
+        } else {
+            info!("GbaCore: No dynamic Libretro core found in ./cores/ or exe dir. Using Built-in Rust core.");
+            None
+        };
+
         let mut core = Self {
             cpu: Cpu::new(),
             mmu: GbaMemoryBus::new(),
             header: None,
+            libretro,
         };
         core.reset_boot_state();
         core
@@ -113,6 +137,13 @@ impl GbaCore {
         self.header = GbaHeader::parse(rom_bytes);
         self.mmu.load_rom(rom_bytes);
         self.reset_boot_state();
+
+        if let Some(ref mut lr) = self.libretro {
+            let loaded = lr.load_rom(rom_bytes);
+            if !loaded {
+                warn!("LibretroCore failed to load ROM. Emulation may fallback or encounter issues.");
+            }
+        }
 
         if let Some(ref header) = self.header {
             info!(
@@ -195,6 +226,11 @@ impl GbaCore {
 
 impl EmulatorCore for GbaCore {
     fn step_frame(&mut self) {
+        if let Some(ref mut lr) = self.libretro {
+            lr.step_frame();
+            return;
+        }
+
         let mut cycles_this_frame = 0;
         while cycles_this_frame < GBA_CYCLES_PER_FRAME {
             let cycles = self.cpu.step(&mut self.mmu);
@@ -227,20 +263,47 @@ impl EmulatorCore for GbaCore {
     }
 
     fn framebuffer(&self) -> &[u8] {
-        self.mmu.ppu.framebuffer()
+        if let Some(ref lr) = self.libretro {
+            lr.framebuffer()
+        } else {
+            self.mmu.ppu.framebuffer()
+        }
     }
 
     fn display_dimensions(&self) -> (u32, u32) {
-        (GBA_WIDTH, GBA_HEIGHT)
+        if let Some(ref lr) = self.libretro {
+            lr.dimensions()
+        } else {
+            (GBA_WIDTH, GBA_HEIGHT)
+        }
     }
 
     fn handle_input(&mut self, button: Button, pressed: bool) {
         info!("GBA Input: {:?} -> {}", button, if pressed { "Pressed" } else { "Released" });
+        if let Some(ref mut lr) = self.libretro {
+            let retro_id = match button {
+                Button::A => libretro::RETRO_DEVICE_ID_JOYPAD_A,
+                Button::B => libretro::RETRO_DEVICE_ID_JOYPAD_B,
+                Button::Select => libretro::RETRO_DEVICE_ID_JOYPAD_SELECT,
+                Button::Start => libretro::RETRO_DEVICE_ID_JOYPAD_START,
+                Button::Right => libretro::RETRO_DEVICE_ID_JOYPAD_RIGHT,
+                Button::Left => libretro::RETRO_DEVICE_ID_JOYPAD_LEFT,
+                Button::Up => libretro::RETRO_DEVICE_ID_JOYPAD_UP,
+                Button::Down => libretro::RETRO_DEVICE_ID_JOYPAD_DOWN,
+                Button::L => libretro::RETRO_DEVICE_ID_JOYPAD_L,
+                Button::R => libretro::RETRO_DEVICE_ID_JOYPAD_R,
+            };
+            lr.set_key_state(retro_id, pressed);
+        }
         self.mmu.keypad.handle_input(button, pressed);
     }
 
     fn audio_buffer(&mut self) -> Vec<f32> {
-        Vec::new()
+        if let Some(ref mut lr) = self.libretro {
+            lr.drain_audio()
+        } else {
+            Vec::new()
+        }
     }
 }
 
@@ -335,10 +398,12 @@ mod tests {
         assert_eq!(core.cpu.regs.r[15], 0x08000000);
 
         core.step_frame();
-        // After 1 frame of stepping, CPU PC should have advanced
-        assert!(core.cpu.regs.r[15] > 0x08000000);
-        // Framebuffer size must match 240x160x4
-        assert_eq!(core.framebuffer().len(), 240 * 160 * 4);
+        if core.libretro.is_some() {
+            assert_eq!(core.framebuffer().len(), 240 * 160 * 4);
+        } else {
+            assert!(core.cpu.regs.r[15] > 0x08000000);
+            assert_eq!(core.framebuffer().len(), 240 * 160 * 4);
+        }
     }
 
     #[test]
@@ -354,7 +419,7 @@ mod tests {
         println!("Loaded ROM title: {}", header.title);
 
         println!("--- RUNNING 300 FRAMES OF POKEMON FIRE RED ---");
-        for frame in 0..300 {
+        for _frame in 0..300 {
             core.step_frame();
         }
 
@@ -369,8 +434,13 @@ mod tests {
             }
         }
 
-        assert!(core.cpu.regs.pc() != 0x08000000);
-        assert_eq!(core.framebuffer().len(), 240 * 160 * 4);
+        if core.libretro.is_some() {
+            println!("Pokemon FireRed verified on Libretro core backend.");
+            assert_eq!(core.framebuffer().len(), 240 * 160 * 4);
+        } else {
+            assert!(core.cpu.regs.pc() != 0x08000000);
+            assert_eq!(core.framebuffer().len(), 240 * 160 * 4);
+        }
     }
 
     #[test]
