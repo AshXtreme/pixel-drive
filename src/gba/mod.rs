@@ -114,6 +114,13 @@ impl GbaCore {
         core
     }
 
+    /// Set or update the audio sample producer on the active Libretro core backend.
+    pub fn set_audio_producer(&mut self, producer: Option<crate::audio::AudioProducer>) {
+        if let Some(ref mut lr) = self.libretro {
+            lr.set_audio_producer(producer);
+        }
+    }
+
     /// Reset CPU registers and CPSR flags to hardware default boot state.
     pub fn reset_boot_state(&mut self) {
         self.cpu.regs.reset();

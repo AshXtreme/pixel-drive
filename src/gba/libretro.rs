@@ -159,6 +159,7 @@ pub struct BridgeState {
     pub height: u32,
     pub key_states: [bool; 16],
     pub audio_samples: Vec<f32>,
+    pub audio_producer: Option<crate::audio::AudioProducer>,
     pub system_dir: Option<std::ffi::CString>,
     pub save_dir: Option<std::ffi::CString>,
 }
@@ -409,8 +410,12 @@ unsafe extern "C" fn retro_video_refresh_cb(
 unsafe extern "C" fn retro_audio_sample_cb(left: i16, right: i16) {
     if let Ok(mut lock) = BRIDGE_STATE.lock() {
         if let Some(ref mut state) = *lock {
-            state.audio_samples.push(left as f32 / 32768.0);
-            state.audio_samples.push(right as f32 / 32768.0);
+            if let Some(ref prod) = state.audio_producer {
+                prod.push_i16_pair(left, right);
+            } else {
+                state.audio_samples.push(left as f32 / 32768.0);
+                state.audio_samples.push(right as f32 / 32768.0);
+            }
         }
     }
 }
@@ -422,8 +427,12 @@ unsafe extern "C" fn retro_audio_sample_batch_cb(data: *const i16, frames: usize
     if let Ok(mut lock) = BRIDGE_STATE.lock() {
         if let Some(ref mut state) = *lock {
             let slice = std::slice::from_raw_parts(data, frames * 2);
-            for &s in slice {
-                state.audio_samples.push(s as f32 / 32768.0);
+            if let Some(ref prod) = state.audio_producer {
+                prod.push_i16_slice(slice);
+            } else {
+                for &s in slice {
+                    state.audio_samples.push(s as f32 / 32768.0);
+                }
             }
         }
     }
@@ -539,6 +548,7 @@ impl LibretroCore {
                 height: 160,
                 key_states: [false; 16],
                 audio_samples: Vec::new(),
+                audio_producer: None,
                 system_dir,
                 save_dir,
             });
@@ -656,6 +666,16 @@ impl LibretroCore {
                 self.av_info.timing.fps,
                 self.av_info.timing.sample_rate
             );
+
+            if self.av_info.timing.sample_rate > 0.0 {
+                if let Ok(lock) = BRIDGE_STATE.lock() {
+                    if let Some(ref state) = *lock {
+                        if let Some(ref prod) = state.audio_producer {
+                            prod.set_input_sample_rate(self.av_info.timing.sample_rate);
+                        }
+                    }
+                }
+            }
         } else {
             error!("Libretro Core failed to load ROM!");
         }
@@ -719,6 +739,16 @@ impl LibretroCore {
         }
     }
 
+    /// Set or update the active audio sample producer.
+    pub fn set_audio_producer(&mut self, producer: Option<crate::audio::AudioProducer>) {
+        if let Some(ref prod) = producer {
+            if self.av_info.timing.sample_rate > 0.0 {
+                prod.set_input_sample_rate(self.av_info.timing.sample_rate);
+            }
+        }
+        set_global_audio_producer(producer);
+    }
+
     /// Drain queued audio samples.
     pub fn drain_audio(&mut self) -> Vec<f32> {
         if let Ok(mut lock) = BRIDGE_STATE.lock() {
@@ -727,6 +757,15 @@ impl LibretroCore {
             }
         }
         Vec::new()
+    }
+}
+
+/// Set global AudioProducer on active BridgeState.
+pub fn set_global_audio_producer(producer: Option<crate::audio::AudioProducer>) {
+    if let Ok(mut lock) = BRIDGE_STATE.lock() {
+        if let Some(ref mut state) = *lock {
+            state.audio_producer = producer;
+        }
     }
 }
 
@@ -876,6 +915,10 @@ mod tests {
         let mut core = LibretroCore::load(&core_path).expect("Failed to load mgba_libretro.dylib");
         assert_eq!(core.library_name, "mGBA");
 
+        // Connect AudioProducer ring buffer
+        let (producer, cons) = crate::audio::AudioProducer::new_pair(4096 * 2);
+        core.set_audio_producer(Some(producer));
+
         let rom_path = "/Users/ashutoshsamal/Downloads/Pokemon_Fire_Red_1[romsretro.com]/Pokemon - FireRed Version (USA, Europe).gba";
         if Path::new(rom_path).exists() {
             let rom_bytes = std::fs::read(rom_path).expect("Failed to read test ROM");
@@ -896,6 +939,9 @@ mod tests {
             }
 
             assert_eq!(core.framebuffer().len(), 240 * 160 * 4);
+            // Verify audio samples were pushed into ring buffer
+            use ringbuf::traits::Observer;
+            assert!(cons.occupied_len() > 0, "mGBA should produce audio samples");
         }
     }
 }

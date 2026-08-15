@@ -1,7 +1,9 @@
+mod audio;
 mod core;
 mod gba;
 mod gbc;
 
+use audio::{AudioPlayer, AudioProducer};
 use core::{Button, EmulatorCore};
 use gba::GbaCore;
 use gbc::GbcCore;
@@ -49,6 +51,7 @@ fn load_rom_from_path(
     core_height: &mut u32,
     pixels: &mut Pixels,
     window: &winit::window::Window,
+    audio_producer: &Option<AudioProducer>,
 ) -> bool {
     let ext = path
         .extension()
@@ -79,6 +82,7 @@ fn load_rom_from_path(
         "gba" => {
             info!("Ingesting Game Boy Advance ROM: {}", path.display());
             let mut gba = GbaCore::new();
+            gba.set_audio_producer(audio_producer.clone());
             match gba.load_rom_file(path) {
                 Ok(header) => {
                     let backend_label = if let Some(ref lr) = gba.libretro {
@@ -104,6 +108,7 @@ fn load_rom_from_path(
         "zip" => {
             info!("Ingesting ZIP ROM archive: {}", path.display());
             let mut gba = GbaCore::new();
+            gba.set_audio_producer(audio_producer.clone());
             if let Ok(header) = gba.load_rom_file(path) {
                 let backend_label = if let Some(ref lr) = gba.libretro {
                     format!(" [Libretro: {}]", lr.library_name)
@@ -137,6 +142,7 @@ fn load_rom_from_path(
         _ => {
             info!("Unknown extension '.{}', auto-detecting core: {}", ext, path.display());
             let mut gba = GbaCore::new();
+            gba.set_audio_producer(audio_producer.clone());
             if let Ok(header) = gba.load_rom_file(path) {
                 let backend_label = if let Some(ref lr) = gba.libretro {
                     format!(" [Libretro: {}]", lr.library_name)
@@ -176,6 +182,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let event_loop = EventLoop::new()?;
 
+    // Initialize Host Audio Player & Ring Buffer Producer
+    let (audio_player, audio_producer) = match AudioPlayer::new() {
+        Ok(player) => {
+            let prod = player.producer();
+            (Some(player), Some(prod))
+        }
+        Err(err) => {
+            warn!("Failed to initialize audio player: {}. Audio output will be disabled.", err);
+            (None, None)
+        }
+    };
+
+    if let Some(ref prod) = audio_producer {
+        gba::libretro::set_global_audio_producer(Some(prod.clone()));
+    }
+
     // Active emulator core defaults to GBC Core (160x144)
     let mut active_core: Box<dyn EmulatorCore> = Box::new(GbcCore::new());
     let (mut core_width, mut core_height) = active_core.display_dimensions();
@@ -201,7 +223,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let cli_path = std::path::PathBuf::from(cli_rom_arg);
         if cli_path.exists() {
             info!("CLI ROM argument detected: {}", cli_path.display());
-            load_rom_from_path(&cli_path, &mut active_core, &mut core_width, &mut core_height, &mut pixels, &window);
+            load_rom_from_path(
+                &cli_path,
+                &mut active_core,
+                &mut core_width,
+                &mut core_height,
+                &mut pixels,
+                &window,
+                &audio_producer,
+            );
         } else {
             warn!("CLI ROM file path does not exist: {}", cli_path.display());
         }
@@ -230,7 +260,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 WindowEvent::DroppedFile(path) => {
                     info!("ROM Drag & Drop detected: {:?}", path);
-                    load_rom_from_path(&path, &mut active_core, &mut core_width, &mut core_height, &mut pixels, &window);
+                    load_rom_from_path(
+                        &path,
+                        &mut active_core,
+                        &mut core_width,
+                        &mut core_height,
+                        &mut pixels,
+                        &window,
+                        &audio_producer,
+                    );
+                }
+
+                WindowEvent::Focused(focused) => {
+                    if let Some(ref player) = audio_player {
+                        if focused {
+                            player.resume();
+                        } else {
+                            player.pause();
+                        }
+                    }
                 }
 
                 WindowEvent::KeyboardInput {
@@ -264,6 +312,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 WindowEvent::RedrawRequested => {
                     active_core.step_frame();
+
+                    // Forward any core-buffered audio samples to host stream
+                    let audio_samples = active_core.audio_buffer();
+                    if !audio_samples.is_empty() {
+                        if let Some(ref prod) = audio_producer {
+                            prod.push_f32_slice(&audio_samples);
+                        }
+                    }
 
                     let frame = pixels.frame_mut();
                     let fb = active_core.framebuffer();
