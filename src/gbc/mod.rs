@@ -1,3 +1,4 @@
+pub mod apu;
 pub mod cpu;
 pub mod joypad;
 pub mod mbc;
@@ -5,6 +6,7 @@ pub mod mmu;
 pub mod ppu;
 pub mod timer;
 
+use crate::audio::AudioProducer;
 use crate::core::{Button, EmulatorCore};
 use cpu::Cpu;
 use log::info;
@@ -24,6 +26,7 @@ pub struct GbcCore {
     pub timer: Timer,
     pub is_rom_loaded: bool,
     frame_count: u32,
+    audio_producer: Option<AudioProducer>,
 }
 
 impl GbcCore {
@@ -35,7 +38,14 @@ impl GbcCore {
             timer: Timer::new(),
             is_rom_loaded: false,
             frame_count: 0,
+            audio_producer: None,
         }
+    }
+
+    /// Attach audio sample producer.
+    pub fn set_audio_producer(&mut self, producer: Option<AudioProducer>) {
+        self.mmu.apu.set_audio_producer(producer.clone());
+        self.audio_producer = producer;
     }
 
     /// Load raw ROM byte buffer into memory bus and reset core state.
@@ -49,6 +59,10 @@ impl GbcCore {
 
         if new_mmu.is_gbc {
             self.cpu.registers.init_gbc_defaults();
+        }
+
+        if let Some(ref prod) = self.audio_producer {
+            new_mmu.apu.set_audio_producer(Some(prod.clone()));
         }
 
         self.mmu = new_mmu;
@@ -110,12 +124,34 @@ impl EmulatorCore for GbcCore {
             return;
         }
 
+        let is_double_speed = self.mmu.is_double_speed();
+        let max_cycles = if is_double_speed {
+            GBC_CYCLES_PER_FRAME * 2
+        } else {
+            GBC_CYCLES_PER_FRAME
+        };
+
         let mut cycles_this_frame: u32 = 0;
-        while cycles_this_frame < GBC_CYCLES_PER_FRAME {
-            let cycles = self.cpu.step(&mut self.mmu);
-            self.timer.step(cycles, &mut self.mmu);
-            self.ppu.step(cycles, &mut self.mmu);
-            cycles_this_frame = cycles_this_frame.saturating_add(cycles as u32);
+        let mut dot_remainder: u8 = 0;
+
+        while cycles_this_frame < max_cycles {
+            let cpu_cycles = self.cpu.step(&mut self.mmu);
+            self.timer.step(cpu_cycles, &mut self.mmu);
+
+            let dot_cycles = if is_double_speed {
+                let total = cpu_cycles + dot_remainder;
+                dot_remainder = total & 1;
+                total >> 1
+            } else {
+                cpu_cycles
+            };
+
+            if dot_cycles > 0 {
+                self.ppu.step(dot_cycles, &mut self.mmu);
+                self.mmu.apu.step(dot_cycles);
+            }
+
+            cycles_this_frame = cycles_this_frame.saturating_add(cpu_cycles as u32);
         }
     }
 
@@ -133,7 +169,7 @@ impl EmulatorCore for GbcCore {
     }
 
     fn audio_buffer(&mut self) -> Vec<f32> {
-        Vec::new()
+        self.mmu.apu.drain_audio()
     }
 }
 
@@ -228,6 +264,9 @@ mod tests {
 
         let active_pixels = core.ppu.framebuffer().chunks(4).filter(|p| p[0] != 255 || p[1] != 255 || p[2] != 255).count();
         assert!(active_pixels > 0, "Framebuffer should have rendered pixels");
+
+        let audio = core.audio_buffer();
+        assert!(!audio.is_empty(), "GBC Core should produce audio samples");
     }
 }
 

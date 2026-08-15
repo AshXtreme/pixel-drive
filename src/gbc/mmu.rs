@@ -1,3 +1,4 @@
+use super::apu::Apu;
 use super::joypad::Joypad;
 use super::mbc::Mbc;
 
@@ -27,6 +28,7 @@ pub struct MemoryBus {
     hram: [u8; 0x7F],
     ie: u8,
     pub joypad: Joypad,
+    pub apu: Apu,
 
     // GBC Palette RAM (64 bytes each: 8 palettes * 4 colors * 2 bytes)
     bg_palette_ram: [u8; 64],
@@ -62,6 +64,7 @@ impl MemoryBus {
             hram: [0; 0x7F],
             ie: 0,
             joypad: Joypad::new(),
+            apu: Apu::new(),
             bg_palette_ram: [0xFF; 64],
             bgpi: 0,
             obj_palette_ram: [0xFF; 64],
@@ -154,6 +157,7 @@ impl MemoryBus {
                 self.obj_palette_ram[idx]
             }
             0xFF70 => self.svbk | 0xF8,
+            0xFF10..=0xFF3F => self.apu.read_register(addr),
             0xFF01..=0xFF7F => self.io[(addr - 0xFF00) as usize],
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize],
             0xFFFF => self.ie,
@@ -289,6 +293,7 @@ impl MemoryBus {
                 self.svbk = val & 0x07;
                 self.io[0x70] = val;
             }
+            0xFF10..=0xFF3F => self.apu.write_register(addr, val),
             0xFF01..=0xFF7F => self.io[(addr - 0xFF00) as usize] = val,
             0xFF80..=0xFFFE => self.hram[(addr - 0xFF80) as usize] = val,
             0xFFFF => self.ie = val,

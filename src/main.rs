@@ -63,6 +63,7 @@ fn load_rom_from_path(
         "gb" | "gbc" => {
             info!("Ingesting Game Boy / GBC ROM: {}", path.display());
             let mut gbc = GbcCore::new();
+            gbc.set_audio_producer(audio_producer.clone());
             match gbc.load_rom_file(path) {
                 Ok(_) => {
                     *active_core = Box::new(gbc);
@@ -125,6 +126,7 @@ fn load_rom_from_path(
                 true
             } else {
                 let mut gbc = GbcCore::new();
+                gbc.set_audio_producer(audio_producer.clone());
                 if let Ok(_) = gbc.load_rom_file(path) {
                     *active_core = Box::new(gbc);
                     apply_core_switch(active_core, core_width, core_height, pixels, window);
@@ -159,6 +161,7 @@ fn load_rom_from_path(
                 true
             } else {
                 let mut gbc = GbcCore::new();
+                gbc.set_audio_producer(audio_producer.clone());
                 if let Ok(_) = gbc.load_rom_file(path) {
                     *active_core = Box::new(gbc);
                     apply_core_switch(active_core, core_width, core_height, pixels, window);
@@ -199,7 +202,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Active emulator core defaults to GBC Core (160x144)
-    let mut active_core: Box<dyn EmulatorCore> = Box::new(GbcCore::new());
+    let mut initial_gbc = GbcCore::new();
+    initial_gbc.set_audio_producer(audio_producer.clone());
+    let mut active_core: Box<dyn EmulatorCore> = Box::new(initial_gbc);
     let (mut core_width, mut core_height) = active_core.display_dimensions();
 
     // Default window size: 4x scale for GBC (640x576)
