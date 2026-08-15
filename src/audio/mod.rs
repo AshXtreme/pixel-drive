@@ -291,6 +291,7 @@ struct ProducerInner {
     prod: ringbuf::HeapProd<f32>,
     resampler: Resampler,
     work_buf: Vec<f32>,
+    fast_forward: bool,
 }
 
 /// Thread-safe sample producer handle shared between the emulator thread and the host audio output.
@@ -318,6 +319,7 @@ impl AudioProducer {
                 prod,
                 resampler: Resampler::new(in_rate, out_rate),
                 work_buf: Vec::with_capacity(2048),
+                fast_forward: false,
             })),
         }
     }
@@ -327,6 +329,27 @@ impl AudioProducer {
         let ring_buffer = HeapRb::<f32>::new(capacity);
         let (prod, cons) = ring_buffer.split();
         (Self::from_producer(prod), cons)
+    }
+
+    /// Sets whether fast-forward mode is active (drops samples during fast-forward).
+    pub fn set_fast_forward(&self, enabled: bool) {
+        if let Ok(mut inner) = self.inner.lock() {
+            if inner.fast_forward != enabled {
+                inner.fast_forward = enabled;
+                if !enabled {
+                    inner.work_buf.clear();
+                }
+            }
+        }
+    }
+
+    /// Returns whether fast-forward mode is currently active.
+    pub fn is_fast_forward(&self) -> bool {
+        if let Ok(inner) = self.inner.lock() {
+            inner.fast_forward
+        } else {
+            false
+        }
     }
 
     /// Set the input sample rate from the active emulation core (e.g. 65536.0 Hz for GBA).
@@ -353,6 +376,11 @@ impl AudioProducer {
         }
 
         if let Ok(mut inner) = self.inner.lock() {
+            if inner.fast_forward {
+                // When fast-forwarding, discard incoming audio frames to prevent latency/overflow buildup
+                return;
+            }
+
             let capacity = inner.prod.capacity().get();
             let occupied = inner.prod.occupied_len();
 
@@ -366,6 +394,7 @@ impl AudioProducer {
                 ref mut prod,
                 ref mut resampler,
                 ref mut work_buf,
+                ..
             } = *inner;
 
             resampler.resample_i16_slice(samples, work_buf, dynamic_adj);
@@ -385,6 +414,11 @@ impl AudioProducer {
         }
 
         if let Ok(mut inner) = self.inner.lock() {
+            if inner.fast_forward {
+                // When fast-forwarding, discard incoming audio frames to prevent latency/overflow buildup
+                return;
+            }
+
             let capacity = inner.prod.capacity().get();
             let occupied = inner.prod.occupied_len();
 
@@ -397,6 +431,7 @@ impl AudioProducer {
                 ref mut prod,
                 ref mut resampler,
                 ref mut work_buf,
+                ..
             } = *inner;
 
             resampler.resample_f32_slice(samples, work_buf, dynamic_adj);
@@ -555,6 +590,11 @@ impl AudioPlayer {
             }
         }
     }
+
+    /// Set fast-forward audio mute/throttling state.
+    pub fn set_fast_forward(&self, enabled: bool) {
+        self.producer.set_fast_forward(enabled);
+    }
 }
 
 #[cfg(test)]
@@ -583,6 +623,29 @@ mod tests {
         let right = cons.try_pop().unwrap();
         assert!(left > 0.0);
         assert!(right < 0.0);
+    }
+
+    #[test]
+    fn test_fast_forward_audio_throttling() {
+        let (producer, cons) = AudioProducer::new_pair(64);
+        assert!(!producer.is_fast_forward());
+
+        // Normal push: samples should enter ring buffer
+        producer.push_f32_slice(&[0.5, 0.5, -0.5, -0.5]);
+        assert!(cons.occupied_len() > 0);
+
+        // Enable fast-forward: incoming samples must be discarded
+        producer.set_fast_forward(true);
+        assert!(producer.is_fast_forward());
+        let before_len = cons.occupied_len();
+        producer.push_f32_slice(&[0.8, 0.8, -0.8, -0.8]);
+        assert_eq!(cons.occupied_len(), before_len, "Samples must be dropped in fast-forward");
+
+        // Disable fast-forward: incoming samples accepted again
+        producer.set_fast_forward(false);
+        assert!(!producer.is_fast_forward());
+        producer.push_f32_slice(&[0.2, 0.2, -0.2, -0.2]);
+        assert!(cons.occupied_len() > before_len, "Samples must be accepted after fast-forward");
     }
 
     #[test]

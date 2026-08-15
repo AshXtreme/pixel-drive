@@ -265,6 +265,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut current_rom_path: Option<std::path::PathBuf> = None;
     let mut active_save_slot: usize = 1;
+    let mut fast_forward_held = false;
+    let mut fast_forward_toggle = false;
+    let mut last_ff_state = false;
 
     // Check for CLI ROM argument on startup: cargo run -- path/to/game.gba
     if let Some(cli_rom_arg) = std::env::args().nth(1) {
@@ -347,7 +350,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } => {
                     let pressed = state == ElementState::Pressed;
 
-                    // Hotkeys on key press
+                    // Fast-Forward hotkey handlers (Hold Space or Tab, Toggle Backquote/Tilde)
+                    match key_code {
+                        KeyCode::Space | KeyCode::Tab => {
+                            fast_forward_held = pressed;
+                        }
+                        KeyCode::Backquote => {
+                            if pressed {
+                                fast_forward_toggle = !fast_forward_toggle;
+                            }
+                        }
+                        _ => {}
+                    }
+
+                    let is_ff = fast_forward_held || fast_forward_toggle;
+                    if is_ff != last_ff_state {
+                        last_ff_state = is_ff;
+                        if let Some(ref prod) = audio_producer {
+                            prod.set_fast_forward(is_ff);
+                        }
+                        if is_ff {
+                            info!("⚡ Fast-Forward: Enabled (4x Speed)");
+                        } else {
+                            info!("▶ Fast-Forward: Disabled (1.0x Normal Speed)");
+                        }
+                    }
+
+                    // Save state slot & management hotkeys on press
                     if pressed {
                         match key_code {
                             KeyCode::Digit1 => {
@@ -429,7 +458,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         KeyCode::KeyX | KeyCode::KeyK => Some(Button::B),
                         KeyCode::KeyQ | KeyCode::KeyU => Some(Button::L),
                         KeyCode::KeyE | KeyCode::KeyI => Some(Button::R),
-                        KeyCode::Enter | KeyCode::Space => Some(Button::Start),
+                        KeyCode::Enter => Some(Button::Start),
                         KeyCode::ShiftRight | KeyCode::ShiftLeft | KeyCode::Backspace => Some(Button::Select),
                         _ => None,
                     };
@@ -440,13 +469,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 WindowEvent::RedrawRequested => {
-                    active_core.step_frame();
+                    let steps = if fast_forward_held || fast_forward_toggle { 4 } else { 1 };
 
-                    // Forward any core-buffered audio samples to host stream
-                    let audio_samples = active_core.audio_buffer();
-                    if !audio_samples.is_empty() {
-                        if let Some(ref prod) = audio_producer {
-                            prod.push_f32_slice(&audio_samples);
+                    for _ in 0..steps {
+                        active_core.step_frame();
+
+                        // Forward any core-buffered audio samples to host stream
+                        let audio_samples = active_core.audio_buffer();
+                        if !audio_samples.is_empty() {
+                            if let Some(ref prod) = audio_producer {
+                                prod.push_f32_slice(&audio_samples);
+                            }
                         }
                     }
 

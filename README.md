@@ -33,13 +33,15 @@ A modern, high-performance Game Boy (GB / GBC) and Game Boy Advance (GBA) emulat
 | **B Button** | `X` | `K` |
 | **L Shoulder** | `Q` | `U` |
 | **R Shoulder** | `E` | `I` |
-| **Start** | `Enter` | `Space` |
+| **Start** | `Enter` | — |
 | **Select** | `Right Shift` | `Left Shift` / `Backspace` |
 
-### ⚡ Hotkeys & Save States
+### ⚡ Hotkeys, Fast-Forward & Save States
 
 | Action | Keybinding |
 | :--- | :--- |
+| **Fast-Forward (Hold 4x Speed)** | Hold `Space` or `Tab` |
+| **Fast-Forward (Toggle 4x Speed)** | Press `` ` `` (Backquote / Tilde `~`) |
 | **Save State** | `F1` |
 | **Quick Load State** | `F5` or `F2` |
 | **Select Save State Slot (1–9)** | Number keys `1` .. `9` |
