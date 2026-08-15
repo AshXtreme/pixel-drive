@@ -14,7 +14,7 @@ const DUTY_CYCLES: [[u8; 8]; 4] = [
 // Channel 1: Square Wave with Sweep and Envelope
 // ============================================================================
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Channel1 {
     pub enabled: bool,
     pub dac_enabled: bool,
@@ -200,7 +200,7 @@ impl Channel1 {
 // Channel 2: Square Wave with Envelope
 // ============================================================================
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Channel2 {
     pub enabled: bool,
     pub dac_enabled: bool,
@@ -329,7 +329,7 @@ impl Channel2 {
 // Channel 3: Custom Wave Pattern RAM
 // ============================================================================
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Channel3 {
     pub enabled: bool,
     pub dac_enabled: bool,
@@ -471,7 +471,7 @@ impl Channel3 {
 // Channel 4: Noise with LFSR
 // ============================================================================
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Channel4 {
     pub enabled: bool,
     pub dac_enabled: bool,
@@ -647,6 +647,7 @@ impl Channel4 {
 // Main 4-Channel APU
 // ============================================================================
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Apu {
     pub ch1: Channel1,
     pub ch2: Channel2,
@@ -668,6 +669,7 @@ pub struct Apu {
     sample_timer: f64,
     sample_rate: f64,
     pub sample_buffer: Vec<f32>,
+    #[serde(skip)]
     audio_producer: Option<AudioProducer>,
 }
 

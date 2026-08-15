@@ -3,7 +3,7 @@ use log::warn;
 
 /// 8-bit registers and 16-bit register pairs for Sharp LR35902 CPU.
 #[allow(dead_code)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Registers {
     pub a: u8,
     pub f: u8,
@@ -148,6 +148,7 @@ impl Default for Registers {
 }
 
 /// Sharp LR35902 CPU emulator core.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Cpu {
     pub registers: Registers,
     pub halted: bool,

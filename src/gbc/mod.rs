@@ -116,6 +116,45 @@ impl GbcCore {
         self.rom_path = Some(path_ref.to_path_buf());
         Ok(())
     }
+
+    /// Serializes full real-time GBC simulation state into a binary byte buffer.
+    pub fn save_state(&self) -> Result<Vec<u8>, bincode::Error> {
+        let state = GbcState {
+            cpu: self.cpu.clone(),
+            mmu: self.mmu.clone(),
+            ppu: self.ppu.clone(),
+            timer: self.timer.clone(),
+            frame_count: self.frame_count,
+            is_rom_loaded: self.is_rom_loaded,
+        };
+        bincode::serialize(&state)
+    }
+
+    /// Deserializes full real-time GBC simulation state from a binary byte buffer.
+    pub fn load_state(&mut self, data: &[u8]) -> Result<(), bincode::Error> {
+        let state: GbcState = bincode::deserialize(data)?;
+        self.cpu = state.cpu;
+        self.mmu = state.mmu;
+        self.ppu = state.ppu;
+        self.timer = state.timer;
+        self.frame_count = state.frame_count;
+        self.is_rom_loaded = state.is_rom_loaded;
+        if let Some(ref prod) = self.audio_producer {
+            self.mmu.apu.set_audio_producer(Some(prod.clone()));
+        }
+        Ok(())
+    }
+}
+
+/// Serializable state container for GbcCore snapshots.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct GbcState {
+    pub cpu: Cpu,
+    pub mmu: MemoryBus,
+    pub ppu: Ppu,
+    pub timer: Timer,
+    pub frame_count: u32,
+    pub is_rom_loaded: bool,
 }
 
 impl EmulatorCore for GbcCore {
@@ -186,6 +225,14 @@ impl EmulatorCore for GbcCore {
 
     fn save_path(&self) -> Option<std::path::PathBuf> {
         self.rom_path.as_ref().map(|p| crate::save::SaveManager::get_save_path(p))
+    }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        self.save_state().ok()
+    }
+
+    fn load_state(&mut self, data: &[u8]) -> bool {
+        self.load_state(data).is_ok()
     }
 }
 
@@ -283,6 +330,31 @@ mod tests {
 
         let audio = core.audio_buffer();
         assert!(!audio.is_empty(), "GBC Core should produce audio samples");
+    }
+
+    #[test]
+    fn test_gbc_save_and_load_state() {
+        let mut core = GbcCore::new();
+        let rom = vec![0x00, 0xAF, 0xC3, 0x00, 0x01];
+        core.load_rom(&rom);
+        core.cpu.registers.pc = 0x1234;
+        core.cpu.registers.a = 0xFE;
+        core.frame_count = 999;
+
+        // Serialize state
+        let state_bytes = core.save_state().expect("State serialization should succeed");
+        assert!(!state_bytes.is_empty());
+
+        // Mutate core state
+        core.cpu.registers.pc = 0x0000;
+        core.cpu.registers.a = 0x00;
+        core.frame_count = 0;
+
+        // Deserialize state
+        core.load_state(&state_bytes).expect("State deserialization should succeed");
+        assert_eq!(core.cpu.registers.pc, 0x1234);
+        assert_eq!(core.cpu.registers.a, 0xFE);
+        assert_eq!(core.frame_count, 999);
     }
 }
 

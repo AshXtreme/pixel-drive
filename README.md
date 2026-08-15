@@ -36,6 +36,14 @@ A modern, high-performance Game Boy (GB / GBC) and Game Boy Advance (GBA) emulat
 | **Start** | `Enter` | `Space` |
 | **Select** | `Right Shift` | `Left Shift` / `Backspace` |
 
+### ⚡ Hotkeys & Save States
+
+| Action | Keybinding |
+| :--- | :--- |
+| **Save State** | `F1` |
+| **Quick Load State** | `F5` or `F2` |
+| **Select Save State Slot (1–9)** | Number keys `1` .. `9` |
+
 ---
 
 ## 🚀 Getting Started

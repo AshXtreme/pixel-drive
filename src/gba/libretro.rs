@@ -154,6 +154,9 @@ pub type RetroRunFn = unsafe extern "C" fn();
 pub type RetroResetFn = unsafe extern "C" fn();
 pub type RetroGetMemoryDataFn = unsafe extern "C" fn(id: c_uint) -> *mut c_void;
 pub type RetroGetMemorySizeFn = unsafe extern "C" fn(id: c_uint) -> usize;
+pub type RetroSerializeSizeFn = unsafe extern "C" fn() -> usize;
+pub type RetroSerializeFn = unsafe extern "C" fn(data: *mut c_void, size: usize) -> bool;
+pub type RetroUnserializeFn = unsafe extern "C" fn(data: *const c_void, size: usize) -> bool;
 
 // ============================================================================
 // Global Thread-Safe Bridge State
@@ -492,6 +495,9 @@ pub struct LibretroCore {
     retro_reset: RetroResetFn,
     retro_get_memory_data: RetroGetMemoryDataFn,
     retro_get_memory_size: RetroGetMemorySizeFn,
+    retro_serialize_size: RetroSerializeSizeFn,
+    retro_serialize: RetroSerializeFn,
+    retro_unserialize: RetroUnserializeFn,
 
     pub library_name: String,
     pub library_version: String,
@@ -537,6 +543,12 @@ impl LibretroCore {
             unsafe { *lib.get(b"retro_get_memory_data")? };
         let retro_get_memory_size: RetroGetMemorySizeFn =
             unsafe { *lib.get(b"retro_get_memory_size")? };
+        let retro_serialize_size: RetroSerializeSizeFn =
+            unsafe { *lib.get(b"retro_serialize_size")? };
+        let retro_serialize: RetroSerializeFn =
+            unsafe { *lib.get(b"retro_serialize")? };
+        let retro_unserialize: RetroUnserializeFn =
+            unsafe { *lib.get(b"retro_unserialize")? };
 
         let api_ver = unsafe { (retro_api_version)() };
         info!("Libretro Core API Version: {}", api_ver);
@@ -626,6 +638,9 @@ impl LibretroCore {
             retro_reset,
             retro_get_memory_data,
             retro_get_memory_size,
+            retro_serialize_size,
+            retro_serialize,
+            retro_unserialize,
 
             library_name,
             library_version,
@@ -809,6 +824,45 @@ impl LibretroCore {
             info!("Loaded {} bytes into Libretro Save RAM (total size: {})", copy_len, size);
             true
         } else {
+            false
+        }
+    }
+
+    /// Serializes full real-time core emulation state into a byte buffer.
+    pub fn save_state(&self) -> Option<Vec<u8>> {
+        if !self.is_game_loaded {
+            return None;
+        }
+
+        let size = unsafe { (self.retro_serialize_size)() };
+        if size == 0 {
+            warn!("Libretro core reported 0 serialization size");
+            return None;
+        }
+
+        let mut buffer = vec![0u8; size];
+        let ok = unsafe { (self.retro_serialize)(buffer.as_mut_ptr() as *mut c_void, size) };
+        if ok {
+            info!("Libretro core serialized real-time state ({} bytes)", size);
+            Some(buffer)
+        } else {
+            warn!("Libretro core failed to serialize state");
+            None
+        }
+    }
+
+    /// Unserializes full real-time core emulation state from a byte buffer.
+    pub fn load_state(&mut self, data: &[u8]) -> bool {
+        if !self.is_game_loaded || data.is_empty() {
+            return false;
+        }
+
+        let ok = unsafe { (self.retro_unserialize)(data.as_ptr() as *const c_void, data.len()) };
+        if ok {
+            info!("Libretro core successfully restored state from {} bytes", data.len());
+            true
+        } else {
+            warn!("Libretro core failed to restore state ({} bytes)", data.len());
             false
         }
     }
@@ -1007,6 +1061,15 @@ mod tests {
             let loaded_save = core.load_save_data(&test_save_bytes);
             assert!(loaded_save, "load_save_data should succeed");
             assert_eq!(core.get_save_data().unwrap()[0], 0x77);
+
+            // Verify Libretro Real-Time State Serialization
+            let state_snapshot = core.save_state();
+            assert!(state_snapshot.is_some(), "mGBA should support state serialization");
+            let state_bytes = state_snapshot.unwrap();
+            assert!(!state_bytes.is_empty(), "State snapshot should have non-zero size");
+
+            let state_restored = core.load_state(&state_bytes);
+            assert!(state_restored, "mGBA should successfully restore state snapshot");
         }
     }
 }

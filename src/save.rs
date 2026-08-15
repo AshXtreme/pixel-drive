@@ -66,6 +66,55 @@ impl SaveManager {
         info!("Flushed save data ({} bytes) to {:?}", data.len(), path);
         Ok(())
     }
+
+    /// Derives the canonical save state path: `./saves/<rom_stem>.state<slot>`.
+    pub fn get_state_path(rom_path: &Path, slot: usize) -> PathBuf {
+        let stem = rom_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("game");
+
+        let clean_stem = stem.trim();
+        let mut state_path = PathBuf::from(SAVES_DIR);
+        state_path.push(format!("{}.state{}", clean_stem, slot));
+        state_path
+    }
+
+    /// Writes real-time save state snapshot bytes to disk atomically.
+    pub fn write_save_state(path: &Path, data: &[u8]) -> std::io::Result<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        if let Some(parent) = path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+
+        fs::write(path, data)?;
+        info!("Saved state snapshot ({} bytes) to {:?}", data.len(), path);
+        Ok(())
+    }
+
+    /// Reads real-time save state snapshot bytes from disk if present.
+    pub fn read_save_state(path: &Path) -> Option<Vec<u8>> {
+        if !path.exists() {
+            warn!("Save state file does not exist: {:?}", path);
+            return None;
+        }
+
+        match fs::read(path) {
+            Ok(bytes) => {
+                info!("Loaded save state snapshot: {:?} ({} bytes)", path, bytes.len());
+                Some(bytes)
+            }
+            Err(err) => {
+                warn!("Failed to read save state file {:?}: {}", path, err);
+                None
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -81,6 +130,12 @@ mod tests {
         let zip_rom = Path::new("downloads/Pokemon - Crystal Version (USA).zip");
         let zip_save = SaveManager::get_save_path(zip_rom);
         assert_eq!(zip_save, PathBuf::from("saves/Pokemon - Crystal Version (USA).sav"));
+
+        let state1_path = SaveManager::get_state_path(rom_path, 1);
+        assert_eq!(state1_path, PathBuf::from("saves/Pokemon_FireRed.state1"));
+
+        let state2_path = SaveManager::get_state_path(zip_rom, 2);
+        assert_eq!(state2_path, PathBuf::from("saves/Pokemon - Crystal Version (USA).state2"));
     }
 
     #[test]
@@ -96,6 +151,22 @@ mod tests {
         assert_eq!(loaded, dummy_data);
 
         let _ = fs::remove_file(test_save_path);
+        Ok(())
+    }
+
+    #[test]
+    fn test_state_read_write_roundtrip() -> std::io::Result<()> {
+        let temp_dir = std::env::temp_dir();
+        let test_state_path = temp_dir.join("test_snapshot.state1");
+
+        let dummy_state = vec![0xEEu8; 65536]; // 64KB state snapshot
+        SaveManager::write_save_state(&test_state_path, &dummy_state)?;
+
+        let loaded = SaveManager::read_save_state(&test_state_path).expect("Should load state file");
+        assert_eq!(loaded.len(), dummy_state.len());
+        assert_eq!(loaded, dummy_state);
+
+        let _ = fs::remove_file(test_state_path);
         Ok(())
     }
 }

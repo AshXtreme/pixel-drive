@@ -337,6 +337,22 @@ impl EmulatorCore for GbaCore {
     fn save_path(&self) -> Option<std::path::PathBuf> {
         self.rom_path.as_ref().map(|p| crate::save::SaveManager::get_save_path(p))
     }
+
+    fn save_state(&self) -> Option<Vec<u8>> {
+        if let Some(ref lr) = self.libretro {
+            lr.save_state()
+        } else {
+            None
+        }
+    }
+
+    fn load_state(&mut self, data: &[u8]) -> bool {
+        if let Some(ref mut lr) = self.libretro {
+            lr.load_state(data)
+        } else {
+            false
+        }
+    }
 }
 
 #[cfg(test)]

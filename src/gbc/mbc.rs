@@ -1,5 +1,5 @@
 /// Memory Bank Controller (MBC) interface and implementation for Game Boy cartridges.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum Mbc {
     RomOnly {
         rom: Vec<u8>,
@@ -15,7 +15,7 @@ pub enum Mbc {
     },
     Mbc2 {
         rom: Vec<u8>,
-        ram: [u8; 512],
+        ram: Vec<u8>,
         rom_bank: usize,
         ram_enabled: bool,
         has_battery: bool,
@@ -71,7 +71,7 @@ impl Mbc {
             },
             0x05 | 0x06 => Mbc::Mbc2 {
                 rom: rom_bytes.to_vec(),
-                ram: [0; 512],
+                ram: vec![0; 512],
                 rom_bank: 1,
                 ram_enabled: false,
                 has_battery: cart_type == 0x06,

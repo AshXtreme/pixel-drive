@@ -4,8 +4,9 @@ pub const SCREEN_WIDTH: usize = 160;
 pub const SCREEN_HEIGHT: usize = 144;
 
 /// Pixel Processing Unit (PPU) handling Game Boy and Game Boy Color scanline graphics rendering.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Ppu {
-    framebuffer: [u8; SCREEN_WIDTH * SCREEN_HEIGHT * 4],
+    framebuffer: Vec<u8>,
     scanline_counter: u16,
     pub ly: u8,
     pub window_line_counter: u8,
@@ -14,7 +15,7 @@ pub struct Ppu {
 impl Ppu {
     pub fn new() -> Self {
         Self {
-            framebuffer: [255; SCREEN_WIDTH * SCREEN_HEIGHT * 4],
+            framebuffer: vec![255; SCREEN_WIDTH * SCREEN_HEIGHT * 4],
             scanline_counter: 0,
             ly: 0,
             window_line_counter: 0,

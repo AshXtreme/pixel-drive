@@ -1,6 +1,7 @@
 use super::mmu::MemoryBus;
 
 /// Game Boy Hardware Timer and Divider Subsystem (0xFF04 - 0xFF07).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Timer {
     div_counter: u16,
     tima_counter: u16,

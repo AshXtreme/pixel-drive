@@ -263,12 +263,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Ensure saves directory exists
     let _ = save::SaveManager::ensure_save_directory();
 
+    let mut current_rom_path: Option<std::path::PathBuf> = None;
+    let mut active_save_slot: usize = 1;
+
     // Check for CLI ROM argument on startup: cargo run -- path/to/game.gba
     if let Some(cli_rom_arg) = std::env::args().nth(1) {
         let cli_path = std::path::PathBuf::from(cli_rom_arg);
         if cli_path.exists() {
             info!("CLI ROM argument detected: {}", cli_path.display());
-            load_rom_from_path(
+            if load_rom_from_path(
                 &cli_path,
                 &mut active_core,
                 &mut core_width,
@@ -276,7 +279,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &mut pixels,
                 &window,
                 &audio_producer,
-            );
+            ) {
+                current_rom_path = Some(cli_path);
+            }
         } else {
             warn!("CLI ROM file path does not exist: {}", cli_path.display());
         }
@@ -308,7 +313,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 WindowEvent::DroppedFile(path) => {
                     info!("ROM Drag & Drop detected: {:?}", path);
-                    load_rom_from_path(
+                    if load_rom_from_path(
                         &path,
                         &mut active_core,
                         &mut core_width,
@@ -316,7 +321,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &mut pixels,
                         &window,
                         &audio_producer,
-                    );
+                    ) {
+                        current_rom_path = Some(path);
+                    }
                 }
 
                 WindowEvent::Focused(focused) => {
@@ -339,6 +346,80 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ..
                 } => {
                     let pressed = state == ElementState::Pressed;
+
+                    // Hotkeys on key press
+                    if pressed {
+                        match key_code {
+                            KeyCode::Digit1 => {
+                                active_save_slot = 1;
+                                info!("Selected Save State Slot: 1");
+                            }
+                            KeyCode::Digit2 => {
+                                active_save_slot = 2;
+                                info!("Selected Save State Slot: 2");
+                            }
+                            KeyCode::Digit3 => {
+                                active_save_slot = 3;
+                                info!("Selected Save State Slot: 3");
+                            }
+                            KeyCode::Digit4 => {
+                                active_save_slot = 4;
+                                info!("Selected Save State Slot: 4");
+                            }
+                            KeyCode::Digit5 => {
+                                active_save_slot = 5;
+                                info!("Selected Save State Slot: 5");
+                            }
+                            KeyCode::Digit6 => {
+                                active_save_slot = 6;
+                                info!("Selected Save State Slot: 6");
+                            }
+                            KeyCode::Digit7 => {
+                                active_save_slot = 7;
+                                info!("Selected Save State Slot: 7");
+                            }
+                            KeyCode::Digit8 => {
+                                active_save_slot = 8;
+                                info!("Selected Save State Slot: 8");
+                            }
+                            KeyCode::Digit9 => {
+                                active_save_slot = 9;
+                                info!("Selected Save State Slot: 9");
+                            }
+                            KeyCode::F1 => {
+                                if let Some(ref rom_p) = current_rom_path {
+                                    let state_path = save::SaveManager::get_state_path(rom_p, active_save_slot);
+                                    if let Some(data) = active_core.save_state() {
+                                        if let Err(err) = save::SaveManager::write_save_state(&state_path, &data) {
+                                            warn!("Failed to save state to {:?}: {}", state_path, err);
+                                        } else {
+                                            info!("Real-time State Saved -> Slot {} ({:?})", active_save_slot, state_path);
+                                        }
+                                    } else {
+                                        warn!("Active core failed to capture real-time state snapshot");
+                                    }
+                                } else {
+                                    warn!("No ROM is currently loaded to save state");
+                                }
+                            }
+                            KeyCode::F5 | KeyCode::F2 => {
+                                if let Some(ref rom_p) = current_rom_path {
+                                    let state_path = save::SaveManager::get_state_path(rom_p, active_save_slot);
+                                    if let Some(data) = save::SaveManager::read_save_state(&state_path) {
+                                        if active_core.load_state(&data) {
+                                            info!("Real-time State Restored <- Slot {} ({:?})", active_save_slot, state_path);
+                                        } else {
+                                            warn!("Active core failed to restore state snapshot from {:?}", state_path);
+                                        }
+                                    }
+                                } else {
+                                    warn!("No ROM is currently loaded to load state");
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+
                     let button = match key_code {
                         KeyCode::ArrowUp | KeyCode::KeyW => Some(Button::Up),
                         KeyCode::ArrowDown | KeyCode::KeyS => Some(Button::Down),

@@ -2,6 +2,7 @@ use crate::core::Button;
 
 /// Joypad handler for Game Boy hardware (0xFF00 JOYP I/O register).
 #[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Joypad {
     pub a: bool,
     pub b: bool,

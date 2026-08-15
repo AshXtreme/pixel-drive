@@ -43,4 +43,14 @@ pub trait EmulatorCore {
     fn save_path(&self) -> Option<std::path::PathBuf> {
         None
     }
+
+    /// Serializes full real-time emulation state snapshot to bytes
+    fn save_state(&self) -> Option<Vec<u8>> {
+        None
+    }
+
+    /// Restores real-time emulation state snapshot from bytes
+    fn load_state(&mut self, _data: &[u8]) -> bool {
+        false
+    }
 }
