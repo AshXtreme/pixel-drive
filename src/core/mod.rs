@@ -28,4 +28,19 @@ pub trait EmulatorCore {
     /// Returns queued stereo audio samples
     #[allow(dead_code)]
     fn audio_buffer(&mut self) -> Vec<f32>;
+
+    /// Returns a reference to battery-backed Save RAM if supported by the active cartridge/core
+    fn get_save_data(&self) -> Option<&[u8]> {
+        None
+    }
+
+    /// Ingests saved battery RAM data into the active cartridge/core
+    fn load_save_data(&mut self, _data: &[u8]) -> bool {
+        false
+    }
+
+    /// Returns the save path for the currently loaded ROM
+    fn save_path(&self) -> Option<std::path::PathBuf> {
+        None
+    }
 }

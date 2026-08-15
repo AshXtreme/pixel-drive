@@ -2,6 +2,7 @@ mod audio;
 mod core;
 mod gba;
 mod gbc;
+mod save;
 
 use audio::{AudioPlayer, AudioProducer};
 use core::{Button, EmulatorCore};
@@ -17,6 +18,19 @@ use winit::{
     keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
 };
+
+/// Flushes battery-backed save data from the active core to its `.sav` file on disk.
+fn flush_core_save(core: &dyn EmulatorCore) {
+    if let Some(save_path) = core.save_path() {
+        if let Some(save_data) = core.get_save_data() {
+            if !save_data.is_empty() {
+                if let Err(err) = save::SaveManager::write_save_file(&save_path, save_data) {
+                    warn!("Failed to flush save file {:?}: {}", save_path, err);
+                }
+            }
+        }
+    }
+}
 
 /// Apply a core switch: update width/height, resize the pixel buffer and immediately
 /// resize the Metal surface so both stay in sync. Returns true on full success.
@@ -53,11 +67,16 @@ fn load_rom_from_path(
     window: &winit::window::Window,
     audio_producer: &Option<AudioProducer>,
 ) -> bool {
+    // Flush save data from previous core before switching
+    flush_core_save(active_core.as_ref());
+
     let ext = path
         .extension()
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_lowercase();
+
+    let save_path = save::SaveManager::get_save_path(path);
 
     match ext.as_str() {
         "gb" | "gbc" => {
@@ -66,6 +85,9 @@ fn load_rom_from_path(
             gbc.set_audio_producer(audio_producer.clone());
             match gbc.load_rom_file(path) {
                 Ok(_) => {
+                    if let Some(save_data) = save::SaveManager::load_save_file(&save_path) {
+                        gbc.load_save_data(&save_data);
+                    }
                     *active_core = Box::new(gbc);
                     apply_core_switch(active_core, core_width, core_height, pixels, window);
                     window.set_title(&format!(
@@ -86,6 +108,9 @@ fn load_rom_from_path(
             gba.set_audio_producer(audio_producer.clone());
             match gba.load_rom_file(path) {
                 Ok(header) => {
+                    if let Some(save_data) = save::SaveManager::load_save_file(&save_path) {
+                        gba.load_save_data(&save_data);
+                    }
                     let backend_label = if let Some(ref lr) = gba.libretro {
                         format!(" [Libretro: {}]", lr.library_name)
                     } else {
@@ -111,6 +136,9 @@ fn load_rom_from_path(
             let mut gba = GbaCore::new();
             gba.set_audio_producer(audio_producer.clone());
             if let Ok(header) = gba.load_rom_file(path) {
+                if let Some(save_data) = save::SaveManager::load_save_file(&save_path) {
+                    gba.load_save_data(&save_data);
+                }
                 let backend_label = if let Some(ref lr) = gba.libretro {
                     format!(" [Libretro: {}]", lr.library_name)
                 } else {
@@ -128,6 +156,9 @@ fn load_rom_from_path(
                 let mut gbc = GbcCore::new();
                 gbc.set_audio_producer(audio_producer.clone());
                 if let Ok(_) = gbc.load_rom_file(path) {
+                    if let Some(save_data) = save::SaveManager::load_save_file(&save_path) {
+                        gbc.load_save_data(&save_data);
+                    }
                     *active_core = Box::new(gbc);
                     apply_core_switch(active_core, core_width, core_height, pixels, window);
                     window.set_title(&format!(
@@ -146,6 +177,9 @@ fn load_rom_from_path(
             let mut gba = GbaCore::new();
             gba.set_audio_producer(audio_producer.clone());
             if let Ok(header) = gba.load_rom_file(path) {
+                if let Some(save_data) = save::SaveManager::load_save_file(&save_path) {
+                    gba.load_save_data(&save_data);
+                }
                 let backend_label = if let Some(ref lr) = gba.libretro {
                     format!(" [Libretro: {}]", lr.library_name)
                 } else {
@@ -163,6 +197,9 @@ fn load_rom_from_path(
                 let mut gbc = GbcCore::new();
                 gbc.set_audio_producer(audio_producer.clone());
                 if let Ok(_) = gbc.load_rom_file(path) {
+                    if let Some(save_data) = save::SaveManager::load_save_file(&save_path) {
+                        gbc.load_save_data(&save_data);
+                    }
                     *active_core = Box::new(gbc);
                     apply_core_switch(active_core, core_width, core_height, pixels, window);
                     window.set_title(&format!(
@@ -223,6 +260,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Pixels::new(core_width, core_height, surface_texture)?
     };
 
+    // Ensure saves directory exists
+    let _ = save::SaveManager::ensure_save_directory();
+
     // Check for CLI ROM argument on startup: cargo run -- path/to/game.gba
     if let Some(cli_rom_arg) = std::env::args().nth(1) {
         let cli_path = std::path::PathBuf::from(cli_rom_arg);
@@ -243,7 +283,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut last_frame_time = Instant::now();
+    let mut last_save_time = Instant::now();
     let frame_duration = std::time::Duration::from_nanos(1_000_000_000 / 60);
+    let auto_save_interval = std::time::Duration::from_secs(5);
 
     event_loop.run(move |event, elwt| {
         elwt.set_control_flow(ControlFlow::Poll);
@@ -252,6 +294,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => {
                     info!("Closing PixelDrive.");
+                    flush_core_save(active_core.as_ref());
                     elwt.exit();
                 }
 
@@ -297,16 +340,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } => {
                     let pressed = state == ElementState::Pressed;
                     let button = match key_code {
+                        KeyCode::ArrowUp | KeyCode::KeyW => Some(Button::Up),
+                        KeyCode::ArrowDown | KeyCode::KeyS => Some(Button::Down),
+                        KeyCode::ArrowLeft | KeyCode::KeyA => Some(Button::Left),
+                        KeyCode::ArrowRight | KeyCode::KeyD => Some(Button::Right),
                         KeyCode::KeyZ | KeyCode::KeyJ => Some(Button::A),
                         KeyCode::KeyX | KeyCode::KeyK => Some(Button::B),
-                        KeyCode::KeyA | KeyCode::KeyQ => Some(Button::L),
-                        KeyCode::KeyS | KeyCode::KeyE => Some(Button::R),
-                        KeyCode::Backspace | KeyCode::ShiftRight => Some(Button::Select),
-                        KeyCode::Enter => Some(Button::Start),
-                        KeyCode::ArrowUp | KeyCode::KeyW => Some(Button::Up),
-                        KeyCode::ArrowDown => Some(Button::Down),
-                        KeyCode::ArrowLeft => Some(Button::Left),
-                        KeyCode::ArrowRight | KeyCode::KeyD => Some(Button::Right),
+                        KeyCode::KeyQ | KeyCode::KeyU => Some(Button::L),
+                        KeyCode::KeyE | KeyCode::KeyI => Some(Button::R),
+                        KeyCode::Enter | KeyCode::Space => Some(Button::Start),
+                        KeyCode::ShiftRight | KeyCode::ShiftLeft | KeyCode::Backspace => Some(Button::Select),
                         _ => None,
                     };
 
@@ -353,6 +396,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             Event::AboutToWait => {
                 let now = Instant::now();
+
+                // Periodic auto-save flush every 5 seconds
+                if now.duration_since(last_save_time) >= auto_save_interval {
+                    last_save_time = now;
+                    flush_core_save(active_core.as_ref());
+                }
+
                 if now.duration_since(last_frame_time) >= frame_duration {
                     last_frame_time = now;
                     window.request_redraw();

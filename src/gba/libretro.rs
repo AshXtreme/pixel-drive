@@ -60,6 +60,12 @@ pub const RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY: c_uint = 55;
 pub const RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2: c_uint = 67;
 pub const RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL: c_uint = 68;
 
+// Memory IDs
+pub const RETRO_MEMORY_SAVE_RAM: c_uint = 0;
+pub const RETRO_MEMORY_RTC: c_uint = 1;
+pub const RETRO_MEMORY_SYSTEM_RAM: c_uint = 2;
+pub const RETRO_MEMORY_VIDEO_RAM: c_uint = 3;
+
 // ============================================================================
 // Libretro C Structures
 // ============================================================================
@@ -146,6 +152,8 @@ pub type RetroLoadGameFn = unsafe extern "C" fn(game: *const RetroGameInfo) -> b
 pub type RetroUnloadGameFn = unsafe extern "C" fn();
 pub type RetroRunFn = unsafe extern "C" fn();
 pub type RetroResetFn = unsafe extern "C" fn();
+pub type RetroGetMemoryDataFn = unsafe extern "C" fn(id: c_uint) -> *mut c_void;
+pub type RetroGetMemorySizeFn = unsafe extern "C" fn(id: c_uint) -> usize;
 
 // ============================================================================
 // Global Thread-Safe Bridge State
@@ -482,6 +490,8 @@ pub struct LibretroCore {
     retro_unload_game: RetroUnloadGameFn,
     retro_run: RetroRunFn,
     retro_reset: RetroResetFn,
+    retro_get_memory_data: RetroGetMemoryDataFn,
+    retro_get_memory_size: RetroGetMemorySizeFn,
 
     pub library_name: String,
     pub library_version: String,
@@ -523,6 +533,10 @@ impl LibretroCore {
         let retro_unload_game: RetroUnloadGameFn = unsafe { *lib.get(b"retro_unload_game")? };
         let retro_run: RetroRunFn = unsafe { *lib.get(b"retro_run")? };
         let retro_reset: RetroResetFn = unsafe { *lib.get(b"retro_reset")? };
+        let retro_get_memory_data: RetroGetMemoryDataFn =
+            unsafe { *lib.get(b"retro_get_memory_data")? };
+        let retro_get_memory_size: RetroGetMemorySizeFn =
+            unsafe { *lib.get(b"retro_get_memory_size")? };
 
         let api_ver = unsafe { (retro_api_version)() };
         info!("Libretro Core API Version: {}", api_ver);
@@ -610,6 +624,8 @@ impl LibretroCore {
             retro_unload_game,
             retro_run,
             retro_reset,
+            retro_get_memory_data,
+            retro_get_memory_size,
 
             library_name,
             library_version,
@@ -757,6 +773,44 @@ impl LibretroCore {
             }
         }
         Vec::new()
+    }
+
+    /// Extract pointer and size for specified Libretro memory ID.
+    pub fn get_memory(&self, id: c_uint) -> Option<&[u8]> {
+        if !self.is_game_loaded {
+            return None;
+        }
+        let size = unsafe { (self.retro_get_memory_size)(id) };
+        let ptr = unsafe { (self.retro_get_memory_data)(id) };
+        if size > 0 && !ptr.is_null() {
+            Some(unsafe { std::slice::from_raw_parts(ptr as *const u8, size) })
+        } else {
+            None
+        }
+    }
+
+    /// Returns a slice of the save RAM if available.
+    pub fn get_save_data(&self) -> Option<&[u8]> {
+        self.get_memory(RETRO_MEMORY_SAVE_RAM)
+    }
+
+    /// Load saved data into the core's save RAM.
+    pub fn load_save_data(&mut self, data: &[u8]) -> bool {
+        if !self.is_game_loaded || data.is_empty() {
+            return false;
+        }
+        let size = unsafe { (self.retro_get_memory_size)(RETRO_MEMORY_SAVE_RAM) };
+        let ptr = unsafe { (self.retro_get_memory_data)(RETRO_MEMORY_SAVE_RAM) };
+        if size > 0 && !ptr.is_null() {
+            let copy_len = size.min(data.len());
+            unsafe {
+                std::ptr::copy_nonoverlapping(data.as_ptr(), ptr as *mut u8, copy_len);
+            }
+            info!("Loaded {} bytes into Libretro Save RAM (total size: {})", copy_len, size);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -942,6 +996,17 @@ mod tests {
             // Verify audio samples were pushed into ring buffer
             use ringbuf::traits::Observer;
             assert!(cons.occupied_len() > 0, "mGBA should produce audio samples");
+
+            // Verify Libretro Save RAM interface
+            let save_ram = core.get_save_data();
+            assert!(save_ram.is_some(), "mGBA should expose save RAM memory");
+            let ram_len = save_ram.unwrap().len();
+            assert!(ram_len >= 0x2000, "GBA save RAM should be at least 8KB (Flash/SRAM)");
+
+            let test_save_bytes = vec![0x77u8; 1024];
+            let loaded_save = core.load_save_data(&test_save_bytes);
+            assert!(loaded_save, "load_save_data should succeed");
+            assert_eq!(core.get_save_data().unwrap()[0], 0x77);
         }
     }
 }

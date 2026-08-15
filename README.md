@@ -23,7 +23,7 @@ A modern, high-performance Game Boy (GB / GBC) and Game Boy Advance (GBA) emulat
 
 ## 🎮 Controls
 
-| GBA / GBC Button | Keyboard Mapping | Secondary Mapping |
+| GBA / GBC Button | Primary Mapping | Secondary Mapping (WASD Layout) |
 | :--- | :--- | :--- |
 | **D-Pad Up** | `Up Arrow` | `W` |
 | **D-Pad Down** | `Down Arrow` | `S` |
@@ -31,10 +31,10 @@ A modern, high-performance Game Boy (GB / GBC) and Game Boy Advance (GBA) emulat
 | **D-Pad Right** | `Right Arrow` | `D` |
 | **A Button** | `Z` | `J` |
 | **B Button** | `X` | `K` |
-| **L Shoulder** | `A` | `Q` |
-| **R Shoulder** | `S` | `E` |
-| **Start** | `Enter` | — |
-| **Select** | `Right Shift` | `Backspace` |
+| **L Shoulder** | `Q` | `U` |
+| **R Shoulder** | `E` | `I` |
+| **Start** | `Enter` | `Space` |
+| **Select** | `Right Shift` | `Left Shift` / `Backspace` |
 
 ---
 

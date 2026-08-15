@@ -74,6 +74,7 @@ pub struct GbaCore {
     pub mmu: GbaMemoryBus,
     pub header: Option<GbaHeader>,
     pub libretro: Option<LibretroCore>,
+    pub rom_path: Option<std::path::PathBuf>,
 }
 
 impl Default for GbaCore {
@@ -109,6 +110,7 @@ impl GbaCore {
             mmu: GbaMemoryBus::new(),
             header: None,
             libretro,
+            rom_path: None,
         };
         core.reset_boot_state();
         core
@@ -227,6 +229,7 @@ impl GbaCore {
         });
 
         self.load_rom(&bytes);
+        self.rom_path = Some(path_ref.to_path_buf());
         Ok(header)
     }
 }
@@ -311,6 +314,28 @@ impl EmulatorCore for GbaCore {
         } else {
             Vec::new()
         }
+    }
+
+    fn get_save_data(&self) -> Option<&[u8]> {
+        if let Some(ref lr) = self.libretro {
+            lr.get_save_data()
+        } else {
+            Some(&self.mmu.flash.data)
+        }
+    }
+
+    fn load_save_data(&mut self, data: &[u8]) -> bool {
+        if let Some(ref mut lr) = self.libretro {
+            lr.load_save_data(data)
+        } else {
+            let copy_len = self.mmu.flash.data.len().min(data.len());
+            self.mmu.flash.data[..copy_len].copy_from_slice(&data[..copy_len]);
+            true
+        }
+    }
+
+    fn save_path(&self) -> Option<std::path::PathBuf> {
+        self.rom_path.as_ref().map(|p| crate::save::SaveManager::get_save_path(p))
     }
 }
 

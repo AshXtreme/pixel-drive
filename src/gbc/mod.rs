@@ -27,6 +27,7 @@ pub struct GbcCore {
     pub is_rom_loaded: bool,
     frame_count: u32,
     audio_producer: Option<AudioProducer>,
+    pub rom_path: Option<std::path::PathBuf>,
 }
 
 impl GbcCore {
@@ -39,6 +40,7 @@ impl GbcCore {
             is_rom_loaded: false,
             frame_count: 0,
             audio_producer: None,
+            rom_path: None,
         }
     }
 
@@ -111,6 +113,7 @@ impl GbcCore {
         };
 
         self.load_rom(&bytes);
+        self.rom_path = Some(path_ref.to_path_buf());
         Ok(())
     }
 }
@@ -170,6 +173,19 @@ impl EmulatorCore for GbcCore {
 
     fn audio_buffer(&mut self) -> Vec<f32> {
         self.mmu.apu.drain_audio()
+    }
+
+    fn get_save_data(&self) -> Option<&[u8]> {
+        self.mmu.mbc.get_ram()
+    }
+
+    fn load_save_data(&mut self, data: &[u8]) -> bool {
+        self.mmu.mbc.load_ram(data);
+        true
+    }
+
+    fn save_path(&self) -> Option<std::path::PathBuf> {
+        self.rom_path.as_ref().map(|p| crate::save::SaveManager::get_save_path(p))
     }
 }
 

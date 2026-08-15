@@ -11,6 +11,14 @@ pub enum Mbc {
         ram_bank: usize,
         ram_enabled: bool,
         mode: bool, // false = ROM mode, true = RAM mode
+        has_battery: bool,
+    },
+    Mbc2 {
+        rom: Vec<u8>,
+        ram: [u8; 512],
+        rom_bank: usize,
+        ram_enabled: bool,
+        has_battery: bool,
     },
     Mbc3 {
         rom: Vec<u8>,
@@ -19,6 +27,7 @@ pub enum Mbc {
         ram_bank: usize,
         ram_enabled: bool,
         rtc_registers: [u8; 5],
+        has_battery: bool,
     },
     Mbc5 {
         rom: Vec<u8>,
@@ -26,6 +35,7 @@ pub enum Mbc {
         rom_bank: usize,
         ram_bank: usize,
         ram_enabled: bool,
+        has_battery: bool,
     },
 }
 
@@ -57,6 +67,14 @@ impl Mbc {
                 ram_bank: 0,
                 ram_enabled: false,
                 mode: false,
+                has_battery: cart_type == 0x03,
+            },
+            0x05 | 0x06 => Mbc::Mbc2 {
+                rom: rom_bytes.to_vec(),
+                ram: [0; 512],
+                rom_bank: 1,
+                ram_enabled: false,
+                has_battery: cart_type == 0x06,
             },
             0x0F..=0x13 => Mbc::Mbc3 {
                 rom: rom_bytes.to_vec(),
@@ -65,6 +83,7 @@ impl Mbc {
                 ram_bank: 0,
                 ram_enabled: false,
                 rtc_registers: [0; 5],
+                has_battery: matches!(cart_type, 0x0F | 0x10 | 0x13),
             },
             0x19..=0x1E => Mbc::Mbc5 {
                 rom: rom_bytes.to_vec(),
@@ -72,10 +91,60 @@ impl Mbc {
                 rom_bank: 1,
                 ram_bank: 0,
                 ram_enabled: false,
+                has_battery: matches!(cart_type, 0x1B | 0x1E),
             },
             _ => Mbc::RomOnly {
                 rom: rom_bytes.to_vec(),
             },
+        }
+    }
+
+    /// Checks if cartridge has battery-backed persistent RAM.
+    pub fn has_battery(&self) -> bool {
+        match self {
+            Mbc::RomOnly { .. } => false,
+            Mbc::Mbc1 { has_battery, .. } => *has_battery,
+            Mbc::Mbc2 { has_battery, .. } => *has_battery,
+            Mbc::Mbc3 { has_battery, .. } => *has_battery,
+            Mbc::Mbc5 { has_battery, .. } => *has_battery,
+        }
+    }
+
+    /// Extract a slice of cartridge battery RAM for saving to disk.
+    pub fn get_ram(&self) -> Option<&[u8]> {
+        match self {
+            Mbc::RomOnly { .. } => None,
+            Mbc::Mbc1 { ram, .. } => Some(ram.as_slice()),
+            Mbc::Mbc2 { ram, .. } => Some(ram.as_slice()),
+            Mbc::Mbc3 { ram, .. } => Some(ram.as_slice()),
+            Mbc::Mbc5 { ram, .. } => Some(ram.as_slice()),
+        }
+    }
+
+    /// Ingest persistent save data into cartridge RAM.
+    pub fn load_ram(&mut self, data: &[u8]) {
+        if data.is_empty() {
+            return;
+        }
+
+        match self {
+            Mbc::RomOnly { .. } => {}
+            Mbc::Mbc1 { ram, .. } => {
+                let copy_len = ram.len().min(data.len());
+                ram[..copy_len].copy_from_slice(&data[..copy_len]);
+            }
+            Mbc::Mbc2 { ram, .. } => {
+                let copy_len = ram.len().min(data.len());
+                ram[..copy_len].copy_from_slice(&data[..copy_len]);
+            }
+            Mbc::Mbc3 { ram, .. } => {
+                let copy_len = ram.len().min(data.len());
+                ram[..copy_len].copy_from_slice(&data[..copy_len]);
+            }
+            Mbc::Mbc5 { ram, .. } => {
+                let copy_len = ram.len().min(data.len());
+                ram[..copy_len].copy_from_slice(&data[..copy_len]);
+            }
         }
     }
 
@@ -100,6 +169,20 @@ impl Mbc {
                 let idx = if addr < 0x4000 {
                     let bank = if *mode { (*rom_bank) & 0x60 } else { 0 };
                     (bank * 0x4000) + (addr as usize)
+                } else {
+                    let bank = if *rom_bank == 0 { 1 } else { *rom_bank };
+                    (bank * 0x4000) + ((addr - 0x4000) as usize)
+                };
+                if idx < rom.len() {
+                    rom[idx]
+                } else {
+                    0xFF
+                }
+            }
+
+            Mbc::Mbc2 { rom, rom_bank, .. } => {
+                let idx = if addr < 0x4000 {
+                    addr as usize
                 } else {
                     let bank = if *rom_bank == 0 { 1 } else { *rom_bank };
                     (bank * 0x4000) + ((addr - 0x4000) as usize)
@@ -170,6 +253,24 @@ impl Mbc {
                 _ => {}
             },
 
+            Mbc::Mbc2 {
+                rom_bank,
+                ram_enabled,
+                ..
+            } => match addr {
+                0x0000..=0x3FFF => {
+                    if (addr & 0x0100) == 0 {
+                        // Bit 8 is 0: RAM Enable
+                        *ram_enabled = (val & 0x0F) == 0x0A;
+                    } else {
+                        // Bit 8 is 1: ROM Bank (lower 4 bits)
+                        let bank = (val & 0x0F) as usize;
+                        *rom_bank = if bank == 0 { 1 } else { bank };
+                    }
+                }
+                _ => {}
+            },
+
             Mbc::Mbc3 {
                 rom_bank,
                 ram_bank,
@@ -222,6 +323,16 @@ impl Mbc {
                 } else {
                     0xFF
                 }
+            }
+
+            Mbc::Mbc2 {
+                ram, ram_enabled, ..
+            } => {
+                if !*ram_enabled {
+                    return 0xFF;
+                }
+                let idx = (addr & 0x01FF) as usize;
+                ram[idx] | 0xF0 // Upper 4 bits always read 1s
             }
 
             Mbc::Mbc3 {
@@ -286,6 +397,16 @@ impl Mbc {
                 }
             }
 
+            Mbc::Mbc2 {
+                ram, ram_enabled, ..
+            } => {
+                if !*ram_enabled {
+                    return;
+                }
+                let idx = (addr & 0x01FF) as usize;
+                ram[idx] = val & 0x0F; // Only lower 4 bits are stored
+            }
+
             Mbc::Mbc3 {
                 ram,
                 ram_bank,
@@ -321,5 +442,27 @@ impl Mbc {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_mbc_battery_and_save_persistence() {
+        let mut rom = vec![0u8; 0x8000];
+        rom[0x0147] = 0x13; // MBC3 + RAM + BATTERY
+        rom[0x0149] = 0x03; // 32KB RAM
+
+        let mut mbc = Mbc::from_bytes(&rom);
+        assert!(mbc.has_battery());
+
+        let save_bytes = vec![0xAB; 32768];
+        mbc.load_ram(&save_bytes);
+
+        let ram = mbc.get_ram().expect("RAM should exist");
+        assert_eq!(ram.len(), 32768);
+        assert_eq!(ram[0], 0xAB);
     }
 }
