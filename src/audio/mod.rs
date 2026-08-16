@@ -292,6 +292,7 @@ struct ProducerInner {
     resampler: Resampler,
     work_buf: Vec<f32>,
     fast_forward: bool,
+    muted: bool,
 }
 
 /// Thread-safe sample producer handle shared between the emulator thread and the host audio output.
@@ -320,6 +321,7 @@ impl AudioProducer {
                 resampler: Resampler::new(in_rate, out_rate),
                 work_buf: Vec::with_capacity(2048),
                 fast_forward: false,
+                muted: false,
             })),
         }
     }
@@ -352,6 +354,38 @@ impl AudioProducer {
         }
     }
 
+    /// Sets mute state on audio stream.
+    pub fn set_muted(&self, muted: bool) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.muted = muted;
+            if !muted {
+                inner.work_buf.clear();
+            }
+        }
+    }
+
+    /// Toggles mute state and returns the new muted status.
+    pub fn toggle_mute(&self) -> bool {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.muted = !inner.muted;
+            if !inner.muted {
+                inner.work_buf.clear();
+            }
+            inner.muted
+        } else {
+            false
+        }
+    }
+
+    /// Returns whether audio output is currently muted.
+    pub fn is_muted(&self) -> bool {
+        if let Ok(inner) = self.inner.lock() {
+            inner.muted
+        } else {
+            false
+        }
+    }
+
     /// Set the input sample rate from the active emulation core (e.g. 65536.0 Hz for GBA).
     pub fn set_input_sample_rate(&self, in_rate: f64) {
         if let Ok(mut inner) = self.inner.lock() {
@@ -376,8 +410,8 @@ impl AudioProducer {
         }
 
         if let Ok(mut inner) = self.inner.lock() {
-            if inner.fast_forward {
-                // When fast-forwarding, discard incoming audio frames to prevent latency/overflow buildup
+            if inner.muted || inner.fast_forward {
+                // Discard incoming audio frames when muted or fast-forwarding
                 return;
             }
 
@@ -414,8 +448,8 @@ impl AudioProducer {
         }
 
         if let Ok(mut inner) = self.inner.lock() {
-            if inner.fast_forward {
-                // When fast-forwarding, discard incoming audio frames to prevent latency/overflow buildup
+            if inner.muted || inner.fast_forward {
+                // Discard incoming audio frames when muted or fast-forwarding
                 return;
             }
 
@@ -595,6 +629,21 @@ impl AudioPlayer {
     pub fn set_fast_forward(&self, enabled: bool) {
         self.producer.set_fast_forward(enabled);
     }
+
+    /// Sets whether audio output is muted.
+    pub fn set_muted(&self, muted: bool) {
+        self.producer.set_muted(muted);
+    }
+
+    /// Toggles mute state and returns the new muted status.
+    pub fn toggle_mute(&self) -> bool {
+        self.producer.toggle_mute()
+    }
+
+    /// Returns whether audio output is currently muted.
+    pub fn is_muted(&self) -> bool {
+        self.producer.is_muted()
+    }
 }
 
 #[cfg(test)]
@@ -623,6 +672,31 @@ mod tests {
         let right = cons.try_pop().unwrap();
         assert!(left > 0.0);
         assert!(right < 0.0);
+    }
+
+    #[test]
+    fn test_audio_mute_toggle() {
+        let (producer, cons) = AudioProducer::new_pair(64);
+        assert!(!producer.is_muted());
+
+        // Push when unmuted: enters ring buffer
+        producer.push_f32_slice(&[0.5, 0.5]);
+        assert!(cons.occupied_len() > 0);
+
+        // Mute: incoming samples dropped
+        let muted = producer.toggle_mute();
+        assert!(muted);
+        assert!(producer.is_muted());
+        let before_len = cons.occupied_len();
+        producer.push_f32_slice(&[0.8, 0.8]);
+        assert_eq!(cons.occupied_len(), before_len, "Muted audio must not push samples");
+
+        // Unmute: samples accepted again
+        let muted_again = producer.toggle_mute();
+        assert!(!muted_again);
+        assert!(!producer.is_muted());
+        producer.push_f32_slice(&[0.3, 0.3]);
+        assert!(cons.occupied_len() > before_len);
     }
 
     #[test]

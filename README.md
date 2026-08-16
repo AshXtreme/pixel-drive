@@ -40,8 +40,8 @@ A modern, high-performance Game Boy (GB / GBC) and Game Boy Advance (GBA) emulat
 
 | Action | Keybinding |
 | :--- | :--- |
-| **Fast-Forward (Hold 4x Speed)** | Hold `Space` or `Tab` |
-| **Fast-Forward (Toggle 4x Speed)** | Press `` ` `` (Backquote / Tilde `~`) |
+| **Fast-Forward (Click to Toggle 2x Speed)** | `Tab` |
+| **Mute / Unmute Audio** | `M` |
 | **Save State** | `F1` |
 | **Quick Load State** | `F5` or `F2` |
 | **Select Save State Slot (1–9)** | Number keys `1` .. `9` |

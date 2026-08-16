@@ -265,9 +265,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut current_rom_path: Option<std::path::PathBuf> = None;
     let mut active_save_slot: usize = 1;
-    let mut fast_forward_held = false;
-    let mut fast_forward_toggle = false;
-    let mut last_ff_state = false;
+    let mut fast_forward = false;
 
     // Check for CLI ROM argument on startup: cargo run -- path/to/game.gba
     if let Some(cli_rom_arg) = std::env::args().nth(1) {
@@ -350,35 +348,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } => {
                     let pressed = state == ElementState::Pressed;
 
-                    // Fast-Forward hotkey handlers (Hold Space or Tab, Toggle Backquote/Tilde)
-                    match key_code {
-                        KeyCode::Space | KeyCode::Tab => {
-                            fast_forward_held = pressed;
-                        }
-                        KeyCode::Backquote => {
-                            if pressed {
-                                fast_forward_toggle = !fast_forward_toggle;
-                            }
-                        }
-                        _ => {}
-                    }
-
-                    let is_ff = fast_forward_held || fast_forward_toggle;
-                    if is_ff != last_ff_state {
-                        last_ff_state = is_ff;
-                        if let Some(ref prod) = audio_producer {
-                            prod.set_fast_forward(is_ff);
-                        }
-                        if is_ff {
-                            info!("⚡ Fast-Forward: Enabled (4x Speed)");
-                        } else {
-                            info!("▶ Fast-Forward: Disabled (1.0x Normal Speed)");
-                        }
-                    }
-
-                    // Save state slot & management hotkeys on press
+                    // Hotkeys on key press
                     if pressed {
                         match key_code {
+                            // Toggle 2x Fast-Forward speed on Tab press
+                            KeyCode::Tab => {
+                                fast_forward = !fast_forward;
+                                if let Some(ref prod) = audio_producer {
+                                    prod.set_fast_forward(fast_forward);
+                                }
+                                if fast_forward {
+                                    info!("⚡ Fast-Forward: Enabled (2x Speed)");
+                                } else {
+                                    info!("▶ Fast-Forward: Disabled (1.0x Normal Speed)");
+                                }
+                            }
+                            // Toggle Audio Mute on M press
+                            KeyCode::KeyM => {
+                                if let Some(ref prod) = audio_producer {
+                                    let is_muted = prod.toggle_mute();
+                                    if is_muted {
+                                        info!("🔇 Audio: Muted");
+                                    } else {
+                                        info!("🔊 Audio: Unmuted");
+                                    }
+                                }
+                            }
                             KeyCode::Digit1 => {
                                 active_save_slot = 1;
                                 info!("Selected Save State Slot: 1");
@@ -469,7 +464,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 WindowEvent::RedrawRequested => {
-                    let steps = if fast_forward_held || fast_forward_toggle { 4 } else { 1 };
+                    let steps = if fast_forward { 2 } else { 1 };
 
                     for _ in 0..steps {
                         active_core.step_frame();
