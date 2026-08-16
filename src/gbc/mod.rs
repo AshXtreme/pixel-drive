@@ -356,6 +356,54 @@ mod tests {
         assert_eq!(core.cpu.registers.a, 0xFE);
         assert_eq!(core.frame_count, 999);
     }
+
+    #[test]
+    fn test_gbc_save_state_disk_persistence_across_restart() {
+        let rom_stem = "TestGbc_DiskRestart";
+        let slot = 1;
+
+        // Clean up any pre-existing test state file
+        let state_path = crate::save::SaveManager::get_state_path_from_stem(rom_stem, slot);
+        let _ = std::fs::remove_file(&state_path);
+
+        // 1. Initial run: Capture and save state to disk
+        {
+            let mut core = GbcCore::new();
+            let rom = vec![0x00, 0xAF, 0xC3, 0x00, 0x01];
+            core.load_rom(&rom);
+            core.cpu.registers.pc = 0x5678;
+            core.cpu.registers.a = 0x42;
+            core.frame_count = 12345;
+
+            let state_data = core.save_state().expect("State snapshot should succeed");
+            crate::save::SaveManager::save_state_to_disk(rom_stem, slot, &state_data)
+                .expect("Saving state to disk should succeed");
+
+            assert!(crate::save::SaveManager::state_exists_on_disk(rom_stem, slot));
+        } // `core` is dropped here, simulating app exit
+
+        // 2. Restart run: Create fresh new core and restore state from disk
+        {
+            let mut new_core = GbcCore::new();
+            let rom = vec![0x00, 0xAF, 0xC3, 0x00, 0x01];
+            new_core.load_rom(&rom);
+
+            // Fresh core defaults
+            assert_ne!(new_core.cpu.registers.pc, 0x5678);
+
+            // Read state from disk and restore
+            let loaded_data = crate::save::SaveManager::load_state_from_disk(rom_stem, slot)
+                .expect("Should load state from disk after restart");
+            new_core.load_state(&loaded_data).expect("Should deserialize state");
+
+            assert_eq!(new_core.cpu.registers.pc, 0x5678);
+            assert_eq!(new_core.cpu.registers.a, 0x42);
+            assert_eq!(new_core.frame_count, 12345);
+        }
+
+        // Clean up
+        let _ = std::fs::remove_file(&state_path);
+    }
 }
 
 

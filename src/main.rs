@@ -465,13 +465,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 KeyCode::F1 => {
                                     if let Some(ref rom_p) = current_rom_path {
-                                        let state_path = save::SaveManager::get_state_path(rom_p, active_save_slot);
+                                        let stem = rom_p.file_stem().and_then(|s| s.to_str()).unwrap_or("game");
                                         if let Some(data) = active_core.save_state() {
-                                            if let Err(err) = save::SaveManager::write_save_state(&state_path, &data) {
-                                                warn!("Failed to save state to {:?}: {}", state_path, err);
+                                            if let Err(err) = save::SaveManager::save_state_to_disk(stem, active_save_slot, &data) {
+                                                warn!("Failed to save state to disk for {} slot {}: {}", stem, active_save_slot, err);
                                                 gui.show_toast(format!("Save Failed: {}", err));
                                             } else {
-                                                info!("Real-time State Saved -> Slot {} ({:?})", active_save_slot, state_path);
+                                                info!("Real-time State Saved -> Slot {} (./saves/{}.state{})", active_save_slot, stem, active_save_slot);
                                                 gui.show_toast(format!("State Saved -> Slot {}", active_save_slot));
                                             }
                                         } else {
@@ -485,13 +485,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 KeyCode::F5 | KeyCode::F2 => {
                                     if let Some(ref rom_p) = current_rom_path {
-                                        let state_path = save::SaveManager::get_state_path(rom_p, active_save_slot);
-                                        if let Some(data) = save::SaveManager::read_save_state(&state_path) {
+                                        let stem = rom_p.file_stem().and_then(|s| s.to_str()).unwrap_or("game");
+                                        if let Some(data) = save::SaveManager::load_state_from_disk(stem, active_save_slot) {
                                             if active_core.load_state(&data) {
-                                                info!("Real-time State Restored <- Slot {} ({:?})", active_save_slot, state_path);
+                                                info!("Real-time State Restored <- Slot {} (./saves/{}.state{})", active_save_slot, stem, active_save_slot);
                                                 gui.show_toast(format!("State Restored <- Slot {}", active_save_slot));
                                             } else {
-                                                warn!("Active core failed to restore state snapshot from {:?}", state_path);
+                                                warn!("Active core failed to restore state snapshot for {} slot {}", stem, active_save_slot);
                                                 gui.show_toast("Failed to restore state snapshot");
                                             }
                                         } else {
@@ -663,13 +663,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 GuiAction::QuickSave(slot) => {
                                     if let Some(ref rom_p) = current_rom_path {
-                                        let state_path = save::SaveManager::get_state_path(rom_p, slot);
+                                        let stem = rom_p.file_stem().and_then(|s| s.to_str()).unwrap_or("game");
                                         if let Some(data) = active_core.save_state() {
-                                            if let Err(err) = save::SaveManager::write_save_state(&state_path, &data) {
-                                                warn!("Failed to save state to {:?}: {}", state_path, err);
+                                            if let Err(err) = save::SaveManager::save_state_to_disk(stem, slot, &data) {
+                                                warn!("Failed to save state to disk for {} slot {}: {}", stem, slot, err);
                                                 gui.show_toast(format!("Save Failed: {}", err));
                                             } else {
-                                                info!("Real-time State Saved -> Slot {} ({:?})", slot, state_path);
+                                                info!("Real-time State Saved -> Slot {} (./saves/{}.state{})", slot, stem, slot);
                                                 gui.show_toast(format!("State Saved -> Slot {}", slot));
                                             }
                                         }
@@ -679,10 +679,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                                 GuiAction::QuickLoad(slot) => {
                                     if let Some(ref rom_p) = current_rom_path {
-                                        let state_path = save::SaveManager::get_state_path(rom_p, slot);
-                                        if let Some(data) = save::SaveManager::read_save_state(&state_path) {
+                                        let stem = rom_p.file_stem().and_then(|s| s.to_str()).unwrap_or("game");
+                                        if let Some(data) = save::SaveManager::load_state_from_disk(stem, slot) {
                                             if active_core.load_state(&data) {
-                                                info!("Real-time State Restored <- Slot {} ({:?})", slot, state_path);
+                                                info!("Real-time State Restored <- Slot {} (./saves/{}.state{})", slot, stem, slot);
                                                 gui.show_toast(format!("State Restored <- Slot {}", slot));
                                             } else {
                                                 gui.show_toast("Failed to load state snapshot");

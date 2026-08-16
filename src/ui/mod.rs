@@ -6,6 +6,7 @@ use winit::{event::WindowEvent, window::Window};
 
 /// User action requested from the OSD / menu overlay.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum GuiAction {
     OpenRomPicker,
     LoadRom(std::path::PathBuf),
@@ -181,25 +182,71 @@ impl GuiRenderer {
 
                         // State Menu
                         ui.menu_button("Save States", |ui| {
-                            if ui.button(format!("💾 Quick Save Slot {} (F1)", self.active_save_slot)).clicked() {
+                            let current_stem = self.loaded_rom_name.as_ref().map(|n| {
+                                std::path::Path::new(n)
+                                    .file_stem()
+                                    .and_then(|s| s.to_str())
+                                    .unwrap_or(n.as_str())
+                                    .to_string()
+                            });
+
+                            let active_exists = if let Some(ref stem) = current_stem {
+                                crate::save::SaveManager::state_exists_on_disk(stem, self.active_save_slot)
+                            } else {
+                                false
+                            };
+
+                            let active_status = if active_exists { " [Saved]" } else { " [Empty]" };
+                            if ui.button(format!("💾 Quick Save Slot {}{} (F1)", self.active_save_slot, active_status)).clicked() {
                                 actions.push(GuiAction::QuickSave(self.active_save_slot));
                                 ui.close_menu();
                             }
-                            if ui.button(format!("📂 Quick Load Slot {} (F5/F2)", self.active_save_slot)).clicked() {
+
+                            let load_label = format!("📂 Quick Load Slot {}{} (F5)", self.active_save_slot, active_status);
+                            if ui.add_enabled(active_exists, egui::Button::new(load_label)).clicked() {
                                 actions.push(GuiAction::QuickLoad(self.active_save_slot));
                                 ui.close_menu();
                             }
+
                             ui.separator();
-                            ui.label("Select Active Slot:");
-                            ui.horizontal(|ui| {
-                                for slot in 1..=8 {
-                                    let selected = slot == self.active_save_slot;
-                                    if ui.selectable_label(selected, format!("{}", slot)).clicked() {
+                            ui.label("Slots (1–9):");
+                            for slot in 1..=9 {
+                                let exists = if let Some(ref stem) = current_stem {
+                                    crate::save::SaveManager::state_exists_on_disk(stem, slot)
+                                } else {
+                                    false
+                                };
+
+                                let is_active = slot == self.active_save_slot;
+                                let status_badge = if exists { " [Saved]" } else { " [Empty]" };
+                                let slot_label = format!("Slot {}{}", slot, status_badge);
+
+                                ui.horizontal(|ui| {
+                                    let mut label = egui::RichText::new(slot_label);
+                                    if is_active {
+                                        label = label.strong().color(Color32::from_rgb(255, 200, 50));
+                                    } else if exists {
+                                        label = label.color(Color32::from_rgb(100, 220, 140));
+                                    } else {
+                                        label = label.color(Color32::from_rgb(150, 160, 175));
+                                    }
+
+                                    if ui.selectable_label(is_active, label).clicked() {
                                         actions.push(GuiAction::SelectSlot(slot));
+                                    }
+
+                                    if exists {
+                                        if ui.small_button("Load").clicked() {
+                                            actions.push(GuiAction::QuickLoad(slot));
+                                            ui.close_menu();
+                                        }
+                                    }
+                                    if ui.small_button("Save").clicked() {
+                                        actions.push(GuiAction::QuickSave(slot));
                                         ui.close_menu();
                                     }
-                                }
-                            });
+                                });
+                            }
                         });
 
                         // Audio Menu

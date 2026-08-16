@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 pub const SAVES_DIR: &str = "saves";
 
-/// Unified Save Manager for persisting and loading battery-backed `.sav` RAM files.
+/// Unified Save Manager for persisting and loading battery-backed `.sav` RAM files and `.state{slot}` real-time snapshots.
 pub struct SaveManager;
 
 impl SaveManager {
@@ -68,19 +68,66 @@ impl SaveManager {
     }
 
     /// Derives the canonical save state path: `./saves/<rom_stem>.state<slot>`.
+    #[allow(dead_code)]
     pub fn get_state_path(rom_path: &Path, slot: usize) -> PathBuf {
         let stem = rom_path
             .file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("game");
 
-        let clean_stem = stem.trim();
+        Self::get_state_path_from_stem(stem, slot)
+    }
+
+    /// Derives save state path from ROM stem: `./saves/{rom_stem}.state{slot}`.
+    pub fn get_state_path_from_stem(rom_stem: &str, slot: usize) -> PathBuf {
+        let clean_stem = rom_stem.trim();
         let mut state_path = PathBuf::from(SAVES_DIR);
         state_path.push(format!("{}.state{}", clean_stem, slot));
         state_path
     }
 
+    /// Writes real-time save state snapshot bytes to disk under `./saves/{rom_stem}.state{slot}`.
+    pub fn save_state_to_disk(rom_stem: &str, slot: usize, data: &[u8]) -> std::io::Result<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
+
+        fs::create_dir_all(SAVES_DIR).ok();
+
+        let path = Self::get_state_path_from_stem(rom_stem, slot);
+        fs::write(&path, data)?;
+        info!("Saved state snapshot ({} bytes) to disk -> {:?}", data.len(), path);
+        Ok(())
+    }
+
+    /// Reads real-time save state snapshot bytes from disk from `./saves/{rom_stem}.state{slot}`.
+    pub fn load_state_from_disk(rom_stem: &str, slot: usize) -> Option<Vec<u8>> {
+        let path = Self::get_state_path_from_stem(rom_stem, slot);
+        if !path.exists() {
+            warn!("Save state file does not exist on disk: {:?}", path);
+            return None;
+        }
+
+        match fs::read(&path) {
+            Ok(bytes) => {
+                info!("Loaded save state snapshot from disk: {:?} ({} bytes)", path, bytes.len());
+                Some(bytes)
+            }
+            Err(err) => {
+                warn!("Failed to read save state file {:?}: {}", path, err);
+                None
+            }
+        }
+    }
+
+    /// Checks if `./saves/{rom_stem}.state{slot}` exists on disk.
+    pub fn state_exists_on_disk(rom_stem: &str, slot: usize) -> bool {
+        let path = Self::get_state_path_from_stem(rom_stem, slot);
+        path.exists()
+    }
+
     /// Writes real-time save state snapshot bytes to disk atomically.
+    #[allow(dead_code)]
     pub fn write_save_state(path: &Path, data: &[u8]) -> std::io::Result<()> {
         if data.is_empty() {
             return Ok(());
@@ -98,6 +145,7 @@ impl SaveManager {
     }
 
     /// Reads real-time save state snapshot bytes from disk if present.
+    #[allow(dead_code)]
     pub fn read_save_state(path: &Path) -> Option<Vec<u8>> {
         if !path.exists() {
             warn!("Save state file does not exist: {:?}", path);
@@ -167,6 +215,34 @@ mod tests {
         assert_eq!(loaded, dummy_state);
 
         let _ = fs::remove_file(test_state_path);
+        Ok(())
+    }
+
+    #[test]
+    fn test_save_state_disk_methods() -> std::io::Result<()> {
+        let test_stem = "TestGame_DiskPersist";
+        let slot = 3;
+        let test_data = vec![0xAB, 0xCD, 0xEF, 0x01, 0x23];
+
+        // Ensure clean state before test
+        let state_path = SaveManager::get_state_path_from_stem(test_stem, slot);
+        let _ = fs::remove_file(&state_path);
+
+        assert!(!SaveManager::state_exists_on_disk(test_stem, slot));
+        assert!(SaveManager::load_state_from_disk(test_stem, slot).is_none());
+
+        // Write state
+        SaveManager::save_state_to_disk(test_stem, slot, &test_data)?;
+
+        // Verify exists and load
+        assert!(SaveManager::state_exists_on_disk(test_stem, slot));
+        let loaded = SaveManager::load_state_from_disk(test_stem, slot).expect("State must load from disk");
+        assert_eq!(loaded, test_data);
+
+        // Clean up
+        let _ = fs::remove_file(&state_path);
+        assert!(!SaveManager::state_exists_on_disk(test_stem, slot));
+
         Ok(())
     }
 }
