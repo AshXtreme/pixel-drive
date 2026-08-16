@@ -293,6 +293,7 @@ struct ProducerInner {
     work_buf: Vec<f32>,
     fast_forward: bool,
     muted: bool,
+    volume: f32,
 }
 
 /// Thread-safe sample producer handle shared between the emulator thread and the host audio output.
@@ -322,6 +323,7 @@ impl AudioProducer {
                 work_buf: Vec::with_capacity(2048),
                 fast_forward: false,
                 muted: false,
+                volume: 1.0,
             })),
         }
     }
@@ -331,6 +333,22 @@ impl AudioProducer {
         let ring_buffer = HeapRb::<f32>::new(capacity);
         let (prod, cons) = ring_buffer.split();
         (Self::from_producer(prod), cons)
+    }
+
+    /// Sets master volume level (0.0 to 1.0).
+    pub fn set_volume(&self, volume: f32) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.volume = volume.clamp(0.0, 1.0);
+        }
+    }
+
+    /// Returns the current master volume level (0.0 to 1.0).
+    pub fn volume(&self) -> f32 {
+        if let Ok(inner) = self.inner.lock() {
+            inner.volume
+        } else {
+            1.0
+        }
     }
 
     /// Sets whether fast-forward mode is active (drops samples during fast-forward).
@@ -428,6 +446,7 @@ impl AudioProducer {
                 ref mut prod,
                 ref mut resampler,
                 ref mut work_buf,
+                volume,
                 ..
             } = *inner;
 
@@ -436,7 +455,7 @@ impl AudioProducer {
             let vacant = prod.vacant_len();
             let count = work_buf.len().min(vacant);
             for &s in &work_buf[..count] {
-                let _ = prod.try_push(s);
+                let _ = prod.try_push(s * volume);
             }
         }
     }
@@ -465,6 +484,7 @@ impl AudioProducer {
                 ref mut prod,
                 ref mut resampler,
                 ref mut work_buf,
+                volume,
                 ..
             } = *inner;
 
@@ -473,7 +493,7 @@ impl AudioProducer {
             let vacant = prod.vacant_len();
             let count = work_buf.len().min(vacant);
             for &s in &work_buf[..count] {
-                let _ = prod.try_push(s);
+                let _ = prod.try_push(s * volume);
             }
         }
     }
@@ -643,6 +663,16 @@ impl AudioPlayer {
     /// Returns whether audio output is currently muted.
     pub fn is_muted(&self) -> bool {
         self.producer.is_muted()
+    }
+
+    /// Sets master volume (0.0 to 1.0).
+    pub fn set_volume(&self, volume: f32) {
+        self.producer.set_volume(volume);
+    }
+
+    /// Returns master volume (0.0 to 1.0).
+    pub fn volume(&self) -> f32 {
+        self.producer.volume()
     }
 }
 

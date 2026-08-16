@@ -39,6 +39,10 @@ A modern, high-performance **Game Boy (GB)**, **Game Boy Color (GBC)**, and **Ga
 
 ### 🖥️ Modern Graphics & Archive Ingestion
 - **Hardware-Accelerated Rendering:** Powered by `pixels` and `wgpu` with native **Metal** (macOS / Apple Silicon), **Vulkan** (Linux / Windows), and **DirectX 12** backends.
+- **On-Screen Display (OSD) & Menu Bar (`egui`):**
+  - **Top Menu Bar:** Quick access to *Open ROM...* (native OS file picker), *Unload ROM*, *Pause/Resume*, *Reset*, *Save/Load Slots*, *Volume Slider*, and *Help / Controls*.
+  - **Live HUD Stats:** Top-right color-coded FPS counter and millisecond frame timing with status badges (`2X`, `PAUSED`, `MUTED`).
+  - **Interactive Toast Notifications:** Floating translucent pills for instant visual feedback on state saves, slot switching, volume adjustments, and core events.
 - **Drag-and-Drop Ingestion:** Drag `.gb`, `.gbc`, `.gba` files or compressed `.zip` archives directly into the window.
 - **Dynamic Viewport Resizing:** Automatic resolution and aspect ratio switching (160×144 for GBC, 240×160 for GBA) with seamless window scaling.
 

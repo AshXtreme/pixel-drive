@@ -3,6 +3,7 @@ mod core;
 mod gba;
 mod gbc;
 mod save;
+mod ui;
 
 use audio::{AudioPlayer, AudioProducer};
 use core::{Button, EmulatorCore};
@@ -11,6 +12,7 @@ use gbc::GbcCore;
 use log::{info, warn};
 use pixels::{Pixels, SurfaceTexture};
 use std::time::Instant;
+use ui::{GuiAction, GuiRenderer};
 use winit::{
     dpi::LogicalSize,
     event::{ElementState, Event, KeyEvent, WindowEvent},
@@ -35,7 +37,7 @@ fn flush_core_save(core: &dyn EmulatorCore) {
 /// Apply a core switch: update width/height, resize the pixel buffer and immediately
 /// resize the Metal surface so both stay in sync. Returns true on full success.
 fn apply_core_switch(
-    active_core: &mut Box<dyn EmulatorCore>,
+    active_core: &dyn EmulatorCore,
     core_width: &mut u32,
     core_height: &mut u32,
     pixels: &mut Pixels,
@@ -89,7 +91,7 @@ fn load_rom_from_path(
                         gbc.load_save_data(&save_data);
                     }
                     *active_core = Box::new(gbc);
-                    apply_core_switch(active_core, core_width, core_height, pixels, window);
+                    apply_core_switch(active_core.as_ref(), core_width, core_height, pixels, window);
                     window.set_title(&format!(
                         "PixelDrive - GBC: {}",
                         path.file_name().unwrap_or_default().to_string_lossy()
@@ -121,7 +123,7 @@ fn load_rom_from_path(
                         header.title, header.game_code, backend_label
                     );
                     *active_core = Box::new(gba);
-                    apply_core_switch(active_core, core_width, core_height, pixels, window);
+                    apply_core_switch(active_core.as_ref(), core_width, core_height, pixels, window);
                     window.set_title(&title);
                     true
                 }
@@ -149,7 +151,7 @@ fn load_rom_from_path(
                     header.title, header.game_code, backend_label
                 );
                 *active_core = Box::new(gba);
-                apply_core_switch(active_core, core_width, core_height, pixels, window);
+                apply_core_switch(active_core.as_ref(), core_width, core_height, pixels, window);
                 window.set_title(&title);
                 true
             } else {
@@ -160,7 +162,7 @@ fn load_rom_from_path(
                         gbc.load_save_data(&save_data);
                     }
                     *active_core = Box::new(gbc);
-                    apply_core_switch(active_core, core_width, core_height, pixels, window);
+                    apply_core_switch(active_core.as_ref(), core_width, core_height, pixels, window);
                     window.set_title(&format!(
                         "PixelDrive - GBC: {}",
                         path.file_name().unwrap_or_default().to_string_lossy()
@@ -190,7 +192,7 @@ fn load_rom_from_path(
                     header.title, header.game_code, backend_label
                 );
                 *active_core = Box::new(gba);
-                apply_core_switch(active_core, core_width, core_height, pixels, window);
+                apply_core_switch(active_core.as_ref(), core_width, core_height, pixels, window);
                 window.set_title(&title);
                 true
             } else {
@@ -201,7 +203,7 @@ fn load_rom_from_path(
                         gbc.load_save_data(&save_data);
                     }
                     *active_core = Box::new(gbc);
-                    apply_core_switch(active_core, core_width, core_height, pixels, window);
+                    apply_core_switch(active_core.as_ref(), core_width, core_height, pixels, window);
                     window.set_title(&format!(
                         "PixelDrive - GBC: {}",
                         path.file_name().unwrap_or_default().to_string_lossy()
@@ -218,7 +220,7 @@ fn load_rom_from_path(
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    info!("Starting PixelDrive Handheld Emulator...");
+    info!("Starting PixelDrive Handheld Emulator with OSD & egui Overlay...");
 
     let event_loop = EventLoop::new()?;
 
@@ -248,24 +250,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window_width = core_width * 4;
     let window_height = core_height * 4;
 
-    let window = WindowBuilder::new()
-        .with_title("PixelDrive - Game Boy Color / Game Boy Advance Emulator")
-        .with_inner_size(LogicalSize::new(window_width, window_height))
-        .with_min_inner_size(LogicalSize::new(core_width, core_height))
-        .build(&event_loop)?;
+    let window = std::sync::Arc::new(
+        WindowBuilder::new()
+            .with_title("PixelDrive - Game Boy Color / Game Boy Advance Emulator")
+            .with_inner_size(LogicalSize::new(window_width, window_height))
+            .with_min_inner_size(LogicalSize::new(core_width, core_height))
+            .build(&event_loop)?,
+    );
 
     let mut pixels = {
         let window_size = window.inner_size();
-        let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
+        let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, window.clone());
         Pixels::new(core_width, core_height, surface_texture)?
     };
 
     // Ensure saves directory exists
     let _ = save::SaveManager::ensure_save_directory();
 
+    let window_size = window.inner_size();
+    let mut gui = GuiRenderer::new(&window, window_size.width, window_size.height);
+
     let mut current_rom_path: Option<std::path::PathBuf> = None;
     let mut active_save_slot: usize = 1;
     let mut fast_forward = false;
+    let mut is_paused = false;
 
     // Check for CLI ROM argument on startup: cargo run -- path/to/game.gba
     if let Some(cli_rom_arg) = std::env::args().nth(1) {
@@ -281,6 +289,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &window,
                 &audio_producer,
             ) {
+                let name = cli_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                gui.loaded_rom_name = Some(name.clone());
+                gui.active_core_name = if active_core.display_dimensions() == (240, 160) { "GBA".to_string() } else { "GBC".to_string() };
+                gui.show_toast(format!("Loaded: {}", name));
                 current_rom_path = Some(cli_path);
             }
         } else {
@@ -290,6 +302,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut last_frame_time = Instant::now();
     let mut last_save_time = Instant::now();
+    let mut last_fps_calc = Instant::now();
+    let mut fps_frame_count: u32 = 0;
+
     let frame_duration = std::time::Duration::from_nanos(1_000_000_000 / 60);
     let auto_save_interval = std::time::Duration::from_secs(5);
 
@@ -297,211 +312,433 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         elwt.set_control_flow(ControlFlow::Poll);
 
         match event {
-            Event::WindowEvent { event, .. } => match event {
-                WindowEvent::CloseRequested => {
-                    info!("Closing PixelDrive.");
-                    flush_core_save(active_core.as_ref());
-                    elwt.exit();
-                }
+            Event::WindowEvent { event, .. } => {
+                // Let egui handle mouse/keyboard events first
+                let consumed = gui.handle_event(&window, &event);
 
-                WindowEvent::Resized(new_size) => {
-                    if new_size.width > 0 && new_size.height > 0 {
-                        if let Err(err) = pixels.resize_surface(new_size.width, new_size.height) {
-                            warn!("Pixels surface resize error: {:?}", err);
+                match event {
+                    WindowEvent::CloseRequested => {
+                        info!("Closing PixelDrive.");
+                        flush_core_save(active_core.as_ref());
+                        elwt.exit();
+                    }
+
+                    WindowEvent::Resized(new_size) => {
+                        if new_size.width > 0 && new_size.height > 0 {
+                            if let Err(err) = pixels.resize_surface(new_size.width, new_size.height) {
+                                warn!("Pixels surface resize error: {:?}", err);
+                            }
+                            gui.resize(new_size.width, new_size.height, window.scale_factor() as f32);
                         }
                     }
-                }
 
-                WindowEvent::DroppedFile(path) => {
-                    info!("ROM Drag & Drop detected: {:?}", path);
-                    if load_rom_from_path(
-                        &path,
-                        &mut active_core,
-                        &mut core_width,
-                        &mut core_height,
-                        &mut pixels,
-                        &window,
-                        &audio_producer,
-                    ) {
-                        current_rom_path = Some(path);
+                    WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                        let inner = window.inner_size();
+                        gui.resize(inner.width, inner.height, scale_factor as f32);
                     }
-                }
 
-                WindowEvent::Focused(focused) => {
-                    if let Some(ref player) = audio_player {
-                        if focused {
-                            player.resume();
+                    WindowEvent::DroppedFile(path) => {
+                        info!("ROM Drag & Drop detected: {:?}", path);
+                        if load_rom_from_path(
+                            &path,
+                            &mut active_core,
+                            &mut core_width,
+                            &mut core_height,
+                            &mut pixels,
+                            &window,
+                            &audio_producer,
+                        ) {
+                            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                            gui.loaded_rom_name = Some(name.clone());
+                            gui.active_core_name = if active_core.display_dimensions() == (240, 160) { "GBA".to_string() } else { "GBC".to_string() };
+                            gui.show_toast(format!("Loaded: {}", name));
+                            current_rom_path = Some(path);
+                        }
+                    }
+
+                    WindowEvent::Focused(focused) => {
+                        if let Some(ref player) = audio_player {
+                            if focused && !is_paused {
+                                player.resume();
+                            } else {
+                                player.pause();
+                            }
+                        }
+                    }
+
+                    WindowEvent::KeyboardInput {
+                        event:
+                            KeyEvent {
+                                physical_key: PhysicalKey::Code(key_code),
+                                state,
+                                ..
+                            },
+                        ..
+                    } if !consumed => {
+                        let pressed = state == ElementState::Pressed;
+
+                        // Hotkeys on key press
+                        if pressed {
+                            match key_code {
+                                // Toggle 2x Fast-Forward speed on Tab press
+                                KeyCode::Tab => {
+                                    fast_forward = !fast_forward;
+                                    gui.is_fast_forward = fast_forward;
+                                    if let Some(ref prod) = audio_producer {
+                                        prod.set_fast_forward(fast_forward);
+                                    }
+                                    if fast_forward {
+                                        info!("⚡ Fast-Forward: Enabled (2x Speed)");
+                                        gui.show_toast("Fast-Forward: 2x Speed");
+                                    } else {
+                                        info!("▶ Fast-Forward: Disabled (1.0x Normal Speed)");
+                                        gui.show_toast("Normal Speed (1.0x)");
+                                    }
+                                }
+                                // Toggle Audio Mute on M press
+                                KeyCode::KeyM => {
+                                    if let Some(ref prod) = audio_producer {
+                                        let is_muted = prod.toggle_mute();
+                                        gui.is_muted = is_muted;
+                                        if is_muted {
+                                            info!("🔇 Audio: Muted");
+                                            gui.show_toast("Audio: Muted");
+                                        } else {
+                                            info!("🔊 Audio: Unmuted");
+                                            gui.show_toast("Audio: Unmuted");
+                                        }
+                                    }
+                                }
+                                KeyCode::Digit1 => {
+                                    active_save_slot = 1;
+                                    gui.active_save_slot = 1;
+                                    info!("Selected Save State Slot: 1");
+                                    gui.show_toast("Selected Save Slot 1");
+                                }
+                                KeyCode::Digit2 => {
+                                    active_save_slot = 2;
+                                    gui.active_save_slot = 2;
+                                    info!("Selected Save State Slot: 2");
+                                    gui.show_toast("Selected Save Slot 2");
+                                }
+                                KeyCode::Digit3 => {
+                                    active_save_slot = 3;
+                                    gui.active_save_slot = 3;
+                                    info!("Selected Save State Slot: 3");
+                                    gui.show_toast("Selected Save Slot 3");
+                                }
+                                KeyCode::Digit4 => {
+                                    active_save_slot = 4;
+                                    gui.active_save_slot = 4;
+                                    info!("Selected Save State Slot: 4");
+                                    gui.show_toast("Selected Save Slot 4");
+                                }
+                                KeyCode::Digit5 => {
+                                    active_save_slot = 5;
+                                    gui.active_save_slot = 5;
+                                    info!("Selected Save State Slot: 5");
+                                    gui.show_toast("Selected Save Slot 5");
+                                }
+                                KeyCode::Digit6 => {
+                                    active_save_slot = 6;
+                                    gui.active_save_slot = 6;
+                                    info!("Selected Save State Slot: 6");
+                                    gui.show_toast("Selected Save Slot 6");
+                                }
+                                KeyCode::Digit7 => {
+                                    active_save_slot = 7;
+                                    gui.active_save_slot = 7;
+                                    info!("Selected Save State Slot: 7");
+                                    gui.show_toast("Selected Save Slot 7");
+                                }
+                                KeyCode::Digit8 => {
+                                    active_save_slot = 8;
+                                    gui.active_save_slot = 8;
+                                    info!("Selected Save State Slot: 8");
+                                    gui.show_toast("Selected Save Slot 8");
+                                }
+                                KeyCode::Digit9 => {
+                                    active_save_slot = 9;
+                                    gui.active_save_slot = 9;
+                                    info!("Selected Save State Slot: 9");
+                                    gui.show_toast("Selected Save Slot 9");
+                                }
+                                KeyCode::F1 => {
+                                    if let Some(ref rom_p) = current_rom_path {
+                                        let state_path = save::SaveManager::get_state_path(rom_p, active_save_slot);
+                                        if let Some(data) = active_core.save_state() {
+                                            if let Err(err) = save::SaveManager::write_save_state(&state_path, &data) {
+                                                warn!("Failed to save state to {:?}: {}", state_path, err);
+                                                gui.show_toast(format!("Save Failed: {}", err));
+                                            } else {
+                                                info!("Real-time State Saved -> Slot {} ({:?})", active_save_slot, state_path);
+                                                gui.show_toast(format!("State Saved -> Slot {}", active_save_slot));
+                                            }
+                                        } else {
+                                            warn!("Active core failed to capture real-time state snapshot");
+                                            gui.show_toast("Failed to capture state snapshot");
+                                        }
+                                    } else {
+                                        warn!("No ROM is currently loaded to save state");
+                                        gui.show_toast("No ROM loaded");
+                                    }
+                                }
+                                KeyCode::F5 | KeyCode::F2 => {
+                                    if let Some(ref rom_p) = current_rom_path {
+                                        let state_path = save::SaveManager::get_state_path(rom_p, active_save_slot);
+                                        if let Some(data) = save::SaveManager::read_save_state(&state_path) {
+                                            if active_core.load_state(&data) {
+                                                info!("Real-time State Restored <- Slot {} ({:?})", active_save_slot, state_path);
+                                                gui.show_toast(format!("State Restored <- Slot {}", active_save_slot));
+                                            } else {
+                                                warn!("Active core failed to restore state snapshot from {:?}", state_path);
+                                                gui.show_toast("Failed to restore state snapshot");
+                                            }
+                                        } else {
+                                            gui.show_toast(format!("No save state in slot {}", active_save_slot));
+                                        }
+                                    } else {
+                                        warn!("No ROM is currently loaded to load state");
+                                        gui.show_toast("No ROM loaded");
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        let button = match key_code {
+                            KeyCode::ArrowUp | KeyCode::KeyW => Some(Button::Up),
+                            KeyCode::ArrowDown | KeyCode::KeyS => Some(Button::Down),
+                            KeyCode::ArrowLeft | KeyCode::KeyA => Some(Button::Left),
+                            KeyCode::ArrowRight | KeyCode::KeyD => Some(Button::Right),
+                            KeyCode::KeyZ | KeyCode::KeyJ => Some(Button::A),
+                            KeyCode::KeyX | KeyCode::KeyK => Some(Button::B),
+                            KeyCode::KeyQ | KeyCode::KeyU => Some(Button::L),
+                            KeyCode::KeyE | KeyCode::KeyI => Some(Button::R),
+                            KeyCode::Enter => Some(Button::Start),
+                            KeyCode::ShiftRight | KeyCode::ShiftLeft | KeyCode::Backspace => Some(Button::Select),
+                            _ => None,
+                        };
+
+                        if let Some(btn) = button {
+                            active_core.handle_input(btn, pressed);
+                        }
+                    }
+
+                    WindowEvent::RedrawRequested => {
+                        // FPS calculation
+                        fps_frame_count += 1;
+                        let now = Instant::now();
+                        if now.duration_since(last_fps_calc) >= std::time::Duration::from_millis(400) {
+                            let elapsed = now.duration_since(last_fps_calc).as_secs_f32();
+                            gui.fps = fps_frame_count as f32 / elapsed;
+                            gui.frame_time_ms = 1000.0 / gui.fps.max(1.0);
+                            fps_frame_count = 0;
+                            last_fps_calc = now;
+                        }
+
+                        if !is_paused {
+                            let steps = if fast_forward { 2 } else { 1 };
+
+                            for _ in 0..steps {
+                                active_core.step_frame();
+
+                                // Forward any core-buffered audio samples to host stream
+                                let audio_samples = active_core.audio_buffer();
+                                if !audio_samples.is_empty() {
+                                    if let Some(ref prod) = audio_producer {
+                                        prod.push_f32_slice(&audio_samples);
+                                    }
+                                }
+                            }
+                        }
+
+                        let frame = pixels.frame_mut();
+                        let fb = active_core.framebuffer();
+
+                        // Guard: framebuffer and pixel buffer must match in size.
+                        if frame.len() == fb.len() {
+                            frame.copy_from_slice(fb);
                         } else {
-                            player.pause();
+                            log::debug!(
+                                "Framebuffer size mismatch: pixels={} core={} — skipping frame until resize propagates",
+                                frame.len(), fb.len()
+                            );
+                            let (w, h) = active_core.display_dimensions();
+                            let _ = pixels.resize_buffer(w, h);
                         }
-                    }
-                }
 
-                WindowEvent::KeyboardInput {
-                    event:
-                        KeyEvent {
-                            physical_key: PhysicalKey::Code(key_code),
-                            state,
-                            ..
-                        },
-                    ..
-                } => {
-                    let pressed = state == ElementState::Pressed;
-
-                    // Hotkeys on key press
-                    if pressed {
-                        match key_code {
-                            // Toggle 2x Fast-Forward speed on Tab press
-                            KeyCode::Tab => {
-                                fast_forward = !fast_forward;
-                                if let Some(ref prod) = audio_producer {
-                                    prod.set_fast_forward(fast_forward);
-                                }
-                                if fast_forward {
-                                    info!("⚡ Fast-Forward: Enabled (2x Speed)");
-                                } else {
-                                    info!("▶ Fast-Forward: Disabled (1.0x Normal Speed)");
-                                }
-                            }
-                            // Toggle Audio Mute on M press
-                            KeyCode::KeyM => {
-                                if let Some(ref prod) = audio_producer {
-                                    let is_muted = prod.toggle_mute();
-                                    if is_muted {
-                                        info!("🔇 Audio: Muted");
-                                    } else {
-                                        info!("🔊 Audio: Unmuted");
-                                    }
-                                }
-                            }
-                            KeyCode::Digit1 => {
-                                active_save_slot = 1;
-                                info!("Selected Save State Slot: 1");
-                            }
-                            KeyCode::Digit2 => {
-                                active_save_slot = 2;
-                                info!("Selected Save State Slot: 2");
-                            }
-                            KeyCode::Digit3 => {
-                                active_save_slot = 3;
-                                info!("Selected Save State Slot: 3");
-                            }
-                            KeyCode::Digit4 => {
-                                active_save_slot = 4;
-                                info!("Selected Save State Slot: 4");
-                            }
-                            KeyCode::Digit5 => {
-                                active_save_slot = 5;
-                                info!("Selected Save State Slot: 5");
-                            }
-                            KeyCode::Digit6 => {
-                                active_save_slot = 6;
-                                info!("Selected Save State Slot: 6");
-                            }
-                            KeyCode::Digit7 => {
-                                active_save_slot = 7;
-                                info!("Selected Save State Slot: 7");
-                            }
-                            KeyCode::Digit8 => {
-                                active_save_slot = 8;
-                                info!("Selected Save State Slot: 8");
-                            }
-                            KeyCode::Digit9 => {
-                                active_save_slot = 9;
-                                info!("Selected Save State Slot: 9");
-                            }
-                            KeyCode::F1 => {
-                                if let Some(ref rom_p) = current_rom_path {
-                                    let state_path = save::SaveManager::get_state_path(rom_p, active_save_slot);
-                                    if let Some(data) = active_core.save_state() {
-                                        if let Err(err) = save::SaveManager::write_save_state(&state_path, &data) {
-                                            warn!("Failed to save state to {:?}: {}", state_path, err);
-                                        } else {
-                                            info!("Real-time State Saved -> Slot {} ({:?})", active_save_slot, state_path);
-                                        }
-                                    } else {
-                                        warn!("Active core failed to capture real-time state snapshot");
-                                    }
-                                } else {
-                                    warn!("No ROM is currently loaded to save state");
-                                }
-                            }
-                            KeyCode::F5 | KeyCode::F2 => {
-                                if let Some(ref rom_p) = current_rom_path {
-                                    let state_path = save::SaveManager::get_state_path(rom_p, active_save_slot);
-                                    if let Some(data) = save::SaveManager::read_save_state(&state_path) {
-                                        if active_core.load_state(&data) {
-                                            info!("Real-time State Restored <- Slot {} ({:?})", active_save_slot, state_path);
-                                        } else {
-                                            warn!("Active core failed to restore state snapshot from {:?}", state_path);
+                        // Prepare egui UI & process actions
+                        let actions = gui.prepare_ui(&window);
+                        for action in actions {
+                            match action {
+                                GuiAction::OpenRomPicker => {
+                                    if let Some(file) = rfd::FileDialog::new()
+                                        .add_filter("Game Boy & GBA ROMs", &["gb", "gbc", "gba", "zip"])
+                                        .pick_file()
+                                    {
+                                        if load_rom_from_path(
+                                            &file,
+                                            &mut active_core,
+                                            &mut core_width,
+                                            &mut core_height,
+                                            &mut pixels,
+                                            &window,
+                                            &audio_producer,
+                                        ) {
+                                            let name = file.file_name().unwrap_or_default().to_string_lossy().to_string();
+                                            gui.loaded_rom_name = Some(name.clone());
+                                            gui.active_core_name = if active_core.display_dimensions() == (240, 160) { "GBA".to_string() } else { "GBC".to_string() };
+                                            gui.show_toast(format!("Loaded: {}", name));
+                                            current_rom_path = Some(file);
                                         }
                                     }
-                                } else {
-                                    warn!("No ROM is currently loaded to load state");
+                                }
+                                GuiAction::LoadRom(file) => {
+                                    if load_rom_from_path(
+                                        &file,
+                                        &mut active_core,
+                                        &mut core_width,
+                                        &mut core_height,
+                                        &mut pixels,
+                                        &window,
+                                        &audio_producer,
+                                    ) {
+                                        let name = file.file_name().unwrap_or_default().to_string_lossy().to_string();
+                                        gui.loaded_rom_name = Some(name.clone());
+                                        gui.active_core_name = if active_core.display_dimensions() == (240, 160) { "GBA".to_string() } else { "GBC".to_string() };
+                                        gui.show_toast(format!("Loaded: {}", name));
+                                        current_rom_path = Some(file);
+                                    }
+                                }
+                                GuiAction::UnloadRom => {
+                                    flush_core_save(active_core.as_ref());
+                                    let mut gbc = GbcCore::new();
+                                    gbc.set_audio_producer(audio_producer.clone());
+                                    active_core = Box::new(gbc);
+                                    apply_core_switch(active_core.as_ref(), &mut core_width, &mut core_height, &mut pixels, &window);
+                                    gui.loaded_rom_name = None;
+                                    current_rom_path = None;
+                                    gui.show_toast("ROM Unloaded");
+                                }
+                                GuiAction::Exit => {
+                                    flush_core_save(active_core.as_ref());
+                                    elwt.exit();
+                                }
+                                GuiAction::TogglePause => {
+                                    is_paused = !is_paused;
+                                    gui.is_paused = is_paused;
+                                    if is_paused {
+                                        gui.show_toast("Emulation Paused");
+                                    } else {
+                                        gui.show_toast("Emulation Resumed");
+                                    }
+                                }
+                                GuiAction::Reset => {
+                                    if let Some(ref rom_p) = current_rom_path {
+                                        let p = rom_p.clone();
+                                        load_rom_from_path(
+                                            &p,
+                                            &mut active_core,
+                                            &mut core_width,
+                                            &mut core_height,
+                                            &mut pixels,
+                                            &window,
+                                            &audio_producer,
+                                        );
+                                        gui.show_toast("Core Reset");
+                                    }
+                                }
+                                GuiAction::ToggleFastForward => {
+                                    fast_forward = !fast_forward;
+                                    gui.is_fast_forward = fast_forward;
+                                    if let Some(ref prod) = audio_producer {
+                                        prod.set_fast_forward(fast_forward);
+                                    }
+                                    if fast_forward {
+                                        gui.show_toast("Fast-Forward: 2x Speed");
+                                    } else {
+                                        gui.show_toast("Normal Speed (1.0x)");
+                                    }
+                                }
+                                GuiAction::QuickSave(slot) => {
+                                    if let Some(ref rom_p) = current_rom_path {
+                                        let state_path = save::SaveManager::get_state_path(rom_p, slot);
+                                        if let Some(data) = active_core.save_state() {
+                                            if let Err(err) = save::SaveManager::write_save_state(&state_path, &data) {
+                                                warn!("Failed to save state to {:?}: {}", state_path, err);
+                                                gui.show_toast(format!("Save Failed: {}", err));
+                                            } else {
+                                                info!("Real-time State Saved -> Slot {} ({:?})", slot, state_path);
+                                                gui.show_toast(format!("State Saved -> Slot {}", slot));
+                                            }
+                                        }
+                                    } else {
+                                        gui.show_toast("No ROM Loaded");
+                                    }
+                                }
+                                GuiAction::QuickLoad(slot) => {
+                                    if let Some(ref rom_p) = current_rom_path {
+                                        let state_path = save::SaveManager::get_state_path(rom_p, slot);
+                                        if let Some(data) = save::SaveManager::read_save_state(&state_path) {
+                                            if active_core.load_state(&data) {
+                                                info!("Real-time State Restored <- Slot {} ({:?})", slot, state_path);
+                                                gui.show_toast(format!("State Restored <- Slot {}", slot));
+                                            } else {
+                                                gui.show_toast("Failed to load state snapshot");
+                                            }
+                                        } else {
+                                            gui.show_toast(format!("No state in slot {}", slot));
+                                        }
+                                    } else {
+                                        gui.show_toast("No ROM Loaded");
+                                    }
+                                }
+                                GuiAction::SelectSlot(slot) => {
+                                    active_save_slot = slot;
+                                    gui.active_save_slot = slot;
+                                    gui.show_toast(format!("Selected Slot {}", slot));
+                                }
+                                GuiAction::SetVolume(vol) => {
+                                    gui.master_volume = vol;
+                                    if let Some(ref player) = audio_player {
+                                        player.set_volume(vol);
+                                    } else if let Some(ref prod) = audio_producer {
+                                        prod.set_volume(vol);
+                                    }
+                                }
+                                GuiAction::ToggleMute => {
+                                    if let Some(ref prod) = audio_producer {
+                                        let is_m = prod.toggle_mute();
+                                        gui.is_muted = is_m;
+                                        if is_m {
+                                            gui.show_toast("Audio Muted");
+                                        } else {
+                                            gui.show_toast("Audio Unmuted");
+                                        }
+                                    }
+                                }
+                                GuiAction::ToggleFpsHud => {
+                                    // Managed inside gui state
                                 }
                             }
-                            _ => {}
                         }
-                    }
 
-                    let button = match key_code {
-                        KeyCode::ArrowUp | KeyCode::KeyW => Some(Button::Up),
-                        KeyCode::ArrowDown | KeyCode::KeyS => Some(Button::Down),
-                        KeyCode::ArrowLeft | KeyCode::KeyA => Some(Button::Left),
-                        KeyCode::ArrowRight | KeyCode::KeyD => Some(Button::Right),
-                        KeyCode::KeyZ | KeyCode::KeyJ => Some(Button::A),
-                        KeyCode::KeyX | KeyCode::KeyK => Some(Button::B),
-                        KeyCode::KeyQ | KeyCode::KeyU => Some(Button::L),
-                        KeyCode::KeyE | KeyCode::KeyI => Some(Button::R),
-                        KeyCode::Enter => Some(Button::Start),
-                        KeyCode::ShiftRight | KeyCode::ShiftLeft | KeyCode::Backspace => Some(Button::Select),
-                        _ => None,
-                    };
+                        // Render Pixels framebuffer + egui overlay
+                        let render_res = pixels.render_with(|encoder, render_target, context| {
+                            context.scaling_renderer.render(encoder, render_target);
+                            gui.render(encoder, render_target, context, &window);
+                            Ok(())
+                        });
 
-                    if let Some(btn) = button {
-                        active_core.handle_input(btn, pressed);
-                    }
-                }
-
-                WindowEvent::RedrawRequested => {
-                    let steps = if fast_forward { 2 } else { 1 };
-
-                    for _ in 0..steps {
-                        active_core.step_frame();
-
-                        // Forward any core-buffered audio samples to host stream
-                        let audio_samples = active_core.audio_buffer();
-                        if !audio_samples.is_empty() {
-                            if let Some(ref prod) = audio_producer {
-                                prod.push_f32_slice(&audio_samples);
-                            }
-                        }
-                    }
-
-                    let frame = pixels.frame_mut();
-                    let fb = active_core.framebuffer();
-
-                    // Guard: framebuffer and pixel buffer must match in size.
-                    // A size mismatch can happen in the frame immediately after a
-                    // core switch (GBC -> GBA) if resize_buffer hasn't propagated yet.
-                    if frame.len() == fb.len() {
-                        frame.copy_from_slice(fb);
-                        if let Err(err) = pixels.render() {
+                        if let Err(err) = render_res {
                             warn!("Pixels render error: {:?}", err);
                         }
-                    } else {
-                        log::debug!(
-                            "Framebuffer size mismatch: pixels={} core={} — skipping frame until resize propagates",
-                            frame.len(), fb.len()
-                        );
-                        // Force a buffer resize to recover as quickly as possible
-                        let (w, h) = active_core.display_dimensions();
-                        let _ = pixels.resize_buffer(w, h);
                     }
-                }
 
-                _ => {}
-            },
+                    _ => {}
+                }
+            }
 
             Event::AboutToWait => {
                 let now = Instant::now();
