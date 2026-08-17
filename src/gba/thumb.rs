@@ -32,7 +32,7 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                     let sum = (val1 as u64) + (val2 as u64);
                     let res = sum as u32;
                     let c = sum > 0xFFFFFFFF;
-                    let v = (!((val1 ^ val2)) & (val1 ^ res) & 0x80000000) != 0;
+                    let v = (!(val1 ^ val2) & (val1 ^ res) & 0x80000000) != 0;
                     (res, c, v)
                 };
 
@@ -95,7 +95,7 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                     regs.set_n_flag((res & (1 << 31)) != 0);
                     regs.set_z_flag(res == 0);
                     regs.set_c_flag(sum > 0xFFFFFFFF);
-                    regs.set_v_flag(!((val1 ^ imm8)) & (val1 ^ res) & 0x80000000 != 0);
+                    regs.set_v_flag(!(val1 ^ imm8) & (val1 ^ res) & 0x80000000 != 0);
                 }
                 3 => {
                     // SUB Rd, #imm8
@@ -165,7 +165,7 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                         regs.set_n_flag((res & (1 << 31)) != 0);
                         regs.set_z_flag(res == 0);
                         regs.set_c_flag(sum > 0xFFFFFFFF);
-                        regs.set_v_flag(!((val1 ^ val2)) & (val1 ^ res) & 0x80000000 != 0);
+                        regs.set_v_flag(!(val1 ^ val2) & (val1 ^ res) & 0x80000000 != 0);
                     }
                     0x6 => { // SBC
                         let c_in = regs.c_flag() as u64;
@@ -196,7 +196,7 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                         regs.r[rd] = res;
                         regs.set_n_flag((res & (1 << 31)) != 0);
                         regs.set_z_flag(res == 0);
-                        regs.set_c_flag(0 >= val2);
+                        regs.set_c_flag(val2 == 0);
                         regs.set_v_flag((val2 & res & 0x80000000) != 0);
                     }
                     0xA => { // CMP
@@ -213,7 +213,7 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                         regs.set_n_flag((res & (1 << 31)) != 0);
                         regs.set_z_flag(res == 0);
                         regs.set_c_flag(sum > 0xFFFFFFFF);
-                        regs.set_v_flag(!((val1 ^ val2)) & (val1 ^ res) & 0x80000000 != 0);
+                        regs.set_v_flag(!(val1 ^ val2) & (val1 ^ res) & 0x80000000 != 0);
                     }
                     0xC => { // ORR
                         let res = val1 | val2;
@@ -247,8 +247,8 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                 let op = (instr >> 8) & 3;
                 let h1 = (instr & (1 << 7)) != 0;
                 let h2 = (instr & (1 << 6)) != 0;
-                let rs = (((h2 as usize) << 3) | (((instr >> 3) & 7) as usize)) as usize;
-                let rd = (((h1 as usize) << 3) | ((instr & 7) as usize)) as usize;
+                let rs = ((h2 as usize) << 3) | (((instr >> 3) & 7) as usize);
+                let rd = ((h1 as usize) << 3) | ((instr & 7) as usize);
 
                 let val2 = regs.r[rs];
 
@@ -340,7 +340,7 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
         }
 
         // Formats 9 & 10: Load/Store Immediate Offset & Halfword
-        0x6 | 0x7 | 0x8 => {
+        0x6..=0x8 => {
             if top_bits == 0x8 {
                 // Format 10: Load/Store Halfword (LDRH / STRH)
                 let is_load = (instr & (1 << 11)) != 0;
@@ -383,7 +383,7 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
         }
 
         // Formats 11, 12, 13, 14: SP-relative, Load Address, SP add/sub, PUSH/POP
-        0x9 | 0xA | 0xB => {
+        0x9..=0xB => {
             if top_bits == 0x9 {
                 // Format 11: SP-Relative Load/Store (LDR/STR Rd, [SP, #imm8])
                 let is_load = (instr & (1 << 11)) != 0;
@@ -464,7 +464,7 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
         }
 
         // Formats 15-19: LDMIA/STMIA, Conditional Branch, SWI, Unconditional Branch, BL
-        0xC | 0xD | 0xE | 0xF => {
+        0xC..=0xF => {
             if top_bits == 0xC {
                 // Format 15: Multiple Load/Store (LDMIA / STMIA)
                 let is_load = (instr & (1 << 11)) != 0;
@@ -522,7 +522,7 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                 if !is_second_half {
                     let pc = regs.r[15].wrapping_sub(4);
                     let next_instr = bus.read_u16(pc.wrapping_add(2));
-                    if (next_instr & 0xF000) == 0xF800 || (next_instr & 0xF000) == 0xE800 {
+                    if (next_instr & 0xF800) == 0xF800 || (next_instr & 0xF800) == 0xE800 {
                         let sign_extended = if (offset11 & 0x0400) != 0 {
                             (offset11 | 0xFFFFF800) as i32
                         } else {

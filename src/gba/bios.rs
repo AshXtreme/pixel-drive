@@ -155,7 +155,7 @@ pub fn handle_swi(comment: u8, regs: &mut Registers, bus: &mut GbaMemoryBus) {
             let src_addr = regs.r[0];
             let dst_addr = regs.r[1];
             let control = regs.r[2];
-            let count = (control & 0x001F_FFFF) as u32;
+            let count = control & 0x001F_FFFF;
             let fill_mode = (control & (1 << 24)) != 0;
             let is_32bit = (control & (1 << 26)) != 0;
 
@@ -190,7 +190,7 @@ pub fn handle_swi(comment: u8, regs: &mut Registers, bus: &mut GbaMemoryBus) {
             let src = regs.r[0];
             let dst = regs.r[1];
             let cnt_h = regs.r[2];
-            let count = (cnt_h & 0x001F_FFFF) as u32;
+            let count = cnt_h & 0x001F_FFFF;
             let is_fixed = (cnt_h & (1 << 24)) != 0;
 
             let mut curr_src = src;

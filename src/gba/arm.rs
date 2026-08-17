@@ -28,6 +28,7 @@ pub fn check_condition(cond: u32, regs: &Registers) -> bool {
 
 /// Shift types for ARM Barrel Shifter
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum ShiftType {
     LSL = 0,
     LSR = 1,
@@ -204,7 +205,7 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
     }
 
     // 3. Multiply / Multiply Accumulate (MUL, MLA)
-    if (instr & 0x0FC000F0) == 0x00000090 || (instr & 0x0FC000F0) == 0x00200090 {
+    if (instr & 0x0F8000F0) == 0x00000090 {
         let is_mla = (instr & (1 << 21)) != 0;
         let set_flags = (instr & (1 << 20)) != 0;
         let rd = ((instr >> 16) & 0x0F) as usize;
@@ -456,14 +457,14 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
                 let sum = (op1 as u64) + (op2 as u64);
                 let res = sum as u32;
                 let c = sum > 0xFFFFFFFF;
-                let v = (!((op1 ^ op2)) & (op1 ^ res) & 0x80000000) != 0;
+                let v = (!(op1 ^ op2) & (op1 ^ res) & 0x80000000) != 0;
                 (res, c, v)
             }
             0x5 => {                                                              // ADC
                 let sum = (op1 as u64) + (op2 as u64) + (carry_in as u64);
                 let res = sum as u32;
                 let c = sum > 0xFFFFFFFF;
-                let v = (!((op1 ^ op2)) & (op1 ^ res) & 0x80000000) != 0;
+                let v = (!(op1 ^ op2) & (op1 ^ res) & 0x80000000) != 0;
                 (res, c, v)
             }
             0x6 => {                                                              // SBC
@@ -497,7 +498,7 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
                 let sum = (op1 as u64) + (op2 as u64);
                 let res = sum as u32;
                 let c = sum > 0xFFFFFFFF;
-                let v = (!((op1 ^ op2)) & (op1 ^ res) & 0x80000000) != 0;
+                let v = (!(op1 ^ op2) & (op1 ^ res) & 0x80000000) != 0;
                 (res, c, v)
             }
             0xC => (op1 | op2, shifter_carry, regs.v_flag()),                     // ORR

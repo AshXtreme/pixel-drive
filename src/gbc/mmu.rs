@@ -231,13 +231,11 @@ impl MemoryBus {
             }
             0xFF55 => {
                 if self.is_gbc {
-                    if self.hdma_active {
-                        if (val & 0x80) == 0 {
-                            // Cancel active HDMA transfer
-                            self.hdma_active = false;
-                            self.hdma5 = (self.hdma_blocks_remaining.wrapping_sub(1) & 0x7F) | 0x80;
-                            return;
-                        }
+                    if self.hdma_active && (val & 0x80) == 0 {
+                        // Cancel active HDMA transfer
+                        self.hdma_active = false;
+                        self.hdma5 = (self.hdma_blocks_remaining.wrapping_sub(1) & 0x7F) | 0x80;
+                        return;
                     }
 
                     let blocks = (val & 0x7F) + 1;

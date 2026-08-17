@@ -4,6 +4,7 @@ use super::mmu::GbaMemoryBus;
 
 /// ARM7TDMI Operating Modes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum CpuMode {
     User = 0x10,
     FIQ = 0x11,
@@ -417,11 +418,7 @@ impl Cpu {
         } else {
             self.regs.r[15].wrapping_sub(8)
         };
-        let return_pc = if is_thumb {
-            current_pc.wrapping_add(4)
-        } else {
-            current_pc.wrapping_add(4)
-        };
+        let return_pc = current_pc.wrapping_add(4);
 
         self.regs.set_mode(CpuMode::IRQ);
         self.regs.set_spsr(old_cpsr);

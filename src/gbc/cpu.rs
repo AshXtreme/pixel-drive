@@ -370,7 +370,7 @@ impl Cpu {
             }
             // SWAP r (0x30..=0x37)
             0x30..=0x37 => {
-                let res = (val >> 4) | (val << 4);
+                let res = val.rotate_left(4);
                 self.write_r8(bus, reg_idx, res);
                 self.registers.set_flags(res == 0, false, false, false);
             }

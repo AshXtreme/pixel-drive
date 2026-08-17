@@ -258,8 +258,8 @@ impl Mbc {
                 rom_bank,
                 ram_enabled,
                 ..
-            } => match addr {
-                0x0000..=0x3FFF => {
+            } => {
+                if (0x0000..=0x3FFF).contains(&addr) {
                     if (addr & 0x0100) == 0 {
                         // Bit 8 is 0: RAM Enable
                         *ram_enabled = (val & 0x0F) == 0x0A;
@@ -269,8 +269,7 @@ impl Mbc {
                         *rom_bank = if bank == 0 { 1 } else { bank };
                     }
                 }
-                _ => {}
-            },
+            }
 
             Mbc::Mbc3 {
                 rom_bank,

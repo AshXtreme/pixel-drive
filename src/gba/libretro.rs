@@ -564,7 +564,7 @@ impl LibretroCore {
             let mut state_lock = BRIDGE_STATE.lock().map_err(|e| e.to_string())?;
             let system_dir = std::env::current_dir()
                 .ok()
-                .and_then(|p| p.to_str().map(|s| std::ffi::CString::new(s).ok()).flatten());
+                .and_then(|p| p.to_str().and_then(|s| std::ffi::CString::new(s).ok()));
             let save_dir = system_dir.clone();
 
             *state_lock = Some(BridgeState {
@@ -1016,7 +1016,7 @@ mod tests {
     fn test_mgba_libretro_core_loading_and_execution() {
         let core_path = PathBuf::from("cores/mgba_libretro.dylib");
         if !core_path.exists() {
-            println!("No mgba_libretro.dylib in ./cores/, skipping test");
+            log::info!("No mgba_libretro.dylib in ./cores/, skipping test");
             return;
         }
 
@@ -1039,7 +1039,7 @@ mod tests {
                 if frame_idx % 30 == 0 {
                     let fb = core.framebuffer();
                     let non_zero = fb.iter().filter(|&&b| b != 0 && b != 255).count();
-                    println!(
+                    log::debug!(
                         "mGBA Frame {}: fb_len={}, non_zero_bytes={}, sample=[{}, {}, {}, {}]",
                         frame_idx, fb.len(), non_zero, fb[0], fb[1], fb[2], fb[3]
                     );

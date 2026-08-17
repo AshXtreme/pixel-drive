@@ -1,5 +1,6 @@
 mod audio;
 mod core;
+mod error;
 mod gba;
 mod gbc;
 mod render;
@@ -159,7 +160,7 @@ fn load_rom_from_path(
             } else {
                 let mut gbc = GbcCore::new();
                 gbc.set_audio_producer(audio_producer.clone());
-                if let Ok(_) = gbc.load_rom_file(path) {
+                if gbc.load_rom_file(path).is_ok() {
                     if let Some(save_data) = save::SaveManager::load_save_file(&save_path) {
                         gbc.load_save_data(&save_data);
                     }
@@ -200,7 +201,7 @@ fn load_rom_from_path(
             } else {
                 let mut gbc = GbcCore::new();
                 gbc.set_audio_producer(audio_producer.clone());
-                if let Ok(_) = gbc.load_rom_file(path) {
+                if gbc.load_rom_file(path).is_ok() {
                     if let Some(save_data) = save::SaveManager::load_save_file(&save_path) {
                         gbc.load_save_data(&save_data);
                     }

@@ -458,24 +458,24 @@ mod tests {
     fn test_pokemon_firered_execution() {
         let rom_path = "/Users/ashutoshsamal/Downloads/Pokemon_Fire_Red_1[romsretro.com]/Pokemon - FireRed Version (USA, Europe).gba";
         if !std::path::Path::new(rom_path).exists() {
-            println!("ROM PATH DOES NOT EXIST: {}", rom_path);
+            log::info!("ROM PATH DOES NOT EXIST: {}", rom_path);
             return;
         }
 
         let mut core = GbaCore::new();
         let header = core.load_rom_file(rom_path).unwrap();
-        println!("Loaded ROM title: {}", header.title);
+        log::info!("Loaded ROM title: {}", header.title);
 
-        println!("--- RUNNING 300 FRAMES OF POKEMON FIRE RED ---");
+        log::debug!("--- RUNNING 300 FRAMES OF POKEMON FIRE RED ---");
         for _frame in 0..300 {
             core.step_frame();
         }
 
-        println!("--- RUNNING 120 FRAMES OF POKEMON FIRE RED ---");
+        log::debug!("--- RUNNING 120 FRAMES OF POKEMON FIRE RED ---");
         for frame in 0..120 {
             core.step_frame();
             if frame % 30 == 0 {
-                println!(
+                log::debug!(
                     "Frame {:3}: PC=0x{:08X} DISPCNT=0x{:04X}",
                     frame, core.cpu.regs.pc(), core.mmu.ppu.dispcnt
                 );
@@ -483,7 +483,7 @@ mod tests {
         }
 
         if core.libretro.is_some() {
-            println!("Pokemon FireRed verified on Libretro core backend.");
+            log::info!("Pokemon FireRed verified on Libretro core backend.");
             assert_eq!(core.framebuffer().len(), 240 * 160 * 4);
         } else {
             assert!(core.cpu.regs.pc() != 0x08000000);

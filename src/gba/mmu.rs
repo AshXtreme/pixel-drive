@@ -564,7 +564,11 @@ impl GbaMemoryBus {
             0x08..=0x0D => {
                 let rom_off = (addr & 0x01FFFFFF) as usize;
                 if rom_off + 3 < self.rom.len() {
-                    u32::from_le_bytes(self.rom[rom_off..rom_off + 4].try_into().unwrap())
+                    let b0 = self.rom[rom_off];
+                    let b1 = self.rom[rom_off + 1];
+                    let b2 = self.rom[rom_off + 2];
+                    let b3 = self.rom[rom_off + 3];
+                    u32::from_le_bytes([b0, b1, b2, b3])
                 } else {
                     self.fallback_read_u32(addr)
                 }

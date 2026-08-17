@@ -26,7 +26,7 @@ impl BiquadFilter {
         let omega = 2.0 * std::f32::consts::PI * (cutoff / sample_rate);
         let cos_w = omega.cos();
         let sin_w = omega.sin();
-        let q = 0.7071068_f32; // Butterworth Q
+        let q = std::f32::consts::FRAC_1_SQRT_2; // Butterworth Q
         let alpha = sin_w / (2.0 * q);
 
         let a0 = 1.0 + alpha;

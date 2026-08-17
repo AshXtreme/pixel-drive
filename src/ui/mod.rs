@@ -149,11 +149,9 @@ impl GuiRenderer {
                                 actions.push(GuiAction::OpenRomPicker);
                                 ui.close_menu();
                             }
-                            if self.loaded_rom_name.is_some() {
-                                if ui.button("⏏ Unload ROM").clicked() {
-                                    actions.push(GuiAction::UnloadRom);
-                                    ui.close_menu();
-                                }
+                            if self.loaded_rom_name.is_some() && ui.button("⏏ Unload ROM").clicked() {
+                                actions.push(GuiAction::UnloadRom);
+                                ui.close_menu();
                             }
                             ui.separator();
                             if ui.button("❌ Exit").clicked() {
@@ -240,11 +238,9 @@ impl GuiRenderer {
                                         actions.push(GuiAction::SelectSlot(slot));
                                     }
 
-                                    if exists {
-                                        if ui.small_button("Load").clicked() {
-                                            actions.push(GuiAction::QuickLoad(slot));
-                                            ui.close_menu();
-                                        }
+                                    if exists && ui.small_button("Load").clicked() {
+                                        actions.push(GuiAction::QuickLoad(slot));
+                                        ui.close_menu();
                                     }
                                     if ui.small_button("Save").clicked() {
                                         actions.push(GuiAction::QuickSave(slot));

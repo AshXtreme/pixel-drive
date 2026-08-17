@@ -138,7 +138,7 @@ impl GbaPpu {
         let mode = self.dispcnt & 0x07;
 
         match mode {
-            0 | 1 | 2 => self.render_tile_mode(line, mode),
+            0..=2 => self.render_tile_mode(line, mode),
             3 => self.render_mode3(line),
             4 => self.render_mode4(line),
             5 => self.render_mode5(line),
@@ -202,7 +202,7 @@ impl GbaPpu {
         // Fill scanline with backdrop color first
         self.render_fallback_backdrop(line);
 
-        if line >= 16 && line < 144 {
+        if (16..144).contains(&line) {
             let src_y = line - 16;
             let line_start = page_offset + src_y * 160 * 2;
             for x in 0..160 {

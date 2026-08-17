@@ -142,6 +142,7 @@ impl ShaderPipeline {
     }
 
     /// Renders the internal pixel buffer to the swapchain render target using the active WGSL filter.
+    #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,

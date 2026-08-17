@@ -329,7 +329,7 @@ impl Channel2 {
 // Channel 3: Custom Wave Pattern RAM
 // ============================================================================
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Channel3 {
     pub enabled: bool,
     pub dac_enabled: bool,
@@ -349,22 +349,6 @@ pub struct Channel3 {
     // Wave RAM: 16 bytes = 32 4-bit samples
     pub wave_ram: [u8; 16],
     pub sample_pos: u8,
-}
-
-impl Default for Channel3 {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            dac_enabled: false,
-            length_counter: 0,
-            volume_code: 0,
-            frequency: 0,
-            timer: 0,
-            length_enable: false,
-            wave_ram: [0; 16],
-            sample_pos: 0,
-        }
-    }
 }
 
 impl Channel3 {
@@ -450,7 +434,7 @@ impl Channel3 {
         }
 
         let byte = self.wave_ram[(self.sample_pos / 2) as usize];
-        let raw_4bit = if self.sample_pos % 2 == 0 {
+        let raw_4bit = if (self.sample_pos & 1) == 0 {
             (byte >> 4) & 0x0F
         } else {
             byte & 0x0F
