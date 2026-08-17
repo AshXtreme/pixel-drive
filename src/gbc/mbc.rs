@@ -100,6 +100,7 @@ impl Mbc {
     }
 
     /// Checks if cartridge has battery-backed persistent RAM.
+    #[allow(dead_code)]
     pub fn has_battery(&self) -> bool {
         match self {
             Mbc::RomOnly { .. } => false,

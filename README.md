@@ -37,12 +37,20 @@ A modern, high-performance **Game Boy (GB)**, **Game Boy Color (GBC)**, and **Ga
 - **2x Fast-Forward Toggle:** Click `Tab` to switch between 1.0x normal speed and 2x accelerated speed.
 - **Smart Audio Throttling:** Automatically drops audio frames during fast-forward to prevent queue backlog and resumes audio smoothly upon deactivation.
 
+### 🎨 Post-Processing Video Shaders (WGSL)
+- **Shader Pipeline:** Hardware-accelerated post-processing passes running directly on the GPU via WGSL and WGPU.
+- **Dynamic Filter Modes (`F4` to cycle):**
+  - **Nearest (Sharp):** Crisp nearest-neighbor integer scaling.
+  - **LCD Screen Grid:** Authentic handheld subpixel grid lines with RGB phosphor striping mimicking GBA/GBC LCD panels.
+  - **Color Corrected GBA:** Gamma curve and handheld color matrix calibration correcting 15-bit GBA tones for modern sRGB displays.
+  - **LCD + Color Corrected:** Combined authentic LCD matrix grid and color space correction.
+
 ### 🖥️ Modern Graphics & Archive Ingestion
 - **Hardware-Accelerated Rendering:** Powered by `pixels` and `wgpu` with native **Metal** (macOS / Apple Silicon), **Vulkan** (Linux / Windows), and **DirectX 12** backends.
 - **On-Screen Display (OSD) & Menu Bar (`egui`):**
-  - **Top Menu Bar:** Quick access to *Open ROM...* (native OS file picker), *Unload ROM*, *Pause/Resume*, *Reset*, *Save/Load Slots*, *Volume Slider*, and *Help / Controls*.
-  - **Live HUD Stats:** Top-right color-coded FPS counter and millisecond frame timing with status badges (`2X`, `PAUSED`, `MUTED`).
-  - **Interactive Toast Notifications:** Floating translucent pills for instant visual feedback on state saves, slot switching, volume adjustments, and core events.
+  - **Top Menu Bar:** Quick access to *Open ROM...* (native OS file picker), *Unload ROM*, *Pause/Resume*, *Reset*, *Save/Load Slots*, *Video Filter Selector*, *Volume Slider*, and *Help / Controls*.
+  - **Live HUD Stats:** Top-right color-coded FPS counter and millisecond frame timing with status badges (`2X`, `PAUSED`, `MUTED`, `LCD`, `COLOR`).
+  - **Interactive Toast Notifications:** Floating translucent pills for instant visual feedback on state saves, slot switching, volume adjustments, shaders, and core events.
 - **Drag-and-Drop Ingestion:** Drag `.gb`, `.gbc`, `.gba` files or compressed `.zip` archives directly into the window.
 - **Dynamic Viewport Resizing:** Automatic resolution and aspect ratio switching (160×144 for GBC, 240×160 for GBA) with seamless window scaling.
 
@@ -71,6 +79,7 @@ A modern, high-performance **Game Boy (GB)**, **Game Boy Color (GBC)**, and **Ga
 | :--- | :--- |
 | **Toggle 2x Fast-Forward** | `Tab` |
 | **Mute / Unmute Sound** | `M` |
+| **Cycle Video Shaders** | `F4` |
 | **Save State Snapshot** | `F1` |
 | **Quick Load State Snapshot** | `F5` or `F2` |
 | **Select Save State Slot (1–9)** | Number keys `1` .. `9` |

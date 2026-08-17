@@ -1,3 +1,4 @@
+use crate::render::FilterMode;
 use egui::{epaint::Shadow, Align2, Color32, Context, FontId, Rounding, Stroke, Vec2};
 use egui_wgpu::{Renderer, ScreenDescriptor};
 use egui_winit::State;
@@ -21,6 +22,8 @@ pub enum GuiAction {
     SetVolume(f32),
     ToggleMute,
     ToggleFpsHud,
+    SetFilterMode(FilterMode),
+    CycleFilterMode,
 }
 
 /// GuiRenderer manages egui state, overlay drawing, top menu bar, and on-screen HUD.
@@ -44,6 +47,7 @@ pub struct GuiRenderer {
     pub is_muted: bool,
     pub master_volume: f32,
     pub active_save_slot: usize,
+    pub filter_mode: FilterMode,
     pub loaded_rom_name: Option<String>,
     pub active_core_name: String,
 
@@ -78,6 +82,7 @@ impl GuiRenderer {
             is_muted: false,
             master_volume: 1.0,
             active_save_slot: 1,
+            filter_mode: FilterMode::Nearest,
             loaded_rom_name: None,
             active_core_name: "GBC".to_string(),
             toast: None,
@@ -145,7 +150,7 @@ impl GuiRenderer {
                                 ui.close_menu();
                             }
                             if self.loaded_rom_name.is_some() {
-                                if ui.button("⏹ Unload ROM").clicked() {
+                                if ui.button("⏏ Unload ROM").clicked() {
                                     actions.push(GuiAction::UnloadRom);
                                     ui.close_menu();
                                 }
@@ -264,8 +269,22 @@ impl GuiRenderer {
                             }
                         });
 
-                        // View Menu
-                        ui.menu_button("View", |ui| {
+                        // Video / Shader Menu
+                        ui.menu_button("Video", |ui| {
+                            ui.label("Display Filter (F4):");
+                            for mode in [
+                                FilterMode::Nearest,
+                                FilterMode::LcdGrid,
+                                FilterMode::ColorCorrection,
+                                FilterMode::LcdColor,
+                            ] {
+                                let selected = self.filter_mode == mode;
+                                if ui.selectable_label(selected, mode.name()).clicked() {
+                                    actions.push(GuiAction::SetFilterMode(mode));
+                                    ui.close_menu();
+                                }
+                            }
+                            ui.separator();
                             if ui.checkbox(&mut self.show_fps_hud, "Show HUD / Stats Overlay").changed() {
                                 actions.push(GuiAction::ToggleFpsHud);
                             }
@@ -345,6 +364,9 @@ impl GuiRenderer {
                         ui.label(egui::RichText::new("M").strong());
                         ui.label("Toggle Audio Mute");
                         ui.end_row();
+                        ui.label(egui::RichText::new("F4").strong());
+                        ui.label("Cycle Display Shaders (Nearest -> LCD -> Color -> LCD+Color)");
+                        ui.end_row();
                         ui.label(egui::RichText::new("1 - 9").strong());
                         ui.label("Select Save State Slot 1-9");
                         ui.end_row();
@@ -374,6 +396,7 @@ impl GuiRenderer {
                     ui.label("A high-performance Game Boy Color & Game Boy Advance emulator built with Rust, WGPU, Pixels, and egui.");
                     ui.add_space(6.0);
                     ui.label("• Dual-Core Architecture (Native GBC Core + Libretro GBA Core)");
+                    ui.label("• Post-Processing Shaders (Nearest, LCD Grid, Color Correction, LCD+Color)");
                     ui.label("• Real-time Save States (Slots 1-9)");
                     ui.label("• Persistent Battery Saves (.sav sync)");
                     ui.label("• Dynamic 2x Fast-Forward & Audio Sync Throttle");
@@ -451,6 +474,22 @@ impl GuiRenderer {
                                 egui::RichText::new("🔇 MUTED")
                                     .color(Color32::from_rgb(200, 100, 100))
                                     .font(FontId::monospace(11.0)),
+                            );
+                        }
+
+                        let filter_badge = match self.filter_mode {
+                            FilterMode::Nearest => "",
+                            FilterMode::LcdGrid => "📺 LCD",
+                            FilterMode::ColorCorrection => "🎨 COLOR",
+                            FilterMode::LcdColor => "📺 LCD+CLR",
+                        };
+                        if !filter_badge.is_empty() {
+                            ui.separator();
+                            ui.label(
+                                egui::RichText::new(filter_badge)
+                                    .color(Color32::from_rgb(140, 200, 255))
+                                    .font(FontId::monospace(11.0))
+                                    .strong(),
                             );
                         }
                     });

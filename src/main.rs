@@ -2,6 +2,7 @@ mod audio;
 mod core;
 mod gba;
 mod gbc;
+mod render;
 mod save;
 mod ui;
 
@@ -11,6 +12,7 @@ use gba::GbaCore;
 use gbc::GbcCore;
 use log::{info, warn};
 use pixels::{Pixels, SurfaceTexture};
+use render::{FilterMode, ShaderPipeline};
 use std::time::Instant;
 use ui::{GuiAction, GuiRenderer};
 use winit::{
@@ -269,6 +271,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let window_size = window.inner_size();
     let mut gui = GuiRenderer::new(&window, window_size.width, window_size.height);
+    let mut shader_pipeline = ShaderPipeline::new(pixels.device(), pixels::wgpu::TextureFormat::Bgra8UnormSrgb);
+    let mut filter_mode = FilterMode::Nearest;
 
     let mut current_rom_path: Option<std::path::PathBuf> = None;
     let mut active_save_slot: usize = 1;
@@ -482,6 +486,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         warn!("No ROM is currently loaded to save state");
                                         gui.show_toast("No ROM loaded");
                                     }
+                                }
+                                KeyCode::F4 => {
+                                    filter_mode = filter_mode.next();
+                                    gui.filter_mode = filter_mode;
+                                    info!("Selected Shader Filter: {}", filter_mode.name());
+                                    gui.show_toast(format!("Shader: {}", filter_mode.name()));
                                 }
                                 KeyCode::F5 | KeyCode::F2 => {
                                     if let Some(ref rom_p) = current_rom_path {
@@ -721,12 +731,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 GuiAction::ToggleFpsHud => {
                                     // Managed inside gui state
                                 }
+                                GuiAction::SetFilterMode(mode) => {
+                                    filter_mode = mode;
+                                    gui.filter_mode = mode;
+                                    info!("Set Shader Filter: {}", mode.name());
+                                    gui.show_toast(format!("Shader: {}", mode.name()));
+                                }
+                                GuiAction::CycleFilterMode => {
+                                    filter_mode = filter_mode.next();
+                                    gui.filter_mode = filter_mode;
+                                    info!("Cycled Shader Filter: {}", filter_mode.name());
+                                    gui.show_toast(format!("Shader: {}", filter_mode.name()));
+                                }
                             }
                         }
 
-                        // Render Pixels framebuffer + egui overlay
+                        // Render Pixels framebuffer with post-processing shader + egui overlay
                         let render_res = pixels.render_with(|encoder, render_target, context| {
-                            context.scaling_renderer.render(encoder, render_target);
+                            let win_size = window.inner_size();
+                            shader_pipeline.render(
+                                encoder,
+                                render_target,
+                                context,
+                                filter_mode,
+                                core_width,
+                                core_height,
+                                win_size.width,
+                                win_size.height,
+                            );
                             gui.render(encoder, render_target, context, &window);
                             Ok(())
                         });
