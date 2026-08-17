@@ -1,155 +1,138 @@
 # 🕹️ PixelDrive
 
-![Rust](https://img.shields.io/badge/Language-Rust-orange.svg)
-![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-lightgrey.svg)
-![License](https://img.shields.io/badge/License-MIT-blue.svg)
-![Target](https://img.shields.io/badge/Target-60%20FPS-green.svg)
-
-A modern, high-performance **Game Boy (GB)**, **Game Boy Color (GBC)**, and **Game Boy Advance (GBA)** emulator written in **Rust**, powered by **WGPU** for hardware-accelerated rendering, an ultra-low-latency **CPAL** audio engine, and a dynamic **Libretro Core Bridge**.
+A modern, high-performance Game Boy (GB / GBC) and Game Boy Advance (GBA) emulator built in **Rust**, powered by **WGPU** for hardware-accelerated rendering, real-time **WGSL post-processing shaders**, **cpal** low-latency audio, and a dynamic **Libretro Core Bridge**.
 
 ---
 
 ## ✨ Features
 
-### 🎮 Dual-Core Emulation Architecture
-- **Game Boy / Game Boy Color (GB / GBC):**
-  - Native, pure-Rust cycle-accurate CPU emulation (Sharp LR35902).
-  - Scanline-based Pixel Processing Unit (PPU) supporting background, window, and sprite layers.
-  - Complete Game Boy Color features: GBC Background/OBJ Palette RAM banking, VRAM bank switching, and high-speed General DMA (GDMA) / H-Blank DMA (HDMA).
-  - Memory Bank Controller support: **ROM-Only**, **MBC1**, **MBC2** (with 512×4-bit built-in RAM), **MBC3** (with RTC), and **MBC5**.
-  - Cycle-accurate 4-Channel Sound Synthesizer (APU): Square 1 with Sweep/Envelope, Square 2, Custom Wave RAM Channel 3, and Noise LFSR Channel 4.
-- **Game Boy Advance (GBA):**
-  - Dynamic C-ABI Libretro Core Bridge (mGBA) loaded at runtime via `libloading`.
-  - Zero-latency video buffer conversion (0RGB1555 / RGB565 / XRGB8888 to RGBA32).
-  - High-performance ARM7TDMI fallback core with EWRAM, IWRAM, VRAM, and Keypad I/O handling.
-
-### 🔊 Studio-Grade Audio Engine
-- **Host Output Stream:** Powered by `cpal` with lock-free ring buffer communication (`ringbuf`).
-- **High-Quality Resampler:** Catmull-Rom 4-point cubic Hermite spline interpolation with 2nd-order Butterworth low-pass anti-aliasing filter and DC blockers.
-- **Dynamic Rate Control:** Automatic fine-grained clock pacing to eliminate crackling, underflows, and latency buildup.
-- **Mute Toggle:** Instantaneous audio mute (`M`) with zero buffer desync.
-
-### 💾 Complete Save Persistence & Save States
-- **Battery-Backed Saves (`.sav`):** In-game saves for SRAM, Flash 64K/128K, and MBC battery RAM automatically flushed to `./saves/<rom_name>.sav` every 5 seconds and on application close.
-- **Real-Time Save States (`.state1` .. `.state9`):** Full-system snapshots capturing exact CPU, PPU, APU, Timer, and Memory states with instant Quick Load (`F1` to Save, `F5` / `F2` to Load, `1`–`9` for slots).
-
-### ⚡ Fast-Forward & Dynamic Pacing
-- **2x Fast-Forward Toggle:** Click `Tab` to switch between 1.0x normal speed and 2x accelerated speed.
-- **Smart Audio Throttling:** Automatically drops audio frames during fast-forward to prevent queue backlog and resumes audio smoothly upon deactivation.
-
-### 🎨 Post-Processing Video Shaders (WGSL)
-- **Shader Pipeline:** Hardware-accelerated post-processing passes running directly on the GPU via WGSL and WGPU.
-- **Dynamic Filter Modes (`F4` to cycle):**
-  - **Nearest (Sharp):** Crisp nearest-neighbor integer scaling.
-  - **LCD Screen Grid:** Authentic handheld subpixel grid lines with RGB phosphor striping mimicking GBA/GBC LCD panels.
-  - **Color Corrected GBA:** Gamma curve and handheld color matrix calibration correcting 15-bit GBA tones for modern sRGB displays.
-  - **LCD + Color Corrected:** Combined authentic LCD matrix grid and color space correction.
-
-### 🖥️ Modern Graphics & Archive Ingestion
-- **Hardware-Accelerated Rendering:** Powered by `pixels` and `wgpu` with native **Metal** (macOS / Apple Silicon), **Vulkan** (Linux / Windows), and **DirectX 12** backends.
-- **On-Screen Display (OSD) & Menu Bar (`egui`):**
-  - **Top Menu Bar:** Quick access to *Open ROM...* (native OS file picker), *Unload ROM*, *Pause/Resume*, *Reset*, *Save/Load Slots*, *Video Filter Selector*, *Volume Slider*, and *Help / Controls*.
-  - **Live HUD Stats:** Top-right color-coded FPS counter and millisecond frame timing with status badges (`2X`, `PAUSED`, `MUTED`, `LCD`, `COLOR`).
-  - **Interactive Toast Notifications:** Floating translucent pills for instant visual feedback on state saves, slot switching, volume adjustments, shaders, and core events.
-- **Drag-and-Drop Ingestion:** Drag `.gb`, `.gbc`, `.gba` files or compressed `.zip` archives directly into the window.
-- **Dynamic Viewport Resizing:** Automatic resolution and aspect ratio switching (160×144 for GBC, 240×160 for GBA) with seamless window scaling.
+- **Multi-System Architecture:**
+  - **Game Boy / Game Boy Color:** Native cycle-accurate pure-Rust emulation core with full 4-channel APU audio synthesis.
+  - **Game Boy Advance:** High-performance dynamic Libretro core bridge (`libloading`) supporting official `mgba_libretro` cores.
+- **Hardware-Accelerated Rendering:**
+  - Built on **WGPU** supporting Metal (macOS), Vulkan (Linux/Windows), and DirectX 12.
+  - **Real-Time WGSL Shaders:** Nearest-neighbor sharp scaling, LCD subpixel grid lines, and GBA color correction tone-mapping.
+- **Low-Latency Audio Engine:**
+  - Real-time stereo audio pipeline powered by **cpal** with a lock-free ring buffer (`ringbuf`).
+  - High-precision Catmull-Rom cubic Hermite spline resampler and 2nd-order Butterworth lowpass filter.
+- **Save Management & Persistence:**
+  - **Battery Saves (`.sav`):** In-game cartridge RAM automatically flushes to `./saves/<rom_name>.sav`.
+  - **Real-Time Save States:** Persistent multi-slot state snapshots saved to disk (`./saves/<rom_name>.state<slot>`).
+- **On-Screen Display (OSD) & Menu Bar:**
+  - Built with **egui** featuring native file picker dialogs (`rfd`), slot selector, volume controls, and real-time FPS HUD.
+- **Speed Controls:**
+  - Fast-forward acceleration (uncapped / 2x speed) with audio overflow protection.
 
 ---
 
 ## 🎮 Controls & Hotkeys
 
 ### Gameplay Controls
-
-| GBA / GBC Button | Primary Mapping | Secondary Mapping (WASD Layout) |
+| GBA / GBC Input | Primary Keyboard Mapping | Secondary Mapping (WASD Layout) |
 | :--- | :--- | :--- |
 | **D-Pad Up** | `Up Arrow` | `W` |
 | **D-Pad Down** | `Down Arrow` | `S` |
 | **D-Pad Left** | `Left Arrow` | `A` |
 | **D-Pad Right** | `Right Arrow` | `D` |
-| **A Action Button** | `Z` | `J` |
-| **B Action Button** | `X` | `K` |
+| **A Button** | `Z` | `J` |
+| **B Button** | `X` | `K` |
 | **L Shoulder** | `Q` | `U` |
 | **R Shoulder** | `E` | `I` |
 | **Start** | `Enter` | — |
 | **Select** | `Right Shift` | `Left Shift` / `Backspace` |
 
-### ⚡ System Hotkeys
-
-| Action | Keybinding |
+### Emulation Hotkeys
+| Action | Key / Shortcut |
 | :--- | :--- |
-| **Toggle 2x Fast-Forward** | `Tab` |
-| **Mute / Unmute Sound** | `M` |
-| **Cycle Video Shaders** | `F4` |
-| **Save State Snapshot** | `F1` |
-| **Quick Load State Snapshot** | `F5` or `F2` |
-| **Select Save State Slot (1–9)** | Number keys `1` .. `9` |
+| **Quick Save State** | `F1` (Saves to active slot) |
+| **Quick Load State** | `F5` / `F2` (Loads from active slot) |
+| **Cycle Display Shaders** | `F4` (Nearest $\rightarrow$ LCD Grid $\rightarrow$ Color Correction $\rightarrow$ LCD+Color) |
+| **Toggle Mute Audio** | `M` |
+| **Fast-Forward (2x Toggle)** | `Tab` |
+| **Slot Selection** | `1`–`9` |
 
 ---
 
 ## 🚀 Getting Started
 
 ### 1. Prerequisites
-- [Rust & Cargo](https://www.rust-lang.org/tools/install) (1.75 or later recommended).
+- [Rust & Cargo](https://www.rust-lang.org/tools/install) (1.75+ recommended)
 
-### 2. Setting Up Libretro GBA Cores (Optional for GBA)
-PixelDrive dynamically discovers Libretro cores in the `./cores/` directory:
+### 2. GBA Dynamic Core Setup
+PixelDrive loads dynamic Libretro cores for GBA emulation. Place your platform's core binary inside the `./cores/` directory:
 
 ```bash
 mkdir -p cores
-# macOS (Apple Silicon / Intel):
-# Place mgba_libretro.dylib in cores/
-
-# Linux:
-# Place mgba_libretro.so in cores/
-
-# Windows:
-# Place mgba_libretro.dll in cores/
+# macOS: cores/mgba_libretro.dylib
+# Linux: cores/mgba_libretro.so
+# Windows: cores/mgba_libretro.dll
 ```
 
-### 3. Build & Run
+### 3. Running PixelDrive
 
 ```bash
-# Build optimized release binary
-cargo build --release
+# Launch with native file dialog & egui OSD
+cargo run
 
-# Run emulator window
-cargo run --release
-
-# Or launch directly with a ROM or ZIP archive:
-cargo run --release -- path/to/game.gba
-# or
-cargo run --release -- path/to/game.gbc
-# or
-cargo run --release -- path/to/game.zip
+# Launch directly with a ROM (supports .gb, .gbc, .gba, and .zip)
+cargo run -- /path/to/game.gba
 ```
 
-### 4. Running Tests
+---
+
+## 🏗️ Architecture & Project Structure
+
+```
+PixelDrive/
+├── cores/                  # Dynamic Libretro core libraries (mgba_libretro.dylib)
+├── saves/                  # Persistent cartridge saves (.sav) & save states (.state1..9)
+├── src/
+│   ├── main.rs             # Winit event loop, WGPU/Pixels setup, keyboard & hotkey router
+│   ├── core/               # Shared EmulatorCore trait & Input Button mappings
+│   ├── gbc/                # Native Game Boy / Game Boy Color emulator core
+│   │   ├── cpu.rs          # Sharp SM83 (Z80-like) cycle-accurate CPU
+│   │   ├── ppu.rs          # Pixel Processing Unit (Mode 0-3, Scanline FIFO, CGB palettes)
+│   │   ├── mmu.rs          # Memory bus, HDMA/GDMA, banking, and I/O registers
+│   │   ├── mbc.rs          # Memory Bank Controllers (ROM Only, MBC1, MBC2, MBC3, MBC5)
+│   │   ├── apu.rs          # 4-Channel APU Audio Synthesizer (Square 1/2, Wave, Noise)
+│   │   └── joypad.rs       # Active-low directional & button matrix
+│   ├── gba/                # Game Boy Advance emulation layer
+│   │   ├── libretro.rs     # FFI Libretro dynamic bridge with audio/video/input callbacks
+│   │   ├── cpu.rs          # ARM7TDMI 32-bit CPU core & mode registers
+│   │   ├── arm.rs          # ARM instruction decoder & barrel shifter
+│   │   ├── thumb.rs        # 16-bit THUMB instruction decoder
+│   │   ├── mmu.rs          # 32-bit GBA Memory Map, DMA controller & Flash/SRAM
+│   │   ├── ppu.rs          # GBA PPU with Modes 0-5 bitmap and affine background rendering
+│   │   ├── bios.rs         # SWI BIOS routines & HLE fallback
+│   │   └── keypad.rs       # GBA KEYINPUT 10-button active-low matrix
+│   ├── render/             # Hardware-accelerated rendering & video shaders
+│   │   ├── mod.rs          # WGPU ShaderPipeline controller & render pass
+│   │   └── shaders.rs      # WGSL shaders (Nearest, LCD Grid, Color Correction)
+│   ├── audio/              # Low-latency CPAL stereo audio engine & lock-free ring buffer
+│   ├── save.rs             # Battery save (.sav) & state snapshot manager (.state1..9)
+│   ├── ui/                 # egui OSD overlay, top menu bar, and toast notification system
+│   └── error.rs            # Unified PixelDriveError enum with thiserror
+└── Cargo.toml
+```
+
+---
+
+## 🧪 Testing & Verification
+
+Run the full suite of 67 unit and integration tests:
 
 ```bash
 cargo test -- --test-threads=1
 ```
 
----
+Run clippy linter for zero warnings:
 
-## 📁 Project Architecture
-
-```
-PixelDrive/
-├── cores/               # Libretro dynamic shared libraries (.dylib, .so, .dll)
-├── saves/               # Auto-saved in-game .sav and real-time .state1 snapshots
-├── src/
-│   ├── audio/           # Host audio engine (cpal, ringbuf, cubic resampler, filters)
-│   ├── core/            # Unified EmulatorCore trait and button input definitions
-│   ├── gba/             # GBA emulation (Libretro C-ABI bridge, ARM7TDMI fallback, MMU)
-│   ├── gbc/             # Native GBC emulation (Sharp LR35902 CPU, PPU, APU, MMU, MBC)
-│   ├── save.rs          # Unified Save Manager (battery RAM & binary save state files)
-│   └── main.rs          # Winit event loop, pixels rendering, and hotkey management
-├── Cargo.toml
-└── README.md
+```bash
+cargo clippy --all-targets -- -D warnings
 ```
 
 ---
 
-## 📜 License
+## 📄 License
 
-This project is licensed under the [MIT License](LICENSE).
+MIT License. See [LICENSE](LICENSE) for details.
