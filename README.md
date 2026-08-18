@@ -5,7 +5,7 @@
 <h1 align="center">🕹️ PixelDrive</h1>
 
 <p align="center">
-  <strong>A modern, high-performance Game Boy (GB / GBC) and Game Boy Advance (GBA) emulator built in Rust.</strong>
+  <strong>A modern, high-performance Game Boy (GB / GBC) and Game Boy Advance (GBA) emulator built in Rust for macOS and Windows.</strong>
 </p>
 
 <p align="center">
@@ -13,7 +13,7 @@
   <a href="#-installation--quickstart">Installation</a> •
   <a href="#-controls--hotkeys">Controls</a> •
   <a href="#-architecture">Architecture</a> •
-  <a href="#-packaging">Packaging</a> •
+  <a href="#-packaging--distribution">Packaging</a> •
   <a href="#-legal-disclaimer">Legal</a> •
   <a href="#-license">License</a>
 </p>
@@ -24,30 +24,38 @@
 
 - **Multi-System Dual-Core Architecture:**
   - **Game Boy / Game Boy Color:** Native cycle-accurate pure-Rust emulation core featuring full 4-channel APU audio synthesis, MBC1/2/3/5 cartridge banking, and accurate PPU rendering.
-  - **Game Boy Advance:** High-performance dynamic Libretro core bridge (`libloading`) supporting official `mgba_libretro` dynamic libraries.
-- **Hardware-Accelerated Rendering (WGPU):**
-  - Cross-platform GPU backend supporting Metal (macOS), Vulkan (Linux/Windows), and DirectX 12.
+  - **Game Boy Advance:** High-performance dynamic Libretro core bridge (`libloading`) supporting official `mgba_libretro` dynamic libraries (`.dylib` / `.dll` / `.so`).
+- **Cross-Platform Hardware-Accelerated Rendering (WGPU):**
+  - Native GPU acceleration across **Metal (macOS)**, **DirectX 12 (Windows)**, and **Vulkan (Linux/Windows)**.
   - **Real-Time WGSL Shaders:** Instant cycling between Nearest-Neighbor integer scaling, authentic LCD subpixel grid lines, and GBA color correction tone curves.
 - **Low-Latency Audio Engine:**
-  - Real-time stereo audio pipeline powered by **cpal** with lock-free ring buffering (`ringbuf`).
+  - Real-time stereo audio pipeline powered by **cpal** (CoreAudio on macOS, WASAPI on Windows) with lock-free ring buffering (`ringbuf`).
   - High-precision Catmull-Rom cubic Hermite spline resampler and 2nd-order Butterworth lowpass filter.
 - **Save Management & Persistence:**
   - **Battery Saves (`.sav`):** In-game cartridge RAM automatically flushes to `./saves/<rom_name>.sav`.
   - **Real-Time Save States:** Persistent multi-slot state snapshots saved to disk (`./saves/<rom_name>.state<slot>`) with instant Quick Save / Quick Load.
+- **Native OS Desktop Integration:**
+  - **macOS:** Dynamic `NSDockTile` custom view injection, retina icon set (`AppIcon.icns`), and `.app` drag-and-drop `.dmg` installer.
+  - **Windows:** Native Windows `.rc` resource embedding with multi-resolution `.ico` icon for File Explorer and Taskbar integration.
 - **Modern On-Screen Display (egui Overlay):**
-  - Native menu bar with File Dialog loading, shader selector, save slot manager, audio mute toggle, and live FPS/T-cycle diagnostic HUD.
+  - Native menu bar with File Dialog loading (`rfd`), shader selector, save slot manager, audio mute toggle, and live FPS/T-cycle diagnostic HUD.
 
 ---
 
 ## 🚀 Installation & Quickstart
 
-### Option 1: macOS Disk Image Installer (.dmg)
+### 🍎 macOS: Disk Image Installer (.dmg)
 Download the latest `PixelDrive-1.0.0.dmg` from the **[Releases](../../releases)** page:
 1. Open `PixelDrive-1.0.0.dmg`.
 2. Drag **PixelDrive.app** into your **Applications** folder.
-3. Launch PixelDrive from Launchpad or Finder.
+3. Launch PixelDrive from Launchpad, Spotlight, or Finder.
 
-### Option 2: Build from Source (Cargo)
+### 🪟 Windows: Portable Standalone (.zip)
+Download `PixelDrive-Windows-x86_64.zip` from the **[Releases](../../releases)** page:
+1. Extract `PixelDrive-Windows-x86_64.zip` to your desired directory.
+2. Double-click **PixelDrive.exe** to launch.
+
+### 🛠️ Build from Source (Cargo)
 
 Ensure you have [Rust (stable)](https://rustup.rs/) installed:
 
@@ -56,7 +64,7 @@ Ensure you have [Rust (stable)](https://rustup.rs/) installed:
 git clone https://github.com/AshXtreme/pixel-drive.git
 cd pixel-drive
 
-# Run PixelDrive directly
+# Run PixelDrive in Release mode
 cargo run --release
 
 # Or launch directly with a ROM file:
@@ -99,14 +107,20 @@ cargo run --release -- path/to/game.gba
 
 ```text
 PixelDrive/
-├── assets/                 # High-resolution icons and macOS metadata
+├── .github/
+│   └── workflows/
+│       └── release.yml     # Automated multi-platform CI/CD release workflow
+├── assets/                 # High-resolution icons and platform metadata
 │   ├── macos/              # AppIcon.icns & Info.plist
+│   ├── windows/            # icon.ico & resources.rc (Windows VERSIONINFO)
 │   └── icon.png            # Master 1024x1024 application logo
-├── cores/                  # Dynamic Libretro core libraries (e.g. mgba_libretro.dylib)
+├── cores/                  # Dynamic Libretro core libraries (.dylib / .dll / .so)
 ├── saves/                  # Persistent battery saves (.sav) and save states (.state1..9)
 ├── scripts/                # Packaging and release automation scripts
-│   ├── build_macos_dmg.sh  # Standalone macOS .app bundle & .dmg installer generator
-│   └── package.sh          # Cross-platform release tarball packager
+│   ├── build_macos_dmg.sh  # macOS .app bundle & .dmg installer generator
+│   ├── package_windows.bat # Native Windows release batch packager (.zip)
+│   ├── package_windows.sh  # Cross-platform / CI Windows release packager
+│   └── package.sh          # General release tarball packager
 ├── src/
 │   ├── main.rs             # Event loop, WGPU/Pixels setup, input dispatch, timing
 │   ├── core/               # Shared EmulatorCore trait, Button matrix & system enums
@@ -133,6 +147,7 @@ PixelDrive/
 │   ├── save.rs             # Battery save (.sav) & state snapshot manager (.state1..9)
 │   ├── ui/                 # egui OSD overlay, top menu bar, and live HUD
 │   └── error.rs            # Unified PixelDriveError enum with thiserror
+├── build.rs                # Windows resource compiler (winres)
 ├── Cargo.toml              # Dependencies and release optimization profiles
 ├── LEGAL.md                # Legal disclaimers and trademark acknowledgments
 ├── SECURITY.md             # Security policy and vulnerability disclosure guidelines
@@ -141,19 +156,24 @@ PixelDrive/
 
 ---
 
-## 📦 Packaging & Build Automation
+## 📦 Packaging & Distribution
 
-### Generate macOS DMG Installer:
+### 🍎 Build macOS DMG Installer:
 ```bash
 ./scripts/build_macos_dmg.sh
 ```
 Produces `dist/PixelDrive-1.0.0.dmg` with `/Applications` drag-and-drop symlink.
 
-### Generate Cross-Platform Release Package:
-```bash
-./scripts/package.sh
+### 🪟 Build Windows Release Package:
+On Windows (Command Prompt / PowerShell):
+```cmd
+scripts\package_windows.bat
 ```
-Produces `dist/PixelDrive-Release.tar.gz` containing stripped binaries, documentation, assets, and core directories.
+Or on Unix / CI toolchains:
+```bash
+./scripts/package_windows.sh
+```
+Produces `dist/PixelDrive-Windows-x86_64.zip` containing the compiled `PixelDrive.exe` with embedded `.rc` icons and metadata.
 
 ---
 
