@@ -1,0 +1,69 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows Release
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Windows Binary in Release Mode
+        run: cargo build --release
+
+      - name: Assemble Windows Distribution Package
+        shell: bash
+        run: |
+          mkdir -p dist/PixelDrive/cores dist/PixelDrive/saves dist/PixelDrive/assets
+          if [ -f "target/release/pixel-drive.exe" ]; then
+            cp target/release/pixel-drive.exe dist/PixelDrive/PixelDrive.exe
+          elif [ -f "target/release/pixeldrive.exe" ]; then
+            cp target/release/pixeldrive.exe dist/PixelDrive/PixelDrive.exe
+          fi
+          cp README.md LICENSE LEGAL.md dist/PixelDrive/ 2>/dev/null || true
+          [ -f "assets/windows/icon.ico" ] && cp assets/windows/icon.ico dist/PixelDrive/assets/ || true
+          if [ -d "cores" ] && [ "$(ls -A cores 2>/dev/null)" ]; then
+            cp -r cores/* dist/PixelDrive/cores/ || true
+          fi
+          cd dist
+          powershell -Command "Compress-Archive -Path PixelDrive -DestinationPath PixelDrive-Windows-x86_64.zip -Force"
+
+      - name: Upload Windows Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/PixelDrive-Windows-x86_64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-macos:
+    name: Build macOS DMG Installer
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build macOS Application Bundle & DMG
+        run: |
+          chmod +x scripts/build_macos_dmg.sh
+          ./scripts/build_macos_dmg.sh
+
+      - name: Upload macOS Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/PixelDrive-1.0.0.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

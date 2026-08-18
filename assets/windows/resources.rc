@@ -1,0 +1,24 @@
+id ICON "icon.ico"
+1 VERSIONINFO
+FILEVERSION     1,0,0,0
+PRODUCTVERSION  1,0,0,0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904E4"
+        BEGIN
+            VALUE "CompanyName", "PixelDrive Team"
+            VALUE "FileDescription", "PixelDrive GB/GBA Emulator"
+            VALUE "FileVersion", "1.0.0"
+            VALUE "InternalName", "pixeldrive"
+            VALUE "LegalCopyright", "GPL-3.0"
+            VALUE "OriginalFilename", "pixeldrive.exe"
+            VALUE "ProductName", "PixelDrive"
+            VALUE "ProductVersion", "1.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1252
+    END
+END
