@@ -2,111 +2,128 @@
   <img src="assets/icon.png" width="160" height="160" alt="PixelDrive Icon" />
 </p>
 
-# 🕹️ PixelDrive
+<h1 align="center">🕹️ PixelDrive</h1>
 
-A modern, high-performance Game Boy (GB / GBC) and Game Boy Advance (GBA) emulator built in **Rust**, powered by **WGPU** for hardware-accelerated rendering, real-time **WGSL post-processing shaders**, **cpal** low-latency audio, and a dynamic **Libretro Core Bridge**.
+<p align="center">
+  <strong>A modern, high-performance Game Boy (GB / GBC) and Game Boy Advance (GBA) emulator built in Rust.</strong>
+</p>
+
+<p align="center">
+  <a href="#-features">Features</a> •
+  <a href="#-installation--quickstart">Installation</a> •
+  <a href="#-controls--hotkeys">Controls</a> •
+  <a href="#-architecture">Architecture</a> •
+  <a href="#-packaging">Packaging</a> •
+  <a href="#-legal-disclaimer">Legal</a> •
+  <a href="#-license">License</a>
+</p>
 
 ---
 
 ## ✨ Features
 
-- **Multi-System Architecture:**
-  - **Game Boy / Game Boy Color:** Native cycle-accurate pure-Rust emulation core with full 4-channel APU audio synthesis.
-  - **Game Boy Advance:** High-performance dynamic Libretro core bridge (`libloading`) supporting official `mgba_libretro` cores.
-- **Hardware-Accelerated Rendering:**
-  - Built on **WGPU** supporting Metal (macOS), Vulkan (Linux/Windows), and DirectX 12.
-  - **Real-Time WGSL Shaders:** Nearest-neighbor sharp scaling, LCD subpixel grid lines, and GBA color correction tone-mapping.
+- **Multi-System Dual-Core Architecture:**
+  - **Game Boy / Game Boy Color:** Native cycle-accurate pure-Rust emulation core featuring full 4-channel APU audio synthesis, MBC1/2/3/5 cartridge banking, and accurate PPU rendering.
+  - **Game Boy Advance:** High-performance dynamic Libretro core bridge (`libloading`) supporting official `mgba_libretro` dynamic libraries.
+- **Hardware-Accelerated Rendering (WGPU):**
+  - Cross-platform GPU backend supporting Metal (macOS), Vulkan (Linux/Windows), and DirectX 12.
+  - **Real-Time WGSL Shaders:** Instant cycling between Nearest-Neighbor integer scaling, authentic LCD subpixel grid lines, and GBA color correction tone curves.
 - **Low-Latency Audio Engine:**
-  - Real-time stereo audio pipeline powered by **cpal** with a lock-free ring buffer (`ringbuf`).
+  - Real-time stereo audio pipeline powered by **cpal** with lock-free ring buffering (`ringbuf`).
   - High-precision Catmull-Rom cubic Hermite spline resampler and 2nd-order Butterworth lowpass filter.
 - **Save Management & Persistence:**
   - **Battery Saves (`.sav`):** In-game cartridge RAM automatically flushes to `./saves/<rom_name>.sav`.
-  - **Real-Time Save States:** Persistent multi-slot state snapshots saved to disk (`./saves/<rom_name>.state<slot>`).
-- **On-Screen Display (OSD) & Menu Bar:**
-  - Built with **egui** featuring native file picker dialogs (`rfd`), slot selector, volume controls, and real-time FPS HUD.
-- **Speed Controls:**
-  - Fast-forward acceleration (uncapped / 2x speed) with audio overflow protection.
+  - **Real-Time Save States:** Persistent multi-slot state snapshots saved to disk (`./saves/<rom_name>.state<slot>`) with instant Quick Save / Quick Load.
+- **Modern On-Screen Display (egui Overlay):**
+  - Native menu bar with File Dialog loading, shader selector, save slot manager, audio mute toggle, and live FPS/T-cycle diagnostic HUD.
+
+---
+
+## 🚀 Installation & Quickstart
+
+### Option 1: macOS Disk Image Installer (.dmg)
+Download the latest `PixelDrive-1.0.0.dmg` from the **[Releases](../../releases)** page:
+1. Open `PixelDrive-1.0.0.dmg`.
+2. Drag **PixelDrive.app** into your **Applications** folder.
+3. Launch PixelDrive from Launchpad or Finder.
+
+### Option 2: Build from Source (Cargo)
+
+Ensure you have [Rust (stable)](https://rustup.rs/) installed:
+
+```bash
+# Clone the repository
+git clone https://github.com/AshXtreme/pixel-drive.git
+cd pixel-drive
+
+# Run PixelDrive directly
+cargo run --release
+
+# Or launch directly with a ROM file:
+cargo run --release -- path/to/game.gba
+```
 
 ---
 
 ## 🎮 Controls & Hotkeys
 
-### Gameplay Controls
-| GBA / GBC Input | Primary Keyboard Mapping | Secondary Mapping (WASD Layout) |
-| :--- | :--- | :--- |
-| **D-Pad Up** | `Up Arrow` | `W` |
-| **D-Pad Down** | `Down Arrow` | `S` |
-| **D-Pad Left** | `Left Arrow` | `A` |
-| **D-Pad Right** | `Right Arrow` | `D` |
-| **A Button** | `Z` | `J` |
-| **B Button** | `X` | `K` |
-| **L Shoulder** | `Q` | `U` |
-| **R Shoulder** | `E` | `I` |
-| **Start** | `Enter` | — |
-| **Select** | `Right Shift` | `Left Shift` / `Backspace` |
+### Gamepad Controls (Player 1)
 
-### Emulation Hotkeys
-| Action | Key / Shortcut |
+| Game Boy / GBA Key | Keyboard Key |
 | :--- | :--- |
+| **D-Pad Up / Down / Left / Right** | `W` / `S` / `A` / `D` or `Arrow Keys` |
+| **A Button** | `K` / `Z` |
+| **B Button** | `J` / `X` |
+| **L Shoulder** (GBA) | `Q` / `U` |
+| **R Shoulder** (GBA) | `E` / `I` |
+| **Start Button** | `Return` (Enter) |
+| **Select Button** | `Backspace` / `Shift` |
+
+### System & Emulator Hotkeys
+
+| Action | Hotkey |
+| :--- | :--- |
+| **Toggle Menu Bar (OSD)** | `Esc` |
+| **Toggle Fast-Forward (2x Speed)** | `Tab` |
+| **Toggle Audio Mute** | `M` |
+| **Cycle Video Shaders** | `F4` (Nearest $\rightarrow$ LCD Grid $\rightarrow$ Color Correction $\rightarrow$ LCD+Color) |
 | **Quick Save State** | `F1` (Saves to active slot) |
-| **Quick Load State** | `F5` / `F2` (Loads from active slot) |
-| **Cycle Display Shaders** | `F4` (Nearest $\rightarrow$ LCD Grid $\rightarrow$ Color Correction $\rightarrow$ LCD+Color) |
-| **Toggle Mute Audio** | `M` |
-| **Fast-Forward (2x Toggle)** | `Tab` |
-| **Slot Selection** | `1`–`9` |
+| **Quick Load State** | `F2` (Loads from active slot) |
+| **Select Save Slot (1–9)** | `1` – `9` |
+| **Pause / Resume Simulation** | `P` |
+| **Reset Core Simulation** | `R` |
 
 ---
 
-## 🚀 Getting Started
+## 🏛️ Architecture & Codebase Layout
 
-### 1. Prerequisites
-- [Rust & Cargo](https://www.rust-lang.org/tools/install) (1.75+ recommended)
-
-### 2. GBA Dynamic Core Setup
-PixelDrive loads dynamic Libretro cores for GBA emulation. Place your platform's core binary inside the `./cores/` directory:
-
-```bash
-mkdir -p cores
-# macOS: cores/mgba_libretro.dylib
-# Linux: cores/mgba_libretro.so
-# Windows: cores/mgba_libretro.dll
-```
-
-### 3. Running PixelDrive
-
-```bash
-# Launch with native file dialog & egui OSD
-cargo run
-
-# Launch directly with a ROM (supports .gb, .gbc, .gba, and .zip)
-cargo run -- /path/to/game.gba
-```
-
----
-
-## 🏗️ Architecture & Project Structure
-
-```
+```text
 PixelDrive/
-├── cores/                  # Dynamic Libretro core libraries (mgba_libretro.dylib)
-├── saves/                  # Persistent cartridge saves (.sav) & save states (.state1..9)
+├── assets/                 # High-resolution icons and macOS metadata
+│   ├── macos/              # AppIcon.icns & Info.plist
+│   └── icon.png            # Master 1024x1024 application logo
+├── cores/                  # Dynamic Libretro core libraries (e.g. mgba_libretro.dylib)
+├── saves/                  # Persistent battery saves (.sav) and save states (.state1..9)
+├── scripts/                # Packaging and release automation scripts
+│   ├── build_macos_dmg.sh  # Standalone macOS .app bundle & .dmg installer generator
+│   └── package.sh          # Cross-platform release tarball packager
 ├── src/
-│   ├── main.rs             # Winit event loop, WGPU/Pixels setup, keyboard & hotkey router
-│   ├── core/               # Shared EmulatorCore trait & Input Button mappings
-│   ├── gbc/                # Native Game Boy / Game Boy Color emulator core
-│   │   ├── cpu.rs          # Sharp SM83 (Z80-like) cycle-accurate CPU
-│   │   ├── ppu.rs          # Pixel Processing Unit (Mode 0-3, Scanline FIFO, CGB palettes)
-│   │   ├── mmu.rs          # Memory bus, HDMA/GDMA, banking, and I/O registers
-│   │   ├── mbc.rs          # Memory Bank Controllers (ROM Only, MBC1, MBC2, MBC3, MBC5)
-│   │   ├── apu.rs          # 4-Channel APU Audio Synthesizer (Square 1/2, Wave, Noise)
-│   │   └── joypad.rs       # Active-low directional & button matrix
+│   ├── main.rs             # Event loop, WGPU/Pixels setup, input dispatch, timing
+│   ├── core/               # Shared EmulatorCore trait, Button matrix & system enums
+│   ├── gbc/                # Native Game Boy / Game Boy Color core
+│   │   ├── cpu.rs          # LR35902 8-bit Z80-derivative CPU & opcode decoder
+│   │   ├── mmu.rs          # 16-bit memory bus, VRAM/WRAM banking, DMA/HDMA
+│   │   ├── ppu.rs          # Pixel Processing Unit (Modes 0-3, palettes, OAM sprites)
+│   │   ├── mbc.rs          # Cartridge controllers (ROM Only, MBC1, MBC2, MBC3, MBC5)
+│   │   ├── apu.rs          # 4-channel audio synthesizer (Square 1/2, Wave, Noise)
+│   │   └── joypad.rs       # Active-low joypad matrix
 │   ├── gba/                # Game Boy Advance emulation layer
-│   │   ├── libretro.rs     # FFI Libretro dynamic bridge with audio/video/input callbacks
+│   │   ├── libretro.rs     # FFI Libretro dynamic bridge with AV & input callbacks
 │   │   ├── cpu.rs          # ARM7TDMI 32-bit CPU core & mode registers
 │   │   ├── arm.rs          # ARM instruction decoder & barrel shifter
 │   │   ├── thumb.rs        # 16-bit THUMB instruction decoder
-│   │   ├── mmu.rs          # 32-bit GBA Memory Map, DMA controller & Flash/SRAM
-│   │   ├── ppu.rs          # GBA PPU with Modes 0-5 bitmap and affine background rendering
+│   │   ├── mmu.rs          # 32-bit GBA memory map, DMA controller & Flash/SRAM
+│   │   ├── ppu.rs          # GBA PPU with Modes 0-5 bitmap and affine backgrounds
 │   │   ├── bios.rs         # SWI BIOS routines & HLE fallback
 │   │   └── keypad.rs       # GBA KEYINPUT 10-button active-low matrix
 │   ├── render/             # Hardware-accelerated rendering & video shaders
@@ -114,22 +131,41 @@ PixelDrive/
 │   │   └── shaders.rs      # WGSL shaders (Nearest, LCD Grid, Color Correction)
 │   ├── audio/              # Low-latency CPAL stereo audio engine & lock-free ring buffer
 │   ├── save.rs             # Battery save (.sav) & state snapshot manager (.state1..9)
-│   ├── ui/                 # egui OSD overlay, top menu bar, and toast notification system
+│   ├── ui/                 # egui OSD overlay, top menu bar, and live HUD
 │   └── error.rs            # Unified PixelDriveError enum with thiserror
-└── Cargo.toml
+├── Cargo.toml              # Dependencies and release optimization profiles
+├── LEGAL.md                # Legal disclaimers and trademark acknowledgments
+├── SECURITY.md             # Security policy and vulnerability disclosure guidelines
+└── LICENSE                 # GNU General Public License v3.0 (GPL-3.0)
 ```
+
+---
+
+## 📦 Packaging & Build Automation
+
+### Generate macOS DMG Installer:
+```bash
+./scripts/build_macos_dmg.sh
+```
+Produces `dist/PixelDrive-1.0.0.dmg` with `/Applications` drag-and-drop symlink.
+
+### Generate Cross-Platform Release Package:
+```bash
+./scripts/package.sh
+```
+Produces `dist/PixelDrive-Release.tar.gz` containing stripped binaries, documentation, assets, and core directories.
 
 ---
 
 ## 🧪 Testing & Verification
 
-Run the full suite of 69 unit and integration tests:
+Run the full unit and integration test suite:
 
 ```bash
 cargo test -- --test-threads=1
 ```
 
-Run clippy linter for zero warnings:
+Run clippy for static analysis with zero warnings:
 
 ```bash
 cargo clippy --all-targets -- -D warnings
@@ -137,22 +173,17 @@ cargo clippy --all-targets -- -D warnings
 
 ---
 
-## 📦 Packaging & Installation
+## ⚖️ Legal Disclaimer
 
-### Build macOS Disk Image Installer (.dmg):
-```bash
-./scripts/build_macos_dmg.sh
-```
-This generates a standalone macOS `PixelDrive-1.0.0.dmg` with `PixelDrive.app` and `/Applications` drag-and-drop installer.
+**PixelDrive** is an independent open-source emulator project developed solely for educational and archival preservation purposes. PixelDrive is **NOT** affiliated with, authorized, endorsed, or sponsored by **Nintendo Co., Ltd.**, **Nintendo of America Inc.**, or any of their subsidiaries.
 
-### Build Cross-Platform Release Archive (.tar.gz):
-```bash
-./scripts/package.sh
-```
-Outputs `dist/PixelDrive-Release.tar.gz` with release binary, assets, documentation, and core folders.
+- **No ROMs Included:** PixelDrive does **not** provide, bundle, or distribute proprietary BIOS files, copyrighted ROMs, or game assets.
+- **Trademarks:** "Game Boy", "Game Boy Color", and "Game Boy Advance" are registered trademarks of Nintendo Co., Ltd. Mentioned solely for nominative descriptive identification under Fair Use principles.
+
+For complete legal information, see [LEGAL.md](LEGAL.md).
 
 ---
 
 ## 📄 License
 
-MIT License. See [LICENSE](LICENSE) for details.
+This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**. See the [LICENSE](LICENSE) file for details.
