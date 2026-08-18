@@ -20,6 +20,7 @@ use std::path::Path;
 pub const GBA_WIDTH: u32 = 240;
 pub const GBA_HEIGHT: u32 = 160;
 pub const GBA_CYCLES_PER_FRAME: usize = 280_896; // 16.78 MHz / 59.73 FPS
+pub const MAX_GBA_ROM_SIZE: usize = 32 * 1024 * 1024; // 32 MB max
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GbaHeader {
@@ -194,7 +195,16 @@ impl GbaCore {
                 if name.ends_with(".gba") {
                     info!("Found GBA ROM entry in ZIP: {}", file_entry.name());
                     let mut buffer = Vec::new();
-                    std::io::Read::read_to_end(&mut file_entry, &mut buffer)?;
+                    std::io::Read::read_to_end(
+                        &mut std::io::Read::take(&mut file_entry, (MAX_GBA_ROM_SIZE + 1) as u64),
+                        &mut buffer,
+                    )?;
+                    if buffer.len() > MAX_GBA_ROM_SIZE {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "GBA ROM inside ZIP archive exceeds maximum allowed size (32MB)",
+                        ));
+                    }
                     rom_bytes = Some(buffer);
                     break;
                 }
@@ -210,7 +220,14 @@ impl GbaCore {
                 }
             }
         } else {
-            std::fs::read(path_ref)?
+            let data = std::fs::read(path_ref)?;
+            if data.len() > MAX_GBA_ROM_SIZE {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "GBA ROM file exceeds maximum allowed size (32MB)",
+                ));
+            }
+            data
         };
 
         let header = GbaHeader::parse(&bytes).unwrap_or_else(|| {

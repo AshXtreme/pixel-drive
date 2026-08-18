@@ -366,7 +366,9 @@ unsafe extern "C" fn retro_video_refresh_cb(
     height: c_uint,
     pitch: usize,
 ) {
-    if data.is_null() || width == 0 || height == 0 {
+    // Under Libretro specification, data can be NULL or RETRO_HW_FRAME_BUFFER_VALID ((void*)-1)
+    // for hardware contexts or frame dupes. Do not dereference if null or sentinel.
+    if data.is_null() || data as usize == usize::MAX || data as usize == (u32::MAX as usize) || width == 0 || height == 0 {
         return;
     }
 
@@ -797,7 +799,7 @@ impl LibretroCore {
         }
         let size = unsafe { (self.retro_get_memory_size)(id) };
         let ptr = unsafe { (self.retro_get_memory_data)(id) };
-        if size > 0 && !ptr.is_null() {
+        if size > 0 && !ptr.is_null() && ptr as usize != usize::MAX && ptr as usize != (u32::MAX as usize) {
             Some(unsafe { std::slice::from_raw_parts(ptr as *const u8, size) })
         } else {
             None
@@ -816,7 +818,7 @@ impl LibretroCore {
         }
         let size = unsafe { (self.retro_get_memory_size)(RETRO_MEMORY_SAVE_RAM) };
         let ptr = unsafe { (self.retro_get_memory_data)(RETRO_MEMORY_SAVE_RAM) };
-        if size > 0 && !ptr.is_null() {
+        if size > 0 && !ptr.is_null() && ptr as usize != usize::MAX && ptr as usize != (u32::MAX as usize) {
             let copy_len = size.min(data.len());
             unsafe {
                 std::ptr::copy_nonoverlapping(data.as_ptr(), ptr as *mut u8, copy_len);

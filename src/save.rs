@@ -18,6 +18,30 @@ impl SaveManager {
         Ok(dir)
     }
 
+    /// Sanitizes any incoming ROM stem or filename to prevent directory traversal attacks.
+    pub fn sanitize_stem(raw: &str) -> String {
+        let base = Path::new(raw)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or(raw);
+
+        let sanitized: String = base
+            .chars()
+            .map(|c| match c {
+                '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' | '\0' => '_',
+                c if c.is_control() => '_',
+                c => c,
+            })
+            .collect();
+
+        let clean = sanitized.trim().trim_matches('.');
+        if clean.is_empty() {
+            "game".to_string()
+        } else {
+            clean.to_string()
+        }
+    }
+
     /// Derives the canonical `.sav` file path from a ROM file path: `./saves/<rom_stem>.sav`.
     pub fn get_save_path(rom_path: &Path) -> PathBuf {
         let stem = rom_path
@@ -25,8 +49,7 @@ impl SaveManager {
             .and_then(|s| s.to_str())
             .unwrap_or("game");
 
-        // Clean up common zip-appended names or archive brackets
-        let clean_stem = stem.trim();
+        let clean_stem = Self::sanitize_stem(stem);
         let mut save_path = PathBuf::from(SAVES_DIR);
         save_path.push(format!("{}.sav", clean_stem));
         save_path
@@ -80,7 +103,7 @@ impl SaveManager {
 
     /// Derives save state path from ROM stem: `./saves/{rom_stem}.state{slot}`.
     pub fn get_state_path_from_stem(rom_stem: &str, slot: usize) -> PathBuf {
-        let clean_stem = rom_stem.trim();
+        let clean_stem = Self::sanitize_stem(rom_stem);
         let mut state_path = PathBuf::from(SAVES_DIR);
         state_path.push(format!("{}.state{}", clean_stem, slot));
         state_path
@@ -184,6 +207,23 @@ mod tests {
 
         let state2_path = SaveManager::get_state_path(zip_rom, 2);
         assert_eq!(state2_path, PathBuf::from("saves/Pokemon - Crystal Version (USA).state2"));
+    }
+
+    #[test]
+    fn test_sanitize_stem_path_traversal() {
+        let malicious_stem = "../../../../etc/cron.d/payload";
+        let sanitized = SaveManager::sanitize_stem(malicious_stem);
+        assert_eq!(sanitized, "payload");
+
+        let state_path = SaveManager::get_state_path_from_stem(malicious_stem, 1);
+        assert_eq!(state_path, PathBuf::from("saves/payload.state1"));
+
+        let dangerous_chars = "game:with/slash\\and\0null";
+        let sanitized_chars = SaveManager::sanitize_stem(dangerous_chars);
+        assert!(!sanitized_chars.contains('/'));
+        assert!(!sanitized_chars.contains('\\'));
+        assert!(!sanitized_chars.contains(':'));
+        assert!(!sanitized_chars.contains('\0'));
     }
 
     #[test]

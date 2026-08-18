@@ -13,6 +13,11 @@ Cargo.lock
 *.gbc
 *.gba
 *.sav
+*.state*
+saves/
+
+# Distribution bundles
+/dist/
 
 # IDE & Editor files
 .vscode/

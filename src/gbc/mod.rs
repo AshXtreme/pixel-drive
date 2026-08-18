@@ -30,6 +30,9 @@ pub struct GbcCore {
     pub rom_path: Option<std::path::PathBuf>,
 }
 
+pub const MAX_GBC_ROM_SIZE: usize = 8 * 1024 * 1024; // 8 MB max
+pub const MAX_GBC_STATE_SIZE: usize = 16 * 1024 * 1024; // 16 MB max
+
 impl GbcCore {
     pub fn new() -> Self {
         Self {
@@ -71,7 +74,7 @@ impl GbcCore {
         self.is_rom_loaded = true;
     }
 
-    /// Load a .gb / .gbc or compressed .zip ROM file from disk into memory.
+    /// Loads a ROM directly from a filesystem path, unpacking `.zip` archives if necessary.
     pub fn load_rom_file<P: AsRef<Path>>(&mut self, path: P) -> std::io::Result<()> {
         let path_ref = path.as_ref();
         info!("Loading ROM file into GBC Core: {}", path_ref.display());
@@ -93,7 +96,16 @@ impl GbcCore {
                 if name.ends_with(".gb") || name.ends_with(".gbc") {
                     info!("Found ROM entry in ZIP: {}", file_entry.name());
                     let mut buffer = Vec::new();
-                    std::io::Read::read_to_end(&mut file_entry, &mut buffer)?;
+                    std::io::Read::read_to_end(
+                        &mut std::io::Read::take(&mut file_entry, (MAX_GBC_ROM_SIZE + 1) as u64),
+                        &mut buffer,
+                    )?;
+                    if buffer.len() > MAX_GBC_ROM_SIZE {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "GBC ROM inside ZIP archive exceeds maximum allowed size (8MB)",
+                        ));
+                    }
                     rom_bytes = Some(buffer);
                     break;
                 }
@@ -109,7 +121,14 @@ impl GbcCore {
                 }
             }
         } else {
-            std::fs::read(path_ref)?
+            let data = std::fs::read(path_ref)?;
+            if data.len() > MAX_GBC_ROM_SIZE {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "GBC ROM file exceeds maximum allowed size (8MB)",
+                ));
+            }
+            data
         };
 
         self.load_rom(&bytes);
@@ -132,6 +151,9 @@ impl GbcCore {
 
     /// Deserializes full real-time GBC simulation state from a binary byte buffer.
     pub fn load_state(&mut self, data: &[u8]) -> Result<(), bincode::Error> {
+        if data.len() > MAX_GBC_STATE_SIZE {
+            return Err(bincode::ErrorKind::Custom("Save state exceeds maximum allowable size (16MB)".to_string()).into());
+        }
         let state: GbcState = bincode::deserialize(data)?;
         self.cpu = state.cpu;
         self.mmu = state.mmu;

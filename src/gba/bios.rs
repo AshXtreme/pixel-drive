@@ -140,13 +140,16 @@ pub fn handle_swi(comment: u8, regs: &mut Registers, bus: &mut GbaMemoryBus) {
             let denom = regs.r[1] as i32;
 
             if denom != 0 {
-                let div = num / denom;
-                let rem = num % denom;
-                let abs_div = div.abs();
+                let (div, rem) = if num == i32::MIN && denom == -1 {
+                    (i32::MIN, 0)
+                } else {
+                    (num / denom, num % denom)
+                };
+                let abs_div = div.unsigned_abs();
 
                 regs.r[0] = div as u32;
                 regs.r[1] = rem as u32;
-                regs.r[3] = abs_div as u32;
+                regs.r[3] = abs_div;
             }
         }
 
@@ -367,5 +370,35 @@ mod tests {
 
         assert_eq!(bus.read_u16(0x03000020), 0x1234);
         assert_eq!(bus.read_u16(0x03000022), 0x5678);
+    }
+
+    #[test]
+    fn test_swi_div_overflow_boundary() {
+        let mut regs = Registers::new();
+        let mut bus = GbaMemoryBus::new();
+
+        // 1. Normal division: 100 / 7 = 14 rem 2, abs 14
+        regs.r[0] = 100;
+        regs.r[1] = 7;
+        handle_swi(0x06, &mut regs, &mut bus);
+        assert_eq!(regs.r[0], 14);
+        assert_eq!(regs.r[1], 2);
+        assert_eq!(regs.r[3], 14);
+
+        // 2. Negative division: -50 / 8 = -6 rem -2, abs 6
+        regs.r[0] = (-50i32) as u32;
+        regs.r[1] = 8;
+        handle_swi(0x06, &mut regs, &mut bus);
+        assert_eq!(regs.r[0] as i32, -6);
+        assert_eq!(regs.r[1] as i32, -2);
+        assert_eq!(regs.r[3], 6);
+
+        // 3. Overflow boundary: i32::MIN / -1 must not panic
+        regs.r[0] = 0x80000000; // -2147483648
+        regs.r[1] = 0xFFFFFFFF; // -1
+        handle_swi(0x06, &mut regs, &mut bus);
+        assert_eq!(regs.r[0], 0x80000000);
+        assert_eq!(regs.r[1], 0);
+        assert_eq!(regs.r[3], 0x80000000);
     }
 }
