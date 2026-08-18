@@ -221,11 +221,64 @@ fn load_rom_from_path(
     }
 }
 
+#[cfg(target_os = "macos")]
+#[allow(unexpected_cfgs)]
+pub fn set_macos_dock_icon() {
+    const APP_ICON_PNG: &[u8] = include_bytes!("../assets/icon.png");
+
+    use objc::{class, msg_send, sel, sel_impl};
+    use std::ffi::c_void;
+
+    unsafe {
+        let ns_data_cls = class!(NSData);
+        let data: *mut objc::runtime::Object = msg_send![
+            ns_data_cls,
+            dataWithBytes: APP_ICON_PNG.as_ptr() as *const c_void
+            length: APP_ICON_PNG.len()
+        ];
+        if data.is_null() {
+            log::warn!("Failed to create NSData for macOS Dock icon");
+            return;
+        }
+
+        let ns_image_cls = class!(NSImage);
+        let image_alloc: *mut objc::runtime::Object = msg_send![ns_image_cls, alloc];
+        let image: *mut objc::runtime::Object = msg_send![image_alloc, initWithData: data];
+        if image.is_null() {
+            log::warn!("Failed to create NSImage for macOS Dock icon");
+            return;
+        }
+
+        let ns_app_cls = class!(NSApplication);
+        let app: *mut objc::runtime::Object = msg_send![ns_app_cls, sharedApplication];
+        if !app.is_null() {
+            let () = msg_send![app, setActivationPolicy: 0isize]; // NSApplicationActivationPolicyRegular
+            let () = msg_send![app, setApplicationIconImage: image];
+
+            let dock_tile: *mut objc::runtime::Object = msg_send![app, dockTile];
+            if !dock_tile.is_null() {
+                let ns_image_view_cls = class!(NSImageView);
+                let image_view_alloc: *mut objc::runtime::Object = msg_send![ns_image_view_cls, alloc];
+                let image_view: *mut objc::runtime::Object = msg_send![image_view_alloc, init];
+                if !image_view.is_null() {
+                    let () = msg_send![image_view, setImage: image];
+                    let () = msg_send![dock_tile, setContentView: image_view];
+                }
+                let () = msg_send![dock_tile, display];
+            }
+            log::info!("macOS Dock icon and DockTile view successfully configured.");
+        }
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     info!("Starting PixelDrive Handheld Emulator with OSD & egui Overlay...");
 
     let event_loop = EventLoop::new()?;
+
+    #[cfg(target_os = "macos")]
+    set_macos_dock_icon();
 
     // Initialize Host Audio Player & Ring Buffer Producer
     let (audio_player, audio_producer) = match AudioPlayer::new() {
@@ -253,13 +306,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let window_width = core_width * 4;
     let window_height = core_height * 4;
 
-    let window = std::sync::Arc::new(
-        WindowBuilder::new()
-            .with_title("PixelDrive - Game Boy Color / Game Boy Advance Emulator")
-            .with_inner_size(LogicalSize::new(window_width, window_height))
-            .with_min_inner_size(LogicalSize::new(core_width, core_height))
-            .build(&event_loop)?,
-    );
+    // Load embedded app icon (128x128 RGBA)
+    const APP_ICON_RGBA: &[u8] = include_bytes!("../assets/icon_128.rgba");
+    let window_icon = winit::window::Icon::from_rgba(APP_ICON_RGBA.to_vec(), 128, 128).ok();
+
+    let mut window_builder = WindowBuilder::new()
+        .with_title("PixelDrive - Game Boy Color / Game Boy Advance Emulator")
+        .with_inner_size(LogicalSize::new(window_width, window_height))
+        .with_min_inner_size(LogicalSize::new(core_width, core_height));
+
+    if let Some(icon) = window_icon {
+        window_builder = window_builder.with_window_icon(Some(icon));
+    }
+
+    let window = std::sync::Arc::new(window_builder.build(&event_loop)?);
+
+    #[cfg(target_os = "macos")]
+    set_macos_dock_icon();
 
     let mut pixels = {
         let window_size = window.inner_size();
@@ -309,6 +372,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut last_save_time = Instant::now();
     let mut last_fps_calc = Instant::now();
     let mut fps_frame_count: u32 = 0;
+    let mut dock_icon_set = false;
 
     let frame_duration = std::time::Duration::from_nanos(1_000_000_000 / 60);
     let auto_save_interval = std::time::Duration::from_secs(5);
@@ -316,7 +380,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     event_loop.run(move |event, elwt| {
         elwt.set_control_flow(ControlFlow::Poll);
 
+        if !dock_icon_set {
+            #[cfg(target_os = "macos")]
+            set_macos_dock_icon();
+            dock_icon_set = true;
+        }
+
         match event {
+            Event::Resumed => {
+                #[cfg(target_os = "macos")]
+                set_macos_dock_icon();
+            }
             Event::WindowEvent { event, .. } => {
                 // Let egui handle mouse/keyboard events first
                 let consumed = gui.handle_event(&window, &event);

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/icon.png" width="160" height="160" alt="PixelDrive Icon" />
+</p>
+
 # 🕹️ PixelDrive
 
 A modern, high-performance Game Boy (GB / GBC) and Game Boy Advance (GBA) emulator built in **Rust**, powered by **WGPU** for hardware-accelerated rendering, real-time **WGSL post-processing shaders**, **cpal** low-latency audio, and a dynamic **Libretro Core Bridge**.
