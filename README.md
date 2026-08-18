@@ -123,7 +123,7 @@ PixelDrive/
 
 ## 🧪 Testing & Verification
 
-Run the full suite of 67 unit and integration tests:
+Run the full suite of 69 unit and integration tests:
 
 ```bash
 cargo test -- --test-threads=1
@@ -134,6 +134,22 @@ Run clippy linter for zero warnings:
 ```bash
 cargo clippy --all-targets -- -D warnings
 ```
+
+---
+
+## 📦 Packaging & Installation
+
+### Build macOS Disk Image Installer (.dmg):
+```bash
+./scripts/build_macos_dmg.sh
+```
+This generates a standalone macOS `PixelDrive-1.0.0.dmg` with `PixelDrive.app` and `/Applications` drag-and-drop installer.
+
+### Build Cross-Platform Release Archive (.tar.gz):
+```bash
+./scripts/package.sh
+```
+Outputs `dist/PixelDrive-Release.tar.gz` with release binary, assets, documentation, and core folders.
 
 ---
 

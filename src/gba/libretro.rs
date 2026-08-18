@@ -904,36 +904,52 @@ pub fn find_available_core() -> Option<PathBuf> {
 
     // 1. Search ./cores/ directory relative to current working directory
     let cwd_cores = PathBuf::from("cores");
-    candidate_paths.push(cwd_cores.join("mgba_libretro.dylib"));
-    candidate_paths.push(cwd_cores.join("mgba_libretro.so"));
-    candidate_paths.push(cwd_cores.join("mgba_libretro.dll"));
-    candidate_paths.push(cwd_cores.join("gba_libretro.dylib"));
-    candidate_paths.push(cwd_cores.join("gba_libretro.so"));
-    candidate_paths.push(cwd_cores.join("gba_libretro.dll"));
-    candidate_paths.push(cwd_cores.join("vbam_libretro.dylib"));
-    candidate_paths.push(cwd_cores.join("vbam_libretro.so"));
-    candidate_paths.push(cwd_cores.join("vbam_libretro.dll"));
+    for name in &["mgba_libretro", "gba_libretro", "vbam_libretro"] {
+        candidate_paths.push(cwd_cores.join(format!("{}.dylib", name)));
+        candidate_paths.push(cwd_cores.join(format!("{}.so", name)));
+        candidate_paths.push(cwd_cores.join(format!("{}.dll", name)));
+    }
 
     // 2. Search root working directory
-    candidate_paths.push(PathBuf::from("mgba_libretro.dylib"));
-    candidate_paths.push(PathBuf::from("mgba_libretro.so"));
-    candidate_paths.push(PathBuf::from("mgba_libretro.dll"));
+    for name in &["mgba_libretro", "gba_libretro", "vbam_libretro"] {
+        candidate_paths.push(PathBuf::from(format!("{}.dylib", name)));
+        candidate_paths.push(PathBuf::from(format!("{}.so", name)));
+        candidate_paths.push(PathBuf::from(format!("{}.dll", name)));
+    }
 
-    // 3. Search directory adjacent to current executable and workspace ancestors
+    // 3. Search directory adjacent to current executable, bundle resources, and workspace ancestors
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
-            let exe_cores = exe_dir.join("cores");
-            candidate_paths.push(exe_cores.join("mgba_libretro.dylib"));
-            candidate_paths.push(exe_cores.join("mgba_libretro.so"));
-            candidate_paths.push(exe_cores.join("mgba_libretro.dll"));
-            candidate_paths.push(exe_dir.join("mgba_libretro.dylib"));
-            candidate_paths.push(exe_dir.join("mgba_libretro.so"));
-            candidate_paths.push(exe_dir.join("mgba_libretro.dll"));
+            // (a) macOS .app Bundle Resources: ../Resources/cores/
+            let bundle_resources_cores = exe_dir.join("../Resources/cores");
+            for name in &["mgba_libretro", "gba_libretro", "vbam_libretro"] {
+                candidate_paths.push(bundle_resources_cores.join(format!("{}.dylib", name)));
+                candidate_paths.push(bundle_resources_cores.join(format!("{}.so", name)));
+                candidate_paths.push(bundle_resources_cores.join(format!("{}.dll", name)));
+            }
 
-            // If running inside target/debug/ or target/release/
-            candidate_paths.push(exe_dir.join("../../cores/mgba_libretro.dylib"));
-            candidate_paths.push(exe_dir.join("../../cores/mgba_libretro.so"));
-            candidate_paths.push(exe_dir.join("../../cores/mgba_libretro.dll"));
+            // (b) Adjacent cores/ directory: ./cores/ next to executable
+            let exe_cores = exe_dir.join("cores");
+            for name in &["mgba_libretro", "gba_libretro", "vbam_libretro"] {
+                candidate_paths.push(exe_cores.join(format!("{}.dylib", name)));
+                candidate_paths.push(exe_cores.join(format!("{}.so", name)));
+                candidate_paths.push(exe_cores.join(format!("{}.dll", name)));
+            }
+
+            // (c) Direct executable directory
+            for name in &["mgba_libretro", "gba_libretro", "vbam_libretro"] {
+                candidate_paths.push(exe_dir.join(format!("{}.dylib", name)));
+                candidate_paths.push(exe_dir.join(format!("{}.so", name)));
+                candidate_paths.push(exe_dir.join(format!("{}.dll", name)));
+            }
+
+            // (d) Development workspace root (if running inside target/debug/ or target/release/)
+            let workspace_cores = exe_dir.join("../../cores");
+            for name in &["mgba_libretro", "gba_libretro", "vbam_libretro"] {
+                candidate_paths.push(workspace_cores.join(format!("{}.dylib", name)));
+                candidate_paths.push(workspace_cores.join(format!("{}.so", name)));
+                candidate_paths.push(workspace_cores.join(format!("{}.dll", name)));
+            }
         }
     }
 
