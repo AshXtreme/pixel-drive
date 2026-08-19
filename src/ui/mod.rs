@@ -333,27 +333,6 @@ impl GuiRenderer {
                                 ui.close_menu();
                             }
                         });
-
-                        // Status Info on the right
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if let Some(ref rom_name) = self.loaded_rom_name {
-                                ui.label(
-                                    egui::RichText::new(format!(
-                                        "🎮 [{}] {}",
-                                        self.active_core_name, rom_name
-                                    ))
-                                    .color(Color32::from_rgb(180, 220, 255))
-                                    .size(12.0),
-                                );
-                            } else {
-                                ui.label(
-                                    egui::RichText::new("Drag & drop a ROM or press Open ROM")
-                                        .italics()
-                                        .color(Color32::from_rgb(140, 150, 165))
-                                        .size(11.0),
-                                );
-                            }
-                        });
                     });
                 });
         }
