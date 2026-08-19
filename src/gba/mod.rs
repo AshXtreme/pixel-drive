@@ -89,7 +89,10 @@ impl GbaCore {
         let libretro = if let Some(core_path) = libretro::find_available_core() {
             match LibretroCore::load(&core_path) {
                 Ok(core) => {
-                    info!("GbaCore: Active backend -> Libretro ({})", core.library_name);
+                    info!(
+                        "GbaCore: Active backend -> Libretro ({})",
+                        core.library_name
+                    );
                     Some(core)
                 }
                 Err(err) => {
@@ -151,7 +154,9 @@ impl GbaCore {
         if let Some(ref mut lr) = self.libretro {
             let loaded = lr.load_rom(rom_bytes);
             if !loaded {
-                warn!("LibretroCore failed to load ROM. Emulation may fallback or encounter issues.");
+                warn!(
+                    "LibretroCore failed to load ROM. Emulation may fallback or encounter issues."
+                );
             }
         }
 
@@ -184,7 +189,10 @@ impl GbaCore {
             .map(|s| s.eq_ignore_ascii_case("zip"))
             .unwrap_or(false)
         {
-            info!("Extracting GBA ROM from ZIP archive: {}", path_ref.display());
+            info!(
+                "Extracting GBA ROM from ZIP archive: {}",
+                path_ref.display()
+            );
             let file = std::fs::File::open(path_ref)?;
             let mut archive = zip::ZipArchive::new(file)?;
             let mut rom_bytes = None;
@@ -306,7 +314,11 @@ impl EmulatorCore for GbaCore {
     }
 
     fn handle_input(&mut self, button: Button, pressed: bool) {
-        info!("GBA Input: {:?} -> {}", button, if pressed { "Pressed" } else { "Released" });
+        info!(
+            "GBA Input: {:?} -> {}",
+            button,
+            if pressed { "Pressed" } else { "Released" }
+        );
         if let Some(ref mut lr) = self.libretro {
             let retro_id = match button {
                 Button::A => libretro::RETRO_DEVICE_ID_JOYPAD_A,
@@ -352,7 +364,9 @@ impl EmulatorCore for GbaCore {
     }
 
     fn save_path(&self) -> Option<std::path::PathBuf> {
-        self.rom_path.as_ref().map(|p| crate::save::SaveManager::get_save_path(p))
+        self.rom_path
+            .as_ref()
+            .map(|p| crate::save::SaveManager::get_save_path(p))
     }
 
     fn save_state(&self) -> Option<Vec<u8>> {
@@ -380,9 +394,9 @@ mod tests {
 
     fn create_dummy_gba_rom(title: &str, game_code: &str) -> Vec<u8> {
         let mut rom = vec![0u8; 0x1000]; // 4KB dummy ROM
-        // 0x000 - ARM jump instruction dummy (B +0x2E -> offset +0x24)
+                                         // 0x000 - ARM jump instruction dummy (B +0x2E -> offset +0x24)
         rom[0..4].copy_from_slice(&[0x09, 0x00, 0x00, 0xEA]); // B instruction
-        // 0xB2 - GBA Magic byte
+                                                              // 0xB2 - GBA Magic byte
         rom[0x0B2] = 0x96;
 
         // Title at 0xA0..0xAC
@@ -415,6 +429,7 @@ mod tests {
 
     #[test]
     fn test_load_rom_file_and_cpu_boot_state() -> Result<(), Box<dyn std::error::Error>> {
+        let _lock = crate::gba::libretro::lock();
         let temp_dir = std::env::temp_dir();
         let rom_path = temp_dir.join("test_game.gba");
         let rom_bytes = create_dummy_gba_rom("ZELDA MINISH", "BZME");
@@ -434,6 +449,7 @@ mod tests {
 
     #[test]
     fn test_load_zip_gba() -> Result<(), Box<dyn std::error::Error>> {
+        let _lock = crate::gba::libretro::lock();
         let temp_dir = std::env::temp_dir();
         let zip_path = temp_dir.join("test_gba.zip");
         let rom_bytes = create_dummy_gba_rom("METROID FUS", "AMFE");
@@ -457,6 +473,7 @@ mod tests {
 
     #[test]
     fn test_gba_step_frame_execution() {
+        let _lock = crate::gba::libretro::lock();
         let mut core = GbaCore::new();
         let rom = create_dummy_gba_rom("TEST RUN", "TEST");
         core.load_rom(&rom);
@@ -473,6 +490,7 @@ mod tests {
 
     #[test]
     fn test_pokemon_firered_execution() {
+        let _lock = crate::gba::libretro::lock();
         let rom_path = "/Users/ashutoshsamal/Downloads/Pokemon_Fire_Red_1[romsretro.com]/Pokemon - FireRed Version (USA, Europe).gba";
         if !std::path::Path::new(rom_path).exists() {
             log::info!("ROM PATH DOES NOT EXIST: {}", rom_path);
@@ -494,7 +512,9 @@ mod tests {
             if frame % 30 == 0 {
                 log::debug!(
                     "Frame {:3}: PC=0x{:08X} DISPCNT=0x{:04X}",
-                    frame, core.cpu.regs.pc(), core.mmu.ppu.dispcnt
+                    frame,
+                    core.cpu.regs.pc(),
+                    core.mmu.ppu.dispcnt
                 );
             }
         }
@@ -510,6 +530,7 @@ mod tests {
 
     #[test]
     fn test_real_bios_loading_and_hle_fallback() -> Result<(), Box<dyn std::error::Error>> {
+        let _lock = crate::gba::libretro::lock();
         let temp_dir = std::env::temp_dir();
         let bios_path = temp_dir.join("gba_bios.bin");
 

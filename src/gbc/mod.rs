@@ -55,7 +55,10 @@ impl GbcCore {
 
     /// Load raw ROM byte buffer into memory bus and reset core state.
     pub fn load_rom(&mut self, rom_bytes: &[u8]) {
-        info!("Loaded {} bytes into GBC MMU. Resetting CPU, PPU, Timer, and Memory state.", rom_bytes.len());
+        info!(
+            "Loaded {} bytes into GBC MMU. Resetting CPU, PPU, Timer, and Memory state.",
+            rom_bytes.len()
+        );
         self.cpu = Cpu::new();
         self.ppu = Ppu::new();
         self.timer = Timer::new();
@@ -152,7 +155,10 @@ impl GbcCore {
     /// Deserializes full real-time GBC simulation state from a binary byte buffer.
     pub fn load_state(&mut self, data: &[u8]) -> Result<(), bincode::Error> {
         if data.len() > MAX_GBC_STATE_SIZE {
-            return Err(bincode::ErrorKind::Custom("Save state exceeds maximum allowable size (16MB)".to_string()).into());
+            return Err(bincode::ErrorKind::Custom(
+                "Save state exceeds maximum allowable size (16MB)".to_string(),
+            )
+            .into());
         }
         let state: GbcState = bincode::deserialize(data)?;
         self.cpu = state.cpu;
@@ -228,7 +234,11 @@ impl EmulatorCore for GbcCore {
     }
 
     fn handle_input(&mut self, button: Button, pressed: bool) {
-        info!("GBC Input: {:?} -> {}", button, if pressed { "Pressed" } else { "Released" });
+        info!(
+            "GBC Input: {:?} -> {}",
+            button,
+            if pressed { "Pressed" } else { "Released" }
+        );
         self.mmu.joypad.handle_input(button, pressed);
     }
 
@@ -246,7 +256,9 @@ impl EmulatorCore for GbcCore {
     }
 
     fn save_path(&self) -> Option<std::path::PathBuf> {
-        self.rom_path.as_ref().map(|p| crate::save::SaveManager::get_save_path(p))
+        self.rom_path
+            .as_ref()
+            .map(|p| crate::save::SaveManager::get_save_path(p))
     }
 
     fn save_state(&self) -> Option<Vec<u8>> {
@@ -312,13 +324,19 @@ mod tests {
         }
 
         assert!(core.cpu.registers.pc != 0x0100);
-        let active_pixels = core.ppu.framebuffer().chunks(4).filter(|p| p[0] != 255 || p[1] != 255 || p[2] != 255).count();
+        let active_pixels = core
+            .ppu
+            .framebuffer()
+            .chunks(4)
+            .filter(|p| p[0] != 255 || p[1] != 255 || p[2] != 255)
+            .count();
         assert!(active_pixels > 0);
     }
 
     #[test]
     fn test_pokemon_crystal_execution() {
-        let rom_path = "/Users/ashutoshsamal/Downloads/Pokemon - Crystal Version (USA, Europe) (Rev A).zip";
+        let rom_path =
+            "/Users/ashutoshsamal/Downloads/Pokemon - Crystal Version (USA, Europe) (Rev A).zip";
         if !std::path::Path::new(rom_path).exists() {
             return;
         }
@@ -344,10 +362,20 @@ mod tests {
 
         assert!(core.cpu.registers.pc != 0x0100);
         // Verify VRAM received font and map data via HDMA / GDMA
-        let vram_non_zero = (0x8000..0x9FFF).filter(|&a| core.mmu.read_byte(a) != 0).count();
-        assert!(vram_non_zero > 0, "VRAM should contain tile data loaded by HDMA");
+        let vram_non_zero = (0x8000..0x9FFF)
+            .filter(|&a| core.mmu.read_byte(a) != 0)
+            .count();
+        assert!(
+            vram_non_zero > 0,
+            "VRAM should contain tile data loaded by HDMA"
+        );
 
-        let active_pixels = core.ppu.framebuffer().chunks(4).filter(|p| p[0] != 255 || p[1] != 255 || p[2] != 255).count();
+        let active_pixels = core
+            .ppu
+            .framebuffer()
+            .chunks(4)
+            .filter(|p| p[0] != 255 || p[1] != 255 || p[2] != 255)
+            .count();
         assert!(active_pixels > 0, "Framebuffer should have rendered pixels");
 
         let audio = core.audio_buffer();
@@ -364,7 +392,9 @@ mod tests {
         core.frame_count = 999;
 
         // Serialize state
-        let state_bytes = core.save_state().expect("State serialization should succeed");
+        let state_bytes = core
+            .save_state()
+            .expect("State serialization should succeed");
         assert!(!state_bytes.is_empty());
 
         // Mutate core state
@@ -373,7 +403,8 @@ mod tests {
         core.frame_count = 0;
 
         // Deserialize state
-        core.load_state(&state_bytes).expect("State deserialization should succeed");
+        core.load_state(&state_bytes)
+            .expect("State deserialization should succeed");
         assert_eq!(core.cpu.registers.pc, 0x1234);
         assert_eq!(core.cpu.registers.a, 0xFE);
         assert_eq!(core.frame_count, 999);
@@ -401,7 +432,9 @@ mod tests {
             crate::save::SaveManager::save_state_to_disk(rom_stem, slot, &state_data)
                 .expect("Saving state to disk should succeed");
 
-            assert!(crate::save::SaveManager::state_exists_on_disk(rom_stem, slot));
+            assert!(crate::save::SaveManager::state_exists_on_disk(
+                rom_stem, slot
+            ));
         } // `core` is dropped here, simulating app exit
 
         // 2. Restart run: Create fresh new core and restore state from disk
@@ -416,7 +449,9 @@ mod tests {
             // Read state from disk and restore
             let loaded_data = crate::save::SaveManager::load_state_from_disk(rom_stem, slot)
                 .expect("Should load state from disk after restart");
-            new_core.load_state(&loaded_data).expect("Should deserialize state");
+            new_core
+                .load_state(&loaded_data)
+                .expect("Should deserialize state");
 
             assert_eq!(new_core.cpu.registers.pc, 0x5678);
             assert_eq!(new_core.cpu.registers.a, 0x42);
@@ -427,6 +462,3 @@ mod tests {
         let _ = std::fs::remove_file(&state_path);
     }
 }
-
-
-

@@ -4,6 +4,36 @@ use std::path::{Path, PathBuf};
 
 pub const SAVES_DIR: &str = "saves";
 
+/// Helper function performing atomic file writes using a temporary staging file and rename.
+fn atomic_write_file(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)?;
+        }
+    }
+
+    let file_name = path.file_name().and_then(|s| s.to_str()).unwrap_or("file");
+    let temp_name = format!(".{}.tmp.{}", file_name, std::process::id());
+    let temp_path = path.with_file_name(temp_name);
+
+    // Write data to temporary file
+    fs::write(&temp_path, data)?;
+
+    // Atomically rename temporary file over target file
+    if let Err(err) = fs::rename(&temp_path, path) {
+        // Fallback if target exists and platform restricts atomic replacement
+        if path.exists() {
+            let _ = fs::remove_file(path);
+            fs::rename(&temp_path, path)?;
+        } else {
+            let _ = fs::remove_file(&temp_path);
+            return Err(err);
+        }
+    }
+
+    Ok(())
+}
+
 /// Unified Save Manager for persisting and loading battery-backed `.sav` RAM files and `.state{slot}` real-time snapshots.
 pub struct SaveManager;
 
@@ -63,7 +93,11 @@ impl SaveManager {
 
         match fs::read(path) {
             Ok(bytes) => {
-                info!("Loaded persistent save file: {:?} ({} bytes)", path, bytes.len());
+                info!(
+                    "Loaded persistent save file: {:?} ({} bytes)",
+                    path,
+                    bytes.len()
+                );
                 Some(bytes)
             }
             Err(err) => {
@@ -79,14 +113,12 @@ impl SaveManager {
             return Ok(());
         }
 
-        if let Some(parent) = path.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent)?;
-            }
-        }
-
-        fs::write(path, data)?;
-        info!("Flushed save data ({} bytes) to {:?}", data.len(), path);
+        atomic_write_file(path, data)?;
+        info!(
+            "Flushed save data ({} bytes) atomically to {:?}",
+            data.len(),
+            path
+        );
         Ok(())
     }
 
@@ -109,17 +141,19 @@ impl SaveManager {
         state_path
     }
 
-    /// Writes real-time save state snapshot bytes to disk under `./saves/{rom_stem}.state{slot}`.
+    /// Writes real-time save state snapshot bytes to disk under `./saves/{rom_stem}.state{slot}` atomically.
     pub fn save_state_to_disk(rom_stem: &str, slot: usize, data: &[u8]) -> std::io::Result<()> {
         if data.is_empty() {
             return Ok(());
         }
 
-        fs::create_dir_all(SAVES_DIR).ok();
-
         let path = Self::get_state_path_from_stem(rom_stem, slot);
-        fs::write(&path, data)?;
-        info!("Saved state snapshot ({} bytes) to disk -> {:?}", data.len(), path);
+        atomic_write_file(&path, data)?;
+        info!(
+            "Saved state snapshot ({} bytes) atomically to disk -> {:?}",
+            data.len(),
+            path
+        );
         Ok(())
     }
 
@@ -133,7 +167,11 @@ impl SaveManager {
 
         match fs::read(&path) {
             Ok(bytes) => {
-                info!("Loaded save state snapshot from disk: {:?} ({} bytes)", path, bytes.len());
+                info!(
+                    "Loaded save state snapshot from disk: {:?} ({} bytes)",
+                    path,
+                    bytes.len()
+                );
                 Some(bytes)
             }
             Err(err) => {
@@ -156,14 +194,12 @@ impl SaveManager {
             return Ok(());
         }
 
-        if let Some(parent) = path.parent() {
-            if !parent.exists() {
-                fs::create_dir_all(parent)?;
-            }
-        }
-
-        fs::write(path, data)?;
-        info!("Saved state snapshot ({} bytes) to {:?}", data.len(), path);
+        atomic_write_file(path, data)?;
+        info!(
+            "Saved state snapshot ({} bytes) atomically to {:?}",
+            data.len(),
+            path
+        );
         Ok(())
     }
 
@@ -177,7 +213,11 @@ impl SaveManager {
 
         match fs::read(path) {
             Ok(bytes) => {
-                info!("Loaded save state snapshot: {:?} ({} bytes)", path, bytes.len());
+                info!(
+                    "Loaded save state snapshot: {:?} ({} bytes)",
+                    path,
+                    bytes.len()
+                );
                 Some(bytes)
             }
             Err(err) => {
@@ -200,13 +240,19 @@ mod tests {
 
         let zip_rom = Path::new("downloads/Pokemon - Crystal Version (USA).zip");
         let zip_save = SaveManager::get_save_path(zip_rom);
-        assert_eq!(zip_save, PathBuf::from("saves/Pokemon - Crystal Version (USA).sav"));
+        assert_eq!(
+            zip_save,
+            PathBuf::from("saves/Pokemon - Crystal Version (USA).sav")
+        );
 
         let state1_path = SaveManager::get_state_path(rom_path, 1);
         assert_eq!(state1_path, PathBuf::from("saves/Pokemon_FireRed.state1"));
 
         let state2_path = SaveManager::get_state_path(zip_rom, 2);
-        assert_eq!(state2_path, PathBuf::from("saves/Pokemon - Crystal Version (USA).state2"));
+        assert_eq!(
+            state2_path,
+            PathBuf::from("saves/Pokemon - Crystal Version (USA).state2")
+        );
     }
 
     #[test]
@@ -250,7 +296,8 @@ mod tests {
         let dummy_state = vec![0xEEu8; 65536]; // 64KB state snapshot
         SaveManager::write_save_state(&test_state_path, &dummy_state)?;
 
-        let loaded = SaveManager::read_save_state(&test_state_path).expect("Should load state file");
+        let loaded =
+            SaveManager::read_save_state(&test_state_path).expect("Should load state file");
         assert_eq!(loaded.len(), dummy_state.len());
         assert_eq!(loaded, dummy_state);
 
@@ -276,7 +323,8 @@ mod tests {
 
         // Verify exists and load
         assert!(SaveManager::state_exists_on_disk(test_stem, slot));
-        let loaded = SaveManager::load_state_from_disk(test_stem, slot).expect("State must load from disk");
+        let loaded =
+            SaveManager::load_state_from_disk(test_stem, slot).expect("State must load from disk");
         assert_eq!(loaded, test_data);
 
         // Clean up

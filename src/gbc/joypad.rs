@@ -131,4 +131,3 @@ mod tests {
         assert_eq!(val & 0x0F, 0x0E);
     }
 }
-

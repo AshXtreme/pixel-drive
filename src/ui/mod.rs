@@ -149,7 +149,8 @@ impl GuiRenderer {
                                 actions.push(GuiAction::OpenRomPicker);
                                 ui.close_menu();
                             }
-                            if self.loaded_rom_name.is_some() && ui.button("⏏ Unload ROM").clicked() {
+                            if self.loaded_rom_name.is_some() && ui.button("⏏ Unload ROM").clicked()
+                            {
                                 actions.push(GuiAction::UnloadRom);
                                 ui.close_menu();
                             }
@@ -162,7 +163,11 @@ impl GuiRenderer {
 
                         // Emulation Menu
                         ui.menu_button("Emulation", |ui| {
-                            let pause_label = if self.is_paused { "▶ Resume" } else { "⏸ Pause" };
+                            let pause_label = if self.is_paused {
+                                "▶ Resume"
+                            } else {
+                                "⏸ Pause"
+                            };
                             if ui.button(pause_label).clicked() {
                                 actions.push(GuiAction::TogglePause);
                                 ui.close_menu();
@@ -194,19 +199,38 @@ impl GuiRenderer {
                             });
 
                             let active_exists = if let Some(ref stem) = current_stem {
-                                crate::save::SaveManager::state_exists_on_disk(stem, self.active_save_slot)
+                                crate::save::SaveManager::state_exists_on_disk(
+                                    stem,
+                                    self.active_save_slot,
+                                )
                             } else {
                                 false
                             };
 
-                            let active_status = if active_exists { " [Saved]" } else { " [Empty]" };
-                            if ui.button(format!("💾 Quick Save Slot {}{} (F1)", self.active_save_slot, active_status)).clicked() {
+                            let active_status = if active_exists {
+                                " [Saved]"
+                            } else {
+                                " [Empty]"
+                            };
+                            if ui
+                                .button(format!(
+                                    "💾 Quick Save Slot {}{} (F1)",
+                                    self.active_save_slot, active_status
+                                ))
+                                .clicked()
+                            {
                                 actions.push(GuiAction::QuickSave(self.active_save_slot));
                                 ui.close_menu();
                             }
 
-                            let load_label = format!("📂 Quick Load Slot {}{} (F5)", self.active_save_slot, active_status);
-                            if ui.add_enabled(active_exists, egui::Button::new(load_label)).clicked() {
+                            let load_label = format!(
+                                "📂 Quick Load Slot {}{} (F5)",
+                                self.active_save_slot, active_status
+                            );
+                            if ui
+                                .add_enabled(active_exists, egui::Button::new(load_label))
+                                .clicked()
+                            {
                                 actions.push(GuiAction::QuickLoad(self.active_save_slot));
                                 ui.close_menu();
                             }
@@ -227,7 +251,8 @@ impl GuiRenderer {
                                 ui.horizontal(|ui| {
                                     let mut label = egui::RichText::new(slot_label);
                                     if is_active {
-                                        label = label.strong().color(Color32::from_rgb(255, 200, 50));
+                                        label =
+                                            label.strong().color(Color32::from_rgb(255, 200, 50));
                                     } else if exists {
                                         label = label.color(Color32::from_rgb(100, 220, 140));
                                     } else {
@@ -252,7 +277,11 @@ impl GuiRenderer {
 
                         // Audio Menu
                         ui.menu_button("Audio", |ui| {
-                            let mute_label = if self.is_muted { "🔊 Unmute Audio (M)" } else { "🔇 Mute Audio (M)" };
+                            let mute_label = if self.is_muted {
+                                "🔊 Unmute Audio (M)"
+                            } else {
+                                "🔇 Mute Audio (M)"
+                            };
                             if ui.button(mute_label).clicked() {
                                 actions.push(GuiAction::ToggleMute);
                                 ui.close_menu();
@@ -260,7 +289,10 @@ impl GuiRenderer {
                             ui.separator();
                             ui.label("Master Volume:");
                             let mut vol = self.master_volume;
-                            if ui.add(egui::Slider::new(&mut vol, 0.0..=1.0).text("Volume")).changed() {
+                            if ui
+                                .add(egui::Slider::new(&mut vol, 0.0..=1.0).text("Volume"))
+                                .changed()
+                            {
                                 actions.push(GuiAction::SetVolume(vol));
                             }
                         });
@@ -270,6 +302,7 @@ impl GuiRenderer {
                             ui.label("Display Filter (F4):");
                             for mode in [
                                 FilterMode::Nearest,
+                                FilterMode::Bilinear,
                                 FilterMode::LcdGrid,
                                 FilterMode::ColorCorrection,
                                 FilterMode::LcdColor,
@@ -281,7 +314,10 @@ impl GuiRenderer {
                                 }
                             }
                             ui.separator();
-                            if ui.checkbox(&mut self.show_fps_hud, "Show HUD / Stats Overlay").changed() {
+                            if ui
+                                .checkbox(&mut self.show_fps_hud, "Show HUD / Stats Overlay")
+                                .changed()
+                            {
                                 actions.push(GuiAction::ToggleFpsHud);
                             }
                         });
@@ -302,9 +338,12 @@ impl GuiRenderer {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if let Some(ref rom_name) = self.loaded_rom_name {
                                 ui.label(
-                                    egui::RichText::new(format!("🎮 [{}] {}", self.active_core_name, rom_name))
-                                        .color(Color32::from_rgb(180, 220, 255))
-                                        .size(12.0),
+                                    egui::RichText::new(format!(
+                                        "🎮 [{}] {}",
+                                        self.active_core_name, rom_name
+                                    ))
+                                    .color(Color32::from_rgb(180, 220, 255))
+                                    .size(12.0),
                                 );
                             } else {
                                 ui.label(
@@ -327,52 +366,58 @@ impl GuiRenderer {
                 .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
                 .show(&self.context, |ui| {
                     ui.heading("Game Controls");
-                    egui::Grid::new("controls_grid").striped(true).show(ui, |ui| {
-                        ui.label(egui::RichText::new("D-Pad").strong());
-                        ui.label("Arrow Keys / W, A, S, D");
-                        ui.end_row();
-                        ui.label(egui::RichText::new("A Button").strong());
-                        ui.label("Z / J");
-                        ui.end_row();
-                        ui.label(egui::RichText::new("B Button").strong());
-                        ui.label("X / K");
-                        ui.end_row();
-                        ui.label(egui::RichText::new("L Shoulder").strong());
-                        ui.label("Q / U");
-                        ui.end_row();
-                        ui.label(egui::RichText::new("R Shoulder").strong());
-                        ui.label("E / I");
-                        ui.end_row();
-                        ui.label(egui::RichText::new("Start").strong());
-                        ui.label("Enter");
-                        ui.end_row();
-                        ui.label(egui::RichText::new("Select").strong());
-                        ui.label("Shift / Backspace");
-                        ui.end_row();
-                    });
+                    egui::Grid::new("controls_grid")
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.label(egui::RichText::new("D-Pad").strong());
+                            ui.label("Arrow Keys / W, A, S, D");
+                            ui.end_row();
+                            ui.label(egui::RichText::new("A Button").strong());
+                            ui.label("Z / J");
+                            ui.end_row();
+                            ui.label(egui::RichText::new("B Button").strong());
+                            ui.label("X / K");
+                            ui.end_row();
+                            ui.label(egui::RichText::new("L Shoulder").strong());
+                            ui.label("Q / U");
+                            ui.end_row();
+                            ui.label(egui::RichText::new("R Shoulder").strong());
+                            ui.label("E / I");
+                            ui.end_row();
+                            ui.label(egui::RichText::new("Start").strong());
+                            ui.label("Enter");
+                            ui.end_row();
+                            ui.label(egui::RichText::new("Select").strong());
+                            ui.label("Shift / Backspace");
+                            ui.end_row();
+                        });
 
                     ui.add_space(8.0);
                     ui.heading("Hotkeys");
-                    egui::Grid::new("hotkeys_grid").striped(true).show(ui, |ui| {
-                        ui.label(egui::RichText::new("Tab").strong());
-                        ui.label("Toggle 2x Fast-Forward");
-                        ui.end_row();
-                        ui.label(egui::RichText::new("M").strong());
-                        ui.label("Toggle Audio Mute");
-                        ui.end_row();
-                        ui.label(egui::RichText::new("F4").strong());
-                        ui.label("Cycle Display Shaders (Nearest -> LCD -> Color -> LCD+Color)");
-                        ui.end_row();
-                        ui.label(egui::RichText::new("1 - 9").strong());
-                        ui.label("Select Save State Slot 1-9");
-                        ui.end_row();
-                        ui.label(egui::RichText::new("F1").strong());
-                        ui.label("Quick Save State to Active Slot");
-                        ui.end_row();
-                        ui.label(egui::RichText::new("F5 / F2").strong());
-                        ui.label("Quick Load State from Active Slot");
-                        ui.end_row();
-                    });
+                    egui::Grid::new("hotkeys_grid")
+                        .striped(true)
+                        .show(ui, |ui| {
+                            ui.label(egui::RichText::new("Tab").strong());
+                            ui.label("Toggle 2x Fast-Forward");
+                            ui.end_row();
+                            ui.label(egui::RichText::new("M").strong());
+                            ui.label("Toggle Audio Mute");
+                            ui.end_row();
+                            ui.label(egui::RichText::new("F4").strong());
+                            ui.label(
+                                "Cycle Display Shaders (Nearest -> LCD -> Color -> LCD+Color)",
+                            );
+                            ui.end_row();
+                            ui.label(egui::RichText::new("1 - 9").strong());
+                            ui.label("Select Save State Slot 1-9");
+                            ui.end_row();
+                            ui.label(egui::RichText::new("F1").strong());
+                            ui.label("Quick Save State to Active Slot");
+                            ui.end_row();
+                            ui.label(egui::RichText::new("F5 / F2").strong());
+                            ui.label("Quick Load State from Active Slot");
+                            ui.end_row();
+                        });
 
                     ui.add_space(10.0);
                     if ui.button("Close").clicked() {
@@ -418,7 +463,10 @@ impl GuiRenderer {
                     inner_margin: egui::Margin::symmetric(8.0, 6.0),
                     rounding: Rounding::same(6.0),
                     fill: Color32::from_rgba_premultiplied(12, 14, 20, 190),
-                    stroke: Stroke::new(1.0_f32, Color32::from_rgba_premultiplied(255, 255, 255, 30)),
+                    stroke: Stroke::new(
+                        1.0_f32,
+                        Color32::from_rgba_premultiplied(255, 255, 255, 30),
+                    ),
                     ..Default::default()
                 })
                 .show(&self.context, |ui| {
@@ -475,6 +523,7 @@ impl GuiRenderer {
 
                         let filter_badge = match self.filter_mode {
                             FilterMode::Nearest => "",
+                            FilterMode::Bilinear => "〰 SMOOTH",
                             FilterMode::LcdGrid => "📺 LCD",
                             FilterMode::ColorCorrection => "🎨 COLOR",
                             FilterMode::LcdColor => "📺 LCD+CLR",
@@ -513,7 +562,10 @@ impl GuiRenderer {
                         outer_margin: egui::Margin::default(),
                         rounding: Rounding::same(20.0),
                         fill: Color32::from_rgba_premultiplied(20, 24, 34, alpha),
-                        stroke: Stroke::new(1.5_f32, Color32::from_rgba_premultiplied(100, 160, 255, alpha)),
+                        stroke: Stroke::new(
+                            1.5_f32,
+                            Color32::from_rgba_premultiplied(100, 160, 255, alpha),
+                        ),
                         shadow: Shadow {
                             offset: [0.0, 2.0].into(),
                             blur: 8.0,
@@ -546,9 +598,12 @@ impl GuiRenderer {
         window: &Window,
     ) {
         let full_output = self.context.end_frame();
-        self.state.handle_platform_output(window, full_output.platform_output);
+        self.state
+            .handle_platform_output(window, full_output.platform_output);
 
-        let clipped_primitives = self.context.tessellate(full_output.shapes, self.screen_descriptor.pixels_per_point);
+        let clipped_primitives = self
+            .context
+            .tessellate(full_output.shapes, self.screen_descriptor.pixels_per_point);
 
         if self.renderer.is_none() {
             self.renderer = Some(Renderer::new(
@@ -573,22 +628,27 @@ impl GuiRenderer {
             );
 
             {
-                let mut render_pass = encoder.begin_render_pass(&pixels::wgpu::RenderPassDescriptor {
-                    label: Some("egui_render_pass"),
-                    color_attachments: &[Some(pixels::wgpu::RenderPassColorAttachment {
-                        view: render_target,
-                        resolve_target: None,
-                        ops: pixels::wgpu::Operations {
-                            load: pixels::wgpu::LoadOp::Load,
-                            store: pixels::wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                });
+                let mut render_pass =
+                    encoder.begin_render_pass(&pixels::wgpu::RenderPassDescriptor {
+                        label: Some("egui_render_pass"),
+                        color_attachments: &[Some(pixels::wgpu::RenderPassColorAttachment {
+                            view: render_target,
+                            resolve_target: None,
+                            ops: pixels::wgpu::Operations {
+                                load: pixels::wgpu::LoadOp::Load,
+                                store: pixels::wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: None,
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                    });
 
-                renderer.render(&mut render_pass, &clipped_primitives, &self.screen_descriptor);
+                renderer.render(
+                    &mut render_pass,
+                    &clipped_primitives,
+                    &self.screen_descriptor,
+                );
             }
 
             for id in &full_output.textures_delta.free {
@@ -597,4 +657,3 @@ impl GuiRenderer {
         }
     }
 }
-

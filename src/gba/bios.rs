@@ -18,8 +18,8 @@ pub fn handle_swi(comment: u8, regs: &mut Registers, bus: &mut GbaMemoryBus) {
         regs.set_spsr(old_cpsr);
         regs.set_irq_disabled(true);
         regs.set_thumb_mode(false); // Switch to ARM mode
-        regs.r[14] = return_pc;     // LR_svc
-        regs.r[15] = 0x00000008;    // Hardware SWI Exception Vector
+        regs.r[14] = return_pc; // LR_svc
+        regs.r[15] = 0x00000008; // Hardware SWI Exception Vector
         return;
     }
 
@@ -51,7 +51,11 @@ pub fn handle_swi(comment: u8, regs: &mut Registers, bus: &mut GbaMemoryBus) {
         return;
     }
 
-    log::debug!("GBA BIOS SWI 0x{:02X} invoked at PC=0x{:08X}", comment, swi_pc);
+    log::debug!(
+        "GBA BIOS SWI 0x{:02X} invoked at PC=0x{:08X}",
+        comment,
+        swi_pc
+    );
 
     match comment {
         0x01 => {
@@ -168,7 +172,11 @@ pub fn handle_swi(comment: u8, regs: &mut Registers, bus: &mut GbaMemoryBus) {
             if is_32bit {
                 let fill_val = if fill_mode { bus.read_u32(src_addr) } else { 0 };
                 for _ in 0..count {
-                    let val = if fill_mode { fill_val } else { bus.read_u32(curr_src) };
+                    let val = if fill_mode {
+                        fill_val
+                    } else {
+                        bus.read_u32(curr_src)
+                    };
                     bus.write_u32(curr_dst, val);
                     if !fill_mode {
                         curr_src = curr_src.wrapping_add(4);
@@ -178,7 +186,11 @@ pub fn handle_swi(comment: u8, regs: &mut Registers, bus: &mut GbaMemoryBus) {
             } else {
                 let fill_val = if fill_mode { bus.read_u16(src_addr) } else { 0 };
                 for _ in 0..count {
-                    let val = if fill_mode { fill_val } else { bus.read_u16(curr_src) };
+                    let val = if fill_mode {
+                        fill_val
+                    } else {
+                        bus.read_u16(curr_src)
+                    };
                     bus.write_u16(curr_dst, val);
                     if !fill_mode {
                         curr_src = curr_src.wrapping_add(2);

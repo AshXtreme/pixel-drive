@@ -505,7 +505,11 @@ impl Cpu {
                 let dest = (opcode >> 3) & 7;
                 let val = self.read_r8(bus, src);
                 self.write_r8(bus, dest, val);
-                if src == 6 || dest == 6 { 8 } else { 4 }
+                if src == 6 || dest == 6 {
+                    8
+                } else {
+                    4
+                }
             }
 
             // 8-bit Increment / Decrement
@@ -518,7 +522,11 @@ impl Cpu {
                 self.registers.set_flag_z(res == 0);
                 self.registers.set_flag_n(false);
                 self.registers.set_flag_h(h);
-                if reg_idx == 6 { 12 } else { 4 }
+                if reg_idx == 6 {
+                    12
+                } else {
+                    4
+                }
             }
             0x05 | 0x0D | 0x15 | 0x1D | 0x25 | 0x2D | 0x35 | 0x3D => {
                 let reg_idx = (opcode >> 3) & 7;
@@ -529,7 +537,11 @@ impl Cpu {
                 self.registers.set_flag_z(res == 0);
                 self.registers.set_flag_n(true);
                 self.registers.set_flag_h(h);
-                if reg_idx == 6 { 12 } else { 4 }
+                if reg_idx == 6 {
+                    12
+                } else {
+                    4
+                }
             }
 
             // 16-bit Increment / Decrement

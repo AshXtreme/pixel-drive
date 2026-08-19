@@ -3,12 +3,13 @@ mod core;
 mod error;
 mod gba;
 mod gbc;
+mod input;
 mod render;
 mod save;
 mod ui;
 
 use audio::{AudioPlayer, AudioProducer};
-use core::{Button, EmulatorCore};
+use core::EmulatorCore;
 use gba::GbaCore;
 use gbc::GbcCore;
 use log::{info, warn};
@@ -94,7 +95,13 @@ fn load_rom_from_path(
                         gbc.load_save_data(&save_data);
                     }
                     *active_core = Box::new(gbc);
-                    apply_core_switch(active_core.as_ref(), core_width, core_height, pixels, window);
+                    apply_core_switch(
+                        active_core.as_ref(),
+                        core_width,
+                        core_height,
+                        pixels,
+                        window,
+                    );
                     window.set_title(&format!(
                         "PixelDrive - GBC: {}",
                         path.file_name().unwrap_or_default().to_string_lossy()
@@ -126,7 +133,13 @@ fn load_rom_from_path(
                         header.title, header.game_code, backend_label
                     );
                     *active_core = Box::new(gba);
-                    apply_core_switch(active_core.as_ref(), core_width, core_height, pixels, window);
+                    apply_core_switch(
+                        active_core.as_ref(),
+                        core_width,
+                        core_height,
+                        pixels,
+                        window,
+                    );
                     window.set_title(&title);
                     true
                 }
@@ -154,7 +167,13 @@ fn load_rom_from_path(
                     header.title, header.game_code, backend_label
                 );
                 *active_core = Box::new(gba);
-                apply_core_switch(active_core.as_ref(), core_width, core_height, pixels, window);
+                apply_core_switch(
+                    active_core.as_ref(),
+                    core_width,
+                    core_height,
+                    pixels,
+                    window,
+                );
                 window.set_title(&title);
                 true
             } else {
@@ -165,20 +184,33 @@ fn load_rom_from_path(
                         gbc.load_save_data(&save_data);
                     }
                     *active_core = Box::new(gbc);
-                    apply_core_switch(active_core.as_ref(), core_width, core_height, pixels, window);
+                    apply_core_switch(
+                        active_core.as_ref(),
+                        core_width,
+                        core_height,
+                        pixels,
+                        window,
+                    );
                     window.set_title(&format!(
                         "PixelDrive - GBC: {}",
                         path.file_name().unwrap_or_default().to_string_lossy()
                     ));
                     true
                 } else {
-                    warn!("No valid GBC or GBA ROM found inside ZIP: {}", path.display());
+                    warn!(
+                        "No valid GBC or GBA ROM found inside ZIP: {}",
+                        path.display()
+                    );
                     false
                 }
             }
         }
         _ => {
-            info!("Unknown extension '.{}', auto-detecting core: {}", ext, path.display());
+            info!(
+                "Unknown extension '.{}', auto-detecting core: {}",
+                ext,
+                path.display()
+            );
             let mut gba = GbaCore::new();
             gba.set_audio_producer(audio_producer.clone());
             if let Ok(header) = gba.load_rom_file(path) {
@@ -195,7 +227,13 @@ fn load_rom_from_path(
                     header.title, header.game_code, backend_label
                 );
                 *active_core = Box::new(gba);
-                apply_core_switch(active_core.as_ref(), core_width, core_height, pixels, window);
+                apply_core_switch(
+                    active_core.as_ref(),
+                    core_width,
+                    core_height,
+                    pixels,
+                    window,
+                );
                 window.set_title(&title);
                 true
             } else {
@@ -206,7 +244,13 @@ fn load_rom_from_path(
                         gbc.load_save_data(&save_data);
                     }
                     *active_core = Box::new(gbc);
-                    apply_core_switch(active_core.as_ref(), core_width, core_height, pixels, window);
+                    apply_core_switch(
+                        active_core.as_ref(),
+                        core_width,
+                        core_height,
+                        pixels,
+                        window,
+                    );
                     window.set_title(&format!(
                         "PixelDrive - GBC: {}",
                         path.file_name().unwrap_or_default().to_string_lossy()
@@ -258,7 +302,8 @@ pub fn set_macos_dock_icon() {
             let dock_tile: *mut objc::runtime::Object = msg_send![app, dockTile];
             if !dock_tile.is_null() {
                 let ns_image_view_cls = class!(NSImageView);
-                let image_view_alloc: *mut objc::runtime::Object = msg_send![ns_image_view_cls, alloc];
+                let image_view_alloc: *mut objc::runtime::Object =
+                    msg_send![ns_image_view_cls, alloc];
                 let image_view: *mut objc::runtime::Object = msg_send![image_view_alloc, init];
                 if !image_view.is_null() {
                     let () = msg_send![image_view, setImage: image];
@@ -287,7 +332,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             (Some(player), Some(prod))
         }
         Err(err) => {
-            warn!("Failed to initialize audio player: {}. Audio output will be disabled.", err);
+            warn!(
+                "Failed to initialize audio player: {}. Audio output will be disabled.",
+                err
+            );
             (None, None)
         }
     };
@@ -326,7 +374,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut pixels = {
         let window_size = window.inner_size();
-        let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, window.clone());
+        let surface_texture =
+            SurfaceTexture::new(window_size.width, window_size.height, window.clone());
         Pixels::new(core_width, core_height, surface_texture)?
     };
 
@@ -335,13 +384,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let window_size = window.inner_size();
     let mut gui = GuiRenderer::new(&window, window_size.width, window_size.height);
-    let mut shader_pipeline = ShaderPipeline::new(pixels.device(), pixels::wgpu::TextureFormat::Bgra8UnormSrgb);
+    let mut shader_pipeline =
+        ShaderPipeline::new(pixels.device(), pixels::wgpu::TextureFormat::Bgra8UnormSrgb);
     let mut filter_mode = FilterMode::Nearest;
 
     let mut current_rom_path: Option<std::path::PathBuf> = None;
     let mut active_save_slot: usize = 1;
     let mut fast_forward = false;
     let mut is_paused = false;
+    let mut input_manager = input::InputManager::new();
 
     // Check for CLI ROM argument on startup: cargo run -- path/to/game.gba
     if let Some(cli_rom_arg) = std::env::args().nth(1) {
@@ -357,9 +408,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 &window,
                 &audio_producer,
             ) {
-                let name = cli_path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let name = cli_path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
                 gui.loaded_rom_name = Some(name.clone());
-                gui.active_core_name = if active_core.display_dimensions() == (240, 160) { "GBA".to_string() } else { "GBC".to_string() };
+                gui.active_core_name = if active_core.display_dimensions() == (240, 160) {
+                    "GBA".to_string()
+                } else {
+                    "GBC".to_string()
+                };
                 gui.show_toast(format!("Loaded: {}", name));
                 current_rom_path = Some(cli_path);
             }
@@ -374,7 +433,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut fps_frame_count: u32 = 0;
     let mut dock_icon_set = false;
 
-    let frame_duration = std::time::Duration::from_nanos(1_000_000_000 / 60);
     let auto_save_interval = std::time::Duration::from_secs(5);
 
     event_loop.run(move |event, elwt| {
@@ -443,6 +501,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 player.pause();
                             }
                         }
+                        if !focused {
+                            input_manager.clear_all();
+                            input_manager.dispatch_to_core(active_core.as_mut());
+                        }
+                    }
+
+                    WindowEvent::Touch(touch) => {
+                        let win_size = window.inner_size();
+                        match touch.phase {
+                            winit::event::TouchPhase::Started => {
+                                input_manager.touch.handle_touch_down(
+                                    touch.id,
+                                    touch.location.x as f32,
+                                    touch.location.y as f32,
+                                    win_size.width as f32,
+                                    win_size.height as f32,
+                                );
+                            }
+                            winit::event::TouchPhase::Moved => {
+                                input_manager.touch.handle_touch_move(
+                                    touch.id,
+                                    touch.location.x as f32,
+                                    touch.location.y as f32,
+                                    win_size.width as f32,
+                                    win_size.height as f32,
+                                );
+                            }
+                            winit::event::TouchPhase::Ended => {
+                                input_manager.touch.handle_touch_up(touch.id);
+                            }
+                            winit::event::TouchPhase::Cancelled => {
+                                input_manager.touch.handle_touch_cancel(touch.id);
+                            }
+                        }
+                        input_manager.dispatch_to_core(active_core.as_mut());
                     }
 
                     WindowEvent::KeyboardInput {
@@ -466,6 +559,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     if let Some(ref prod) = audio_producer {
                                         prod.set_fast_forward(fast_forward);
                                     }
+                                    let present_mode = if fast_forward {
+                                        pixels::wgpu::PresentMode::AutoNoVsync
+                                    } else {
+                                        pixels::wgpu::PresentMode::AutoVsync
+                                    };
+                                    pixels.set_present_mode(present_mode);
+
                                     if fast_forward {
                                         info!("⚡ Fast-Forward: Enabled (2x Speed)");
                                         gui.show_toast("Fast-Forward: 2x Speed");
@@ -591,23 +691,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         }
 
-                        let button = match key_code {
-                            KeyCode::ArrowUp | KeyCode::KeyW => Some(Button::Up),
-                            KeyCode::ArrowDown | KeyCode::KeyS => Some(Button::Down),
-                            KeyCode::ArrowLeft | KeyCode::KeyA => Some(Button::Left),
-                            KeyCode::ArrowRight | KeyCode::KeyD => Some(Button::Right),
-                            KeyCode::KeyZ | KeyCode::KeyJ => Some(Button::A),
-                            KeyCode::KeyX | KeyCode::KeyK => Some(Button::B),
-                            KeyCode::KeyQ | KeyCode::KeyU => Some(Button::L),
-                            KeyCode::KeyE | KeyCode::KeyI => Some(Button::R),
-                            KeyCode::Enter => Some(Button::Start),
-                            KeyCode::ShiftRight | KeyCode::ShiftLeft | KeyCode::Backspace => Some(Button::Select),
-                            _ => None,
-                        };
-
-                        if let Some(btn) = button {
-                            active_core.handle_input(btn, pressed);
-                        }
+                        // Feed physical keyboard event into InputManager
+                        input_manager.keyboard.handle_key(key_code, pressed);
+                        input_manager.dispatch_to_core(active_core.as_mut());
                     }
 
                     WindowEvent::RedrawRequested => {
@@ -856,8 +942,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     flush_core_save(active_core.as_ref());
                 }
 
-                if now.duration_since(last_frame_time) >= frame_duration {
-                    last_frame_time = now;
+                // Sub-millisecond fractional frame pacing (59.7275 Hz normal / 119.455 Hz fast-forward)
+                let target_frame_nanos = if fast_forward { 8_371_353 } else { 16_742_706 };
+                let target_frame_duration = std::time::Duration::from_nanos(target_frame_nanos);
+                let elapsed = now.duration_since(last_frame_time);
+
+                if elapsed >= target_frame_duration {
+                    last_frame_time = if elapsed > target_frame_duration * 2 {
+                        now
+                    } else {
+                        last_frame_time + target_frame_duration
+                    };
                     window.request_redraw();
                 }
             }

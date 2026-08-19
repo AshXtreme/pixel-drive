@@ -401,8 +401,8 @@ impl Cpu {
         self.regs.set_spsr(old_cpsr);
         self.regs.set_irq_disabled(true);
         self.regs.set_thumb_mode(false); // ARM mode
-        self.regs.r[14] = return_pc;      // LR_svc
-        self.regs.r[15] = 0x00000008;     // ARM SWI Exception Vector
+        self.regs.r[14] = return_pc; // LR_svc
+        self.regs.r[15] = 0x00000008; // ARM SWI Exception Vector
     }
 
     /// Raise CPU Hardware IRQ Exception (vector 0x00000018).
@@ -424,8 +424,8 @@ impl Cpu {
         self.regs.set_spsr(old_cpsr);
         self.regs.set_irq_disabled(true);
         self.regs.set_thumb_mode(false); // ARM mode
-        self.regs.r[14] = return_pc;      // LR_irq
-        self.regs.r[15] = 0x00000018;     // ARM IRQ Exception Vector
+        self.regs.r[14] = return_pc; // LR_irq
+        self.regs.r[15] = 0x00000018; // ARM IRQ Exception Vector
     }
 
     /// Execute single CPU instruction step (ARM 32-bit or THUMB 16-bit).
@@ -435,7 +435,6 @@ impl Cpu {
         } else {
             self.regs.r[15] & !3
         };
-
 
         if self.regs.thumb_mode() {
             // THUMB Mode: 16-bit instruction, 2-byte aligned (R15 reads as pc + 4)

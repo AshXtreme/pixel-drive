@@ -147,7 +147,10 @@ impl Resampler {
 
     pub fn set_input_rate(&mut self, in_rate: f64) {
         if in_rate > 0.0 {
-            info!("Resampler input sample rate set to {:.1} Hz (Target: {:.1} Hz)", in_rate, self.out_rate);
+            info!(
+                "Resampler input sample rate set to {:.1} Hz (Target: {:.1} Hz)",
+                in_rate, self.out_rate
+            );
             self.in_rate = in_rate;
         }
     }
@@ -181,24 +184,18 @@ impl Resampler {
 
             while self.phase < 1.0 {
                 let frac = self.phase as f32;
-                let interp_l = cubic_hermite(
-                    self.hist_l[0],
-                    self.hist_l[1],
-                    self.hist_l[2],
-                    curr_l,
-                    frac,
-                );
-                let interp_r = cubic_hermite(
-                    self.hist_r[0],
-                    self.hist_r[1],
-                    self.hist_r[2],
-                    curr_r,
-                    frac,
-                );
+                let interp_l =
+                    cubic_hermite(self.hist_l[0], self.hist_l[1], self.hist_l[2], curr_l, frac);
+                let interp_r =
+                    cubic_hermite(self.hist_r[0], self.hist_r[1], self.hist_r[2], curr_r, frac);
 
                 // Anti-aliasing filter & DC blocking
-                let filtered_l = self.lp_filter_l.process(self.dc_blocker_l.process(interp_l));
-                let filtered_r = self.lp_filter_r.process(self.dc_blocker_r.process(interp_r));
+                let filtered_l = self
+                    .lp_filter_l
+                    .process(self.dc_blocker_l.process(interp_l));
+                let filtered_r = self
+                    .lp_filter_r
+                    .process(self.dc_blocker_r.process(interp_r));
 
                 output.push(soft_limit(filtered_l));
                 output.push(soft_limit(filtered_r));
@@ -249,23 +246,17 @@ impl Resampler {
 
             while self.phase < 1.0 {
                 let frac = self.phase as f32;
-                let interp_l = cubic_hermite(
-                    self.hist_l[0],
-                    self.hist_l[1],
-                    self.hist_l[2],
-                    curr_l,
-                    frac,
-                );
-                let interp_r = cubic_hermite(
-                    self.hist_r[0],
-                    self.hist_r[1],
-                    self.hist_r[2],
-                    curr_r,
-                    frac,
-                );
+                let interp_l =
+                    cubic_hermite(self.hist_l[0], self.hist_l[1], self.hist_l[2], curr_l, frac);
+                let interp_r =
+                    cubic_hermite(self.hist_r[0], self.hist_r[1], self.hist_r[2], curr_r, frac);
 
-                let filtered_l = self.lp_filter_l.process(self.dc_blocker_l.process(interp_l));
-                let filtered_r = self.lp_filter_r.process(self.dc_blocker_r.process(interp_r));
+                let filtered_l = self
+                    .lp_filter_l
+                    .process(self.dc_blocker_l.process(interp_l));
+                let filtered_r = self
+                    .lp_filter_r
+                    .process(self.dc_blocker_r.process(interp_r));
 
                 output.push(soft_limit(filtered_l));
                 output.push(soft_limit(filtered_r));
@@ -287,24 +278,31 @@ impl Resampler {
     }
 }
 
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
 struct ProducerInner {
     prod: ringbuf::HeapProd<f32>,
     resampler: Resampler,
     work_buf: Vec<f32>,
-    fast_forward: bool,
-    muted: bool,
-    volume: f32,
+    integral_err: f64,
 }
 
 /// Thread-safe sample producer handle shared between the emulator thread and the host audio output.
 #[derive(Clone)]
 pub struct AudioProducer {
     inner: Arc<Mutex<ProducerInner>>,
+    volume_bits: Arc<AtomicU32>,
+    muted: Arc<AtomicBool>,
+    fast_forward: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for AudioProducer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("AudioProducer").finish()
+        f.debug_struct("AudioProducer")
+            .field("volume", &self.volume())
+            .field("muted", &self.is_muted())
+            .field("fast_forward", &self.is_fast_forward())
+            .finish()
     }
 }
 
@@ -321,10 +319,11 @@ impl AudioProducer {
                 prod,
                 resampler: Resampler::new(in_rate, out_rate),
                 work_buf: Vec::with_capacity(2048),
-                fast_forward: false,
-                muted: false,
-                volume: 1.0,
+                integral_err: 0.0,
             })),
+            volume_bits: Arc::new(AtomicU32::new(1.0f32.to_bits())),
+            muted: Arc::new(AtomicBool::new(false)),
+            fast_forward: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -335,79 +334,67 @@ impl AudioProducer {
         (Self::from_producer(prod), cons)
     }
 
-    /// Sets master volume level (0.0 to 1.0).
+    /// Sets master volume level (0.0 to 1.0) atomically without lock contention.
     pub fn set_volume(&self, volume: f32) {
-        if let Ok(mut inner) = self.inner.lock() {
-            inner.volume = volume.clamp(0.0, 1.0);
-        }
+        let clamped = volume.clamp(0.0, 1.0);
+        self.volume_bits.store(clamped.to_bits(), Ordering::Release);
     }
 
-    /// Returns the current master volume level (0.0 to 1.0).
+    /// Returns the current master volume level (0.0 to 1.0) lock-free.
     pub fn volume(&self) -> f32 {
-        if let Ok(inner) = self.inner.lock() {
-            inner.volume
-        } else {
-            1.0
-        }
+        f32::from_bits(self.volume_bits.load(Ordering::Acquire))
     }
 
     /// Sets whether fast-forward mode is active (drops samples during fast-forward).
     pub fn set_fast_forward(&self, enabled: bool) {
-        if let Ok(mut inner) = self.inner.lock() {
-            if inner.fast_forward != enabled {
-                inner.fast_forward = enabled;
-                if !enabled {
-                    inner.work_buf.clear();
-                }
+        let prev = self.fast_forward.swap(enabled, Ordering::AcqRel);
+        if prev != enabled {
+            if let Ok(mut inner) = self.inner.lock() {
+                inner.work_buf.clear();
+                inner.integral_err = 0.0;
             }
         }
     }
 
-    /// Returns whether fast-forward mode is currently active.
+    /// Returns whether fast-forward mode is currently active lock-free.
     pub fn is_fast_forward(&self) -> bool {
-        if let Ok(inner) = self.inner.lock() {
-            inner.fast_forward
-        } else {
-            false
-        }
+        self.fast_forward.load(Ordering::Acquire)
     }
 
-    /// Sets mute state on audio stream.
+    /// Sets mute state on audio stream atomically.
     pub fn set_muted(&self, muted: bool) {
-        if let Ok(mut inner) = self.inner.lock() {
-            inner.muted = muted;
-            if !muted {
+        let prev = self.muted.swap(muted, Ordering::AcqRel);
+        if prev != muted && !muted {
+            if let Ok(mut inner) = self.inner.lock() {
                 inner.work_buf.clear();
+                inner.integral_err = 0.0;
             }
         }
     }
 
-    /// Toggles mute state and returns the new muted status.
+    /// Toggles mute state and returns the new muted status lock-free.
     pub fn toggle_mute(&self) -> bool {
-        if let Ok(mut inner) = self.inner.lock() {
-            inner.muted = !inner.muted;
-            if !inner.muted {
+        let prev = self.muted.fetch_xor(true, Ordering::AcqRel);
+        let new_muted = !prev;
+        if !new_muted {
+            if let Ok(mut inner) = self.inner.lock() {
                 inner.work_buf.clear();
+                inner.integral_err = 0.0;
             }
-            inner.muted
-        } else {
-            false
         }
+        new_muted
     }
 
-    /// Returns whether audio output is currently muted.
+    /// Returns whether audio output is currently muted lock-free.
     pub fn is_muted(&self) -> bool {
-        if let Ok(inner) = self.inner.lock() {
-            inner.muted
-        } else {
-            false
-        }
+        self.muted.load(Ordering::Acquire)
     }
 
     /// Set the input sample rate from the active emulation core (e.g. 65536.0 Hz for GBA).
     pub fn set_input_sample_rate(&self, in_rate: f64) {
         if let Ok(mut inner) = self.inner.lock() {
             inner.resampler.set_input_rate(in_rate);
+            inner.integral_err = 0.0;
         }
     }
 
@@ -427,26 +414,32 @@ impl AudioProducer {
             return;
         }
 
-        if let Ok(mut inner) = self.inner.lock() {
-            if inner.muted || inner.fast_forward {
-                // Discard incoming audio frames when muted or fast-forwarding
-                return;
-            }
+        if self.is_muted() || self.is_fast_forward() {
+            // Discard incoming audio frames when muted or fast-forwarding to prevent desync
+            return;
+        }
 
+        let volume = self.volume();
+
+        if let Ok(mut inner) = self.inner.lock() {
             let capacity = inner.prod.capacity().get();
             let occupied = inner.prod.occupied_len();
 
-            // Continuous Proportional Dynamic Rate Control (targets 50% buffer fill)
+            // Watermarked Proportional-Integral (PI) Dynamic Rate Controller
             let fill_ratio = occupied as f64 / capacity as f64;
-            let diff = fill_ratio - 0.50;
-            let dynamic_adj = 1.0 + (diff * 0.015).clamp(-0.0075, 0.0075);
+            let target_fill = 0.50;
+            let error = fill_ratio - target_fill;
+
+            // Low watermark (< 20%): slow down consumption/drain slightly to avoid under-run
+            // High watermark (> 80%): accelerate drain to prevent overflow & latency buildup
+            inner.integral_err = (inner.integral_err + error * 0.001).clamp(-0.05, 0.05);
+            let dynamic_adj = 1.0 + (error * 0.02 + inner.integral_err * 0.01).clamp(-0.015, 0.015);
 
             inner.work_buf.clear();
             let ProducerInner {
                 ref mut prod,
                 ref mut resampler,
                 ref mut work_buf,
-                volume,
                 ..
             } = *inner;
 
@@ -466,25 +459,30 @@ impl AudioProducer {
             return;
         }
 
-        if let Ok(mut inner) = self.inner.lock() {
-            if inner.muted || inner.fast_forward {
-                // Discard incoming audio frames when muted or fast-forwarding
-                return;
-            }
+        if self.is_muted() || self.is_fast_forward() {
+            // Discard incoming audio frames when muted or fast-forwarding to prevent desync
+            return;
+        }
 
+        let volume = self.volume();
+
+        if let Ok(mut inner) = self.inner.lock() {
             let capacity = inner.prod.capacity().get();
             let occupied = inner.prod.occupied_len();
 
+            // Watermarked Proportional-Integral (PI) Dynamic Rate Controller
             let fill_ratio = occupied as f64 / capacity as f64;
-            let diff = fill_ratio - 0.50;
-            let dynamic_adj = 1.0 + (diff * 0.015).clamp(-0.0075, 0.0075);
+            let target_fill = 0.50;
+            let error = fill_ratio - target_fill;
+
+            inner.integral_err = (inner.integral_err + error * 0.001).clamp(-0.05, 0.05);
+            let dynamic_adj = 1.0 + (error * 0.02 + inner.integral_err * 0.01).clamp(-0.015, 0.015);
 
             inner.work_buf.clear();
             let ProducerInner {
                 ref mut prod,
                 ref mut resampler,
                 ref mut work_buf,
-                volume,
                 ..
             } = *inner;
 
@@ -515,7 +513,9 @@ impl AudioPlayer {
             .default_output_device()
             .ok_or("No default audio output device available on host system")?;
 
-        let device_name = device.name().unwrap_or_else(|_| "Default Audio Device".to_string());
+        let device_name = device
+            .name()
+            .unwrap_or_else(|_| "Default Audio Device".to_string());
         info!("Host Audio Device: {}", device_name);
 
         let default_config = device.default_output_config()?;
@@ -607,7 +607,10 @@ impl AudioPlayer {
         };
 
         stream.play()?;
-        info!("Host audio playback stream successfully started ({} Hz).", sample_rate);
+        info!(
+            "Host audio playback stream successfully started ({} Hz).",
+            sample_rate
+        );
 
         Ok(Self {
             stream: Some(stream),
@@ -719,7 +722,11 @@ mod tests {
         assert!(producer.is_muted());
         let before_len = cons.occupied_len();
         producer.push_f32_slice(&[0.8, 0.8]);
-        assert_eq!(cons.occupied_len(), before_len, "Muted audio must not push samples");
+        assert_eq!(
+            cons.occupied_len(),
+            before_len,
+            "Muted audio must not push samples"
+        );
 
         // Unmute: samples accepted again
         let muted_again = producer.toggle_mute();
@@ -743,19 +750,28 @@ mod tests {
         assert!(producer.is_fast_forward());
         let before_len = cons.occupied_len();
         producer.push_f32_slice(&[0.8, 0.8, -0.8, -0.8]);
-        assert_eq!(cons.occupied_len(), before_len, "Samples must be dropped in fast-forward");
+        assert_eq!(
+            cons.occupied_len(),
+            before_len,
+            "Samples must be dropped in fast-forward"
+        );
 
         // Disable fast-forward: incoming samples accepted again
         producer.set_fast_forward(false);
         assert!(!producer.is_fast_forward());
         producer.push_f32_slice(&[0.2, 0.2, -0.2, -0.2]);
-        assert!(cons.occupied_len() > before_len, "Samples must be accepted after fast-forward");
+        assert!(
+            cons.occupied_len() > before_len,
+            "Samples must be accepted after fast-forward"
+        );
     }
 
     #[test]
     fn test_resampler_ratio_scaling() {
         let mut resampler = Resampler::new(65536.0, 48000.0);
-        let input: Vec<i16> = (0..1000).map(|i| if i % 2 == 0 { 10000 } else { -10000 }).collect();
+        let input: Vec<i16> = (0..1000)
+            .map(|i| if i % 2 == 0 { 10000 } else { -10000 })
+            .collect();
         let mut output = Vec::new();
         resampler.resample_i16_slice(&input, &mut output, 1.0);
 

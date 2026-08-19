@@ -3,7 +3,7 @@
 use log::{debug, error, info, warn};
 use std::ffi::{c_char, c_uint, c_void, CStr};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 // ============================================================================
 // Libretro Constants
@@ -176,12 +176,24 @@ pub struct BridgeState {
 }
 
 static BRIDGE_STATE: Mutex<Option<BridgeState>> = Mutex::new(None);
+static LIBRETRO_LOCK: parking_lot::ReentrantMutex<()> = parking_lot::ReentrantMutex::new(());
+
+/// Acquire process-wide Libretro execution lock
+pub fn lock() -> parking_lot::ReentrantMutexGuard<'static, ()> {
+    LIBRETRO_LOCK.lock()
+}
 
 // ============================================================================
 // Pixel Format Conversion Routines
 // ============================================================================
 
-pub fn convert_rgb565_to_rgba(src: &[u8], width: usize, height: usize, pitch: usize, dst: &mut [u8]) {
+pub fn convert_rgb565_to_rgba(
+    src: &[u8],
+    width: usize,
+    height: usize,
+    pitch: usize,
+    dst: &mut [u8],
+) {
     for y in 0..height {
         let row_offset = y * pitch;
         let dst_row_offset = y * width * 4;
@@ -211,7 +223,13 @@ pub fn convert_rgb565_to_rgba(src: &[u8], width: usize, height: usize, pitch: us
     }
 }
 
-pub fn convert_xrgb8888_to_rgba(src: &[u8], width: usize, height: usize, pitch: usize, dst: &mut [u8]) {
+pub fn convert_xrgb8888_to_rgba(
+    src: &[u8],
+    width: usize,
+    height: usize,
+    pitch: usize,
+    dst: &mut [u8],
+) {
     for y in 0..height {
         let row_offset = y * pitch;
         let dst_row_offset = y * width * 4;
@@ -236,7 +254,13 @@ pub fn convert_xrgb8888_to_rgba(src: &[u8], width: usize, height: usize, pitch: 
     }
 }
 
-pub fn convert_0rgb1555_to_rgba(src: &[u8], width: usize, height: usize, pitch: usize, dst: &mut [u8]) {
+pub fn convert_0rgb1555_to_rgba(
+    src: &[u8],
+    width: usize,
+    height: usize,
+    pitch: usize,
+    dst: &mut [u8],
+) {
     for y in 0..height {
         let row_offset = y * pitch;
         let dst_row_offset = y * width * 4;
@@ -289,7 +313,10 @@ unsafe extern "C" fn retro_environment_cb(cmd: c_uint, data: *mut c_void) -> boo
                 }
                 true
             } else {
-                warn!("Libretro Environment: Unsupported pixel format requested: {}", format);
+                warn!(
+                    "Libretro Environment: Unsupported pixel format requested: {}",
+                    format
+                );
                 false
             }
         }
@@ -368,20 +395,37 @@ unsafe extern "C" fn retro_video_refresh_cb(
 ) {
     // Under Libretro specification, data can be NULL or RETRO_HW_FRAME_BUFFER_VALID ((void*)-1)
     // for hardware contexts or frame dupes. Do not dereference if null or sentinel.
-    if data.is_null() || data as usize == usize::MAX || data as usize == (u32::MAX as usize) || width == 0 || height == 0 {
+    if data.is_null()
+        || data as usize == usize::MAX
+        || data as usize == (u32::MAX as usize)
+        || width == 0
+        || height == 0
+        || pitch == 0
+    {
         return;
     }
+
+    let src_slice_len = match pitch.checked_mul(height as usize) {
+        Some(len) if len > 0 => len,
+        _ => return,
+    };
 
     if let Ok(mut lock) = BRIDGE_STATE.lock() {
         if let Some(ref mut state) = *lock {
             state.width = width;
             state.height = height;
-            let required_size = (width as usize) * (height as usize) * 4;
+            let required_size = match (width as usize)
+                .checked_mul(height as usize)
+                .and_then(|wh| wh.checked_mul(4))
+            {
+                Some(sz) => sz,
+                None => return,
+            };
+
             if state.framebuffer.len() != required_size {
                 state.framebuffer.resize(required_size, 0);
             }
 
-            let src_slice_len = pitch * (height as usize);
             let src_slice = std::slice::from_raw_parts(data as *const u8, src_slice_len);
 
             match state.pixel_format {
@@ -434,12 +478,23 @@ unsafe extern "C" fn retro_audio_sample_cb(left: i16, right: i16) {
 }
 
 unsafe extern "C" fn retro_audio_sample_batch_cb(data: *const i16, frames: usize) -> usize {
-    if data.is_null() || frames == 0 {
+    if data.is_null()
+        || frames == 0
+        || data as usize == usize::MAX
+        || data as usize == (u32::MAX as usize)
+        || !(data as usize).is_multiple_of(std::mem::align_of::<i16>())
+    {
         return 0;
     }
+
+    let sample_count = match frames.checked_mul(2) {
+        Some(cnt) => cnt,
+        None => return 0,
+    };
+
     if let Ok(mut lock) = BRIDGE_STATE.lock() {
         if let Some(ref mut state) = *lock {
-            let slice = std::slice::from_raw_parts(data, frames * 2);
+            let slice = std::slice::from_raw_parts(data, sample_count);
             if let Some(ref prod) = state.audio_producer {
                 prod.push_i16_slice(slice);
             } else {
@@ -478,8 +533,11 @@ unsafe extern "C" fn retro_input_state_cb(
 // LibretroCore Implementation
 // ============================================================================
 
+static LOADED_LIBS: Mutex<Option<std::collections::HashMap<PathBuf, Arc<libloading::Library>>>> =
+    Mutex::new(None);
+
 pub struct LibretroCore {
-    _lib: libloading::Library,
+    _lib: Arc<libloading::Library>,
     retro_init: RetroInitFn,
     retro_deinit: RetroDeinitFn,
     retro_api_version: RetroApiVersionFn,
@@ -513,10 +571,24 @@ pub struct LibretroCore {
 impl LibretroCore {
     /// Load a dynamic Libretro core library (.dylib, .so, .dll) from disk and initialize it.
     pub fn load<P: AsRef<Path>>(core_path: P) -> Result<Self, Box<dyn std::error::Error>> {
+        let _lock = LIBRETRO_LOCK.lock();
         let path_ref = core_path.as_ref();
         info!("Loading Libretro core library: {}", path_ref.display());
 
-        let lib = unsafe { libloading::Library::new(path_ref)? };
+        let canonical_path = path_ref
+            .canonicalize()
+            .unwrap_or_else(|_| path_ref.to_path_buf());
+        let lib = {
+            let mut map_lock = LOADED_LIBS.lock().unwrap_or_else(|e| e.into_inner());
+            let map = map_lock.get_or_insert_with(std::collections::HashMap::new);
+            if let Some(existing) = map.get(&canonical_path) {
+                existing.clone()
+            } else {
+                let loaded = Arc::new(unsafe { libloading::Library::new(&canonical_path)? });
+                map.insert(canonical_path, loaded.clone());
+                loaded
+            }
+        };
 
         let retro_init: RetroInitFn = unsafe { *lib.get(b"retro_init")? };
         let retro_deinit: RetroDeinitFn = unsafe { *lib.get(b"retro_deinit")? };
@@ -547,10 +619,8 @@ impl LibretroCore {
             unsafe { *lib.get(b"retro_get_memory_size")? };
         let retro_serialize_size: RetroSerializeSizeFn =
             unsafe { *lib.get(b"retro_serialize_size")? };
-        let retro_serialize: RetroSerializeFn =
-            unsafe { *lib.get(b"retro_serialize")? };
-        let retro_unserialize: RetroUnserializeFn =
-            unsafe { *lib.get(b"retro_unserialize")? };
+        let retro_serialize: RetroSerializeFn = unsafe { *lib.get(b"retro_serialize")? };
+        let retro_unserialize: RetroUnserializeFn = unsafe { *lib.get(b"retro_unserialize")? };
 
         let api_ver = unsafe { (retro_api_version)() };
         info!("Libretro Core API Version: {}", api_ver);
@@ -605,13 +675,21 @@ impl LibretroCore {
         }
 
         let library_name = if !sys_info.library_name.is_null() {
-            unsafe { CStr::from_ptr(sys_info.library_name).to_string_lossy().into_owned() }
+            unsafe {
+                CStr::from_ptr(sys_info.library_name)
+                    .to_string_lossy()
+                    .into_owned()
+            }
         } else {
             "Unknown Libretro Core".to_string()
         };
 
         let library_version = if !sys_info.library_version.is_null() {
-            unsafe { CStr::from_ptr(sys_info.library_version).to_string_lossy().into_owned() }
+            unsafe {
+                CStr::from_ptr(sys_info.library_version)
+                    .to_string_lossy()
+                    .into_owned()
+            }
         } else {
             "0.0.0".to_string()
         };
@@ -656,8 +734,11 @@ impl LibretroCore {
 
     /// Load a ROM byte buffer into the Libretro core.
     pub fn load_rom(&mut self, rom_bytes: &[u8]) -> bool {
+        let _lock = LIBRETRO_LOCK.lock();
         if self.is_game_loaded {
-            unsafe { (self.retro_unload_game)(); }
+            unsafe {
+                (self.retro_unload_game)();
+            }
             self.is_game_loaded = false;
         }
 
@@ -722,6 +803,8 @@ impl LibretroCore {
             return;
         }
 
+        let _lock = LIBRETRO_LOCK.lock();
+
         unsafe {
             (self.retro_run)();
         }
@@ -765,6 +848,7 @@ impl LibretroCore {
 
     /// Reset the core simulation.
     pub fn reset(&mut self) {
+        let _lock = LIBRETRO_LOCK.lock();
         if self.is_game_loaded {
             unsafe {
                 (self.retro_reset)();
@@ -797,9 +881,14 @@ impl LibretroCore {
         if !self.is_game_loaded {
             return None;
         }
+        let _lock = LIBRETRO_LOCK.lock();
         let size = unsafe { (self.retro_get_memory_size)(id) };
         let ptr = unsafe { (self.retro_get_memory_data)(id) };
-        if size > 0 && !ptr.is_null() && ptr as usize != usize::MAX && ptr as usize != (u32::MAX as usize) {
+        if size > 0
+            && !ptr.is_null()
+            && ptr as usize != usize::MAX
+            && ptr as usize != (u32::MAX as usize)
+        {
             Some(unsafe { std::slice::from_raw_parts(ptr as *const u8, size) })
         } else {
             None
@@ -816,14 +905,22 @@ impl LibretroCore {
         if !self.is_game_loaded || data.is_empty() {
             return false;
         }
+        let _lock = LIBRETRO_LOCK.lock();
         let size = unsafe { (self.retro_get_memory_size)(RETRO_MEMORY_SAVE_RAM) };
         let ptr = unsafe { (self.retro_get_memory_data)(RETRO_MEMORY_SAVE_RAM) };
-        if size > 0 && !ptr.is_null() && ptr as usize != usize::MAX && ptr as usize != (u32::MAX as usize) {
+        if size > 0
+            && !ptr.is_null()
+            && ptr as usize != usize::MAX
+            && ptr as usize != (u32::MAX as usize)
+        {
             let copy_len = size.min(data.len());
             unsafe {
                 std::ptr::copy_nonoverlapping(data.as_ptr(), ptr as *mut u8, copy_len);
             }
-            info!("Loaded {} bytes into Libretro Save RAM (total size: {})", copy_len, size);
+            info!(
+                "Loaded {} bytes into Libretro Save RAM (total size: {})",
+                copy_len, size
+            );
             true
         } else {
             false
@@ -836,6 +933,7 @@ impl LibretroCore {
             return None;
         }
 
+        let _lock = LIBRETRO_LOCK.lock();
         let size = unsafe { (self.retro_serialize_size)() };
         if size == 0 {
             warn!("Libretro core reported 0 serialization size");
@@ -859,12 +957,19 @@ impl LibretroCore {
             return false;
         }
 
+        let _lock = LIBRETRO_LOCK.lock();
         let ok = unsafe { (self.retro_unserialize)(data.as_ptr() as *const c_void, data.len()) };
         if ok {
-            info!("Libretro core successfully restored state from {} bytes", data.len());
+            info!(
+                "Libretro core successfully restored state from {} bytes",
+                data.len()
+            );
             true
         } else {
-            warn!("Libretro core failed to restore state ({} bytes)", data.len());
+            warn!(
+                "Libretro core failed to restore state ({} bytes)",
+                data.len()
+            );
             false
         }
     }
@@ -881,6 +986,7 @@ pub fn set_global_audio_producer(producer: Option<crate::audio::AudioProducer>) 
 
 impl Drop for LibretroCore {
     fn drop(&mut self) {
+        let _lock = LIBRETRO_LOCK.lock();
         info!("Unloading Libretro Core: {}", self.library_name);
         if self.is_game_loaded {
             unsafe {
@@ -978,8 +1084,8 @@ mod tests {
         let mut rgba = [0u8; 4];
         convert_rgb565_to_rgba(&red_565, 1, 1, 2, &mut rgba);
         assert_eq!(rgba[0], 255); // R
-        assert_eq!(rgba[1], 0);   // G
-        assert_eq!(rgba[2], 0);   // B
+        assert_eq!(rgba[1], 0); // G
+        assert_eq!(rgba[2], 0); // B
         assert_eq!(rgba[3], 255); // A
 
         // Green pixel in RGB565: 0x07E0 (00000 111111 00000)
@@ -1007,7 +1113,7 @@ mod tests {
         convert_xrgb8888_to_rgba(&yellow_xrgb, 1, 1, 4, &mut rgba);
         assert_eq!(rgba[0], 255); // R
         assert_eq!(rgba[1], 255); // G
-        assert_eq!(rgba[2], 0);   // B
+        assert_eq!(rgba[2], 0); // B
         assert_eq!(rgba[3], 255); // A
     }
 
@@ -1025,13 +1131,17 @@ mod tests {
 
     #[test]
     fn test_struct_sizes() {
-        assert_eq!(std::mem::size_of::<RetroGameInfo>(), 4 * std::mem::size_of::<usize>());
+        assert_eq!(
+            std::mem::size_of::<RetroGameInfo>(),
+            4 * std::mem::size_of::<usize>()
+        );
         assert!(std::mem::size_of::<RetroSystemInfo>() > 0);
         assert!(std::mem::size_of::<RetroSystemAvInfo>() > 0);
     }
 
     #[test]
     fn test_mgba_libretro_core_loading_and_execution() {
+        let _test_lock = lock();
         let core_path = PathBuf::from("cores/mgba_libretro.dylib");
         if !core_path.exists() {
             log::info!("No mgba_libretro.dylib in ./cores/, skipping test");
@@ -1059,7 +1169,13 @@ mod tests {
                     let non_zero = fb.iter().filter(|&&b| b != 0 && b != 255).count();
                     log::debug!(
                         "mGBA Frame {}: fb_len={}, non_zero_bytes={}, sample=[{}, {}, {}, {}]",
-                        frame_idx, fb.len(), non_zero, fb[0], fb[1], fb[2], fb[3]
+                        frame_idx,
+                        fb.len(),
+                        non_zero,
+                        fb[0],
+                        fb[1],
+                        fb[2],
+                        fb[3]
                     );
                 }
             }
@@ -1073,7 +1189,10 @@ mod tests {
             let save_ram = core.get_save_data();
             assert!(save_ram.is_some(), "mGBA should expose save RAM memory");
             let ram_len = save_ram.unwrap().len();
-            assert!(ram_len >= 0x2000, "GBA save RAM should be at least 8KB (Flash/SRAM)");
+            assert!(
+                ram_len >= 0x2000,
+                "GBA save RAM should be at least 8KB (Flash/SRAM)"
+            );
 
             let test_save_bytes = vec![0x77u8; 1024];
             let loaded_save = core.load_save_data(&test_save_bytes);
@@ -1082,13 +1201,21 @@ mod tests {
 
             // Verify Libretro Real-Time State Serialization
             let state_snapshot = core.save_state();
-            assert!(state_snapshot.is_some(), "mGBA should support state serialization");
+            assert!(
+                state_snapshot.is_some(),
+                "mGBA should support state serialization"
+            );
             let state_bytes = state_snapshot.unwrap();
-            assert!(!state_bytes.is_empty(), "State snapshot should have non-zero size");
+            assert!(
+                !state_bytes.is_empty(),
+                "State snapshot should have non-zero size"
+            );
 
             let state_restored = core.load_state(&state_bytes);
-            assert!(state_restored, "mGBA should successfully restore state snapshot");
+            assert!(
+                state_restored,
+                "mGBA should successfully restore state snapshot"
+            );
         }
     }
 }
-

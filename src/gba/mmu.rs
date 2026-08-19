@@ -4,11 +4,11 @@ use super::dma::GbaDma;
 use super::keypad::GbaKeypad;
 use super::ppu::GbaPpu;
 
-pub const BIOS_SIZE: usize = 16 * 1024;   // 16 KB (0x00000000 - 0x00003FFF)
+pub const BIOS_SIZE: usize = 16 * 1024; // 16 KB (0x00000000 - 0x00003FFF)
 pub const EWRAM_SIZE: usize = 256 * 1024; // 256 KB (0x02000000 - 0x0203FFFF)
-pub const IWRAM_SIZE: usize = 32 * 1024;  // 32 KB (0x03000000 - 0x03007FFF)
-pub const IO_SIZE: usize = 1024;          // 1 KB (0x04000000 - 0x040003FE)
-pub const SRAM_SIZE: usize = 64 * 1024;   // 64 KB (0x0E000000 - 0x0E00FFFF)
+pub const IWRAM_SIZE: usize = 32 * 1024; // 32 KB (0x03000000 - 0x03007FFF)
+pub const IO_SIZE: usize = 1024; // 1 KB (0x04000000 - 0x040003FE)
+pub const SRAM_SIZE: usize = 64 * 1024; // 64 KB (0x0E000000 - 0x0E00FFFF)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlashState {
@@ -227,7 +227,11 @@ impl GbaMemoryBus {
 
         let raw_count = self.dma.channels[ch].cnt_l as usize;
         let count = if raw_count == 0 {
-            if ch == 3 { 65536 } else { 16384 }
+            if ch == 3 {
+                65536
+            } else {
+                16384
+            }
         } else {
             raw_count
         };
@@ -248,14 +252,14 @@ impl GbaMemoryBus {
             match src_cnt {
                 0 => src_addr = src_addr.wrapping_add(unit_bytes), // Increment
                 1 => src_addr = src_addr.wrapping_sub(unit_bytes), // Decrement
-                2 => {}                                           // Fixed
+                2 => {}                                            // Fixed
                 _ => src_addr = src_addr.wrapping_add(unit_bytes),
             }
 
             match dst_cnt {
                 0 | 3 => dst_addr = dst_addr.wrapping_add(unit_bytes), // Increment / Increment-Reload
                 1 => dst_addr = dst_addr.wrapping_sub(unit_bytes),     // Decrement
-                2 => {}                                               // Fixed
+                2 => {}                                                // Fixed
                 _ => {}
             }
         }
@@ -341,9 +345,7 @@ impl GbaMemoryBus {
                     0
                 }
             }
-            0x0E | 0x0F => {
-                self.flash.read_u8(addr)
-            }
+            0x0E | 0x0F => self.flash.read_u8(addr),
             _ => 0,
         }
     }
@@ -662,8 +664,8 @@ mod tests {
         // Setup DMA3: Source 0x02000000, Dest 0x03000000 (IWRAM), Count 2 words
         bus.write_u32(0x040000D4, 0x02000000); // SAD
         bus.write_u32(0x040000D8, 0x03000000); // DAD
-        bus.write_u16(0x040000DC, 2);          // CNT_L = 2
-        // CNT_H: Enable (bit 15), 32-bit (bit 10), Immediate (bits 12-13 = 0) => 0x8400
+        bus.write_u16(0x040000DC, 2); // CNT_L = 2
+                                      // CNT_H: Enable (bit 15), 32-bit (bit 10), Immediate (bits 12-13 = 0) => 0x8400
         bus.write_u16(0x040000DE, 0x8400);
 
         // Verify DMA transferred the 2 words into IWRAM

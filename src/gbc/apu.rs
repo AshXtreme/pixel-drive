@@ -57,7 +57,9 @@ impl Channel1 {
     }
 
     pub fn read_nr10(&self) -> u8 {
-        0x80 | (self.sweep_period << 4) | (if self.sweep_negate { 0x08 } else { 0 }) | self.sweep_shift
+        0x80 | (self.sweep_period << 4)
+            | (if self.sweep_negate { 0x08 } else { 0 })
+            | self.sweep_shift
     }
 
     pub fn write_nr11(&mut self, val: u8) {
@@ -109,11 +111,19 @@ impl Channel1 {
         }
         self.timer = (2048 - self.frequency as u32) * 4;
         self.envelope_volume = self.initial_volume;
-        self.envelope_timer = if self.envelope_period > 0 { self.envelope_period } else { 8 };
+        self.envelope_timer = if self.envelope_period > 0 {
+            self.envelope_period
+        } else {
+            8
+        };
 
         // Sweep initialization
         self.sweep_shadow_freq = self.frequency;
-        self.sweep_timer = if self.sweep_period > 0 { self.sweep_period } else { 8 };
+        self.sweep_timer = if self.sweep_period > 0 {
+            self.sweep_period
+        } else {
+            8
+        };
         self.sweep_enabled = self.sweep_period > 0 || self.sweep_shift > 0;
 
         if self.sweep_shift > 0 && self.calculate_sweep_freq() > 2047 {
@@ -135,7 +145,11 @@ impl Channel1 {
             self.sweep_timer -= 1;
         }
         if self.sweep_timer == 0 {
-            self.sweep_timer = if self.sweep_period > 0 { self.sweep_period } else { 8 };
+            self.sweep_timer = if self.sweep_period > 0 {
+                self.sweep_period
+            } else {
+                8
+            };
             if self.sweep_enabled && self.sweep_period > 0 {
                 let new_freq = self.calculate_sweep_freq();
                 if new_freq <= 2047 && self.sweep_shift > 0 {
@@ -191,7 +205,11 @@ impl Channel1 {
             return 0.0;
         }
         let duty_val = DUTY_CYCLES[self.duty as usize][self.duty_step as usize];
-        let digital_val = if duty_val == 1 { self.envelope_volume } else { 0 };
+        let digital_val = if duty_val == 1 {
+            self.envelope_volume
+        } else {
+            0
+        };
         (digital_val as f32 - 7.5) / 7.5
     }
 }
@@ -277,7 +295,11 @@ impl Channel2 {
         }
         self.timer = (2048 - self.frequency as u32) * 4;
         self.envelope_volume = self.initial_volume;
-        self.envelope_timer = if self.envelope_period > 0 { self.envelope_period } else { 8 };
+        self.envelope_timer = if self.envelope_period > 0 {
+            self.envelope_period
+        } else {
+            8
+        };
     }
 
     pub fn clock_length(&mut self) {
@@ -320,7 +342,11 @@ impl Channel2 {
             return 0.0;
         }
         let duty_val = DUTY_CYCLES[self.duty as usize][self.duty_step as usize];
-        let digital_val = if duty_val == 1 { self.envelope_volume } else { 0 };
+        let digital_val = if duty_val == 1 {
+            self.envelope_volume
+        } else {
+            0
+        };
         (digital_val as f32 - 7.5) / 7.5
     }
 }
@@ -441,10 +467,10 @@ impl Channel3 {
         };
 
         let shifted = match self.volume_code {
-            1 => raw_4bit,       // 100%
-            2 => raw_4bit >> 1,  // 50%
-            3 => raw_4bit >> 2,  // 25%
-            _ => 0,              // Mute
+            1 => raw_4bit,      // 100%
+            2 => raw_4bit >> 1, // 50%
+            3 => raw_4bit >> 2, // 25%
+            _ => 0,             // Mute
         };
 
         (shifted as f32 - 7.5) / 7.5
@@ -575,7 +601,11 @@ impl Channel4 {
         self.timer = self.calc_period();
         self.lfsr = 0x7FFF;
         self.envelope_volume = self.initial_volume;
-        self.envelope_timer = if self.envelope_period > 0 { self.envelope_period } else { 8 };
+        self.envelope_timer = if self.envelope_period > 0 {
+            self.envelope_period
+        } else {
+            8
+        };
     }
 
     pub fn clock_length(&mut self) {
@@ -622,7 +652,11 @@ impl Channel4 {
         if !self.enabled || !self.dac_enabled {
             return 0.0;
         }
-        let digital_val = if (self.lfsr & 1) == 0 { self.envelope_volume } else { 0 };
+        let digital_val = if (self.lfsr & 1) == 0 {
+            self.envelope_volume
+        } else {
+            0
+        };
         (digital_val as f32 - 7.5) / 7.5
     }
 }
@@ -895,17 +929,33 @@ impl Apu {
         let mut right = 0.0_f32;
 
         // Panning (NR51)
-        if (self.nr51 & 0x10) != 0 { left += s1; }
-        if (self.nr51 & 0x01) != 0 { right += s1; }
+        if (self.nr51 & 0x10) != 0 {
+            left += s1;
+        }
+        if (self.nr51 & 0x01) != 0 {
+            right += s1;
+        }
 
-        if (self.nr51 & 0x20) != 0 { left += s2; }
-        if (self.nr51 & 0x02) != 0 { right += s2; }
+        if (self.nr51 & 0x20) != 0 {
+            left += s2;
+        }
+        if (self.nr51 & 0x02) != 0 {
+            right += s2;
+        }
 
-        if (self.nr51 & 0x40) != 0 { left += s3; }
-        if (self.nr51 & 0x04) != 0 { right += s3; }
+        if (self.nr51 & 0x40) != 0 {
+            left += s3;
+        }
+        if (self.nr51 & 0x04) != 0 {
+            right += s3;
+        }
 
-        if (self.nr51 & 0x80) != 0 { left += s4; }
-        if (self.nr51 & 0x08) != 0 { right += s4; }
+        if (self.nr51 & 0x80) != 0 {
+            left += s4;
+        }
+        if (self.nr51 & 0x08) != 0 {
+            right += s4;
+        }
 
         // Master Volume (NR50: bits 4..6 Left, bits 0..2 Right)
         let vol_l = (((self.nr50 >> 4) & 0x07) + 1) as f32 / 8.0;

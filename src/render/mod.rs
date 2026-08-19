@@ -12,11 +12,13 @@ pub struct ShaderPipeline {
     sampler_linear: wgpu::Sampler,
     uniform_buffer: wgpu::Buffer,
     bind_group: Option<wgpu::BindGroup>,
+    cached_uniforms: Option<ShaderUniforms>,
     current_filter: FilterMode,
     current_tex_size: (u32, u32),
 }
 
 impl ShaderPipeline {
+    /// Constructs a new post-processing shader pipeline.
     pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("PixelDrive_PostProcess_WGSL"),
@@ -136,6 +138,7 @@ impl ShaderPipeline {
             sampler_linear,
             uniform_buffer,
             bind_group: None,
+            cached_uniforms: None,
             current_filter: FilterMode::Nearest,
             current_tex_size: (0, 0),
         }
@@ -154,36 +157,40 @@ impl ShaderPipeline {
         out_width: u32,
         out_height: u32,
     ) {
-        // Recreate bind group if texture or dimension changed
+        // Zero-allocation bind group caching: only recreate bind group if texture dimension changed
         if self.bind_group.is_none() || self.current_tex_size != (tex_width, tex_height) {
-            let texture_view = context.texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let bind_group = context.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("PostProcess_BindGroup"),
-                layout: &self.bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&texture_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler_nearest),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: self.uniform_buffer.as_entire_binding(),
-                    },
-                ],
-            });
+            let texture_view = context
+                .texture
+                .create_view(&wgpu::TextureViewDescriptor::default());
+            let bind_group = context
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("PostProcess_BindGroup"),
+                    layout: &self.bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&texture_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.sampler_nearest),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: self.uniform_buffer.as_entire_binding(),
+                        },
+                    ],
+                });
             self.bind_group = Some(bind_group);
             self.current_tex_size = (tex_width, tex_height);
         }
 
-        // Update uniforms
+        // Change detection: only write uniforms if values have actually mutated
         let uniforms = ShaderUniforms {
             texture_size: [tex_width as f32, tex_height as f32],
             output_size: [out_width as f32, out_height as f32],
@@ -191,8 +198,14 @@ impl ShaderPipeline {
             intensity: 1.0,
             _pad: [0.0, 0.0],
         };
-        context.queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
-        self.current_filter = filter_mode;
+
+        if self.cached_uniforms != Some(uniforms) {
+            context
+                .queue
+                .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+            self.cached_uniforms = Some(uniforms);
+            self.current_filter = filter_mode;
+        }
 
         // Perform post-processing pass
         if let Some(ref bind_group) = self.bind_group {
@@ -213,7 +226,7 @@ impl ShaderPipeline {
 
             rpass.set_pipeline(&self.render_pipeline);
             rpass.set_bind_group(0, bind_group, &[]);
-            rpass.draw(0..3, 0..1); // Full-screen triangle!
+            rpass.draw(0..3, 0..1); // Full-screen triangle
         }
     }
 }

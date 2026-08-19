@@ -1,40 +1,53 @@
-/// WGSL Post-Processing Shader definitions and filter modes for PixelDrive.
+//! WGSL Post-Processing Shader definitions and filter modes for PixelDrive.
 
+/// Filter modes supported by the post-processing shader pipeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FilterMode {
+    /// Crisp nearest-neighbor integer scaling (authentic pixel art)
     #[default]
     Nearest = 0,
-    LcdGrid = 1,
-    ColorCorrection = 2,
-    LcdColor = 3,
+    /// Smooth bilinear interpolation filtering
+    Bilinear = 1,
+    /// Authentic handheld LCD subpixel grid lines & phosphors
+    LcdGrid = 2,
+    /// Gamma-compensated GBA-to-sRGB color correction matrix
+    ColorCorrection = 3,
+    /// Combined LCD Screen Grid + Color Correction
+    LcdColor = 4,
 }
 
 impl FilterMode {
+    /// Returns the human-readable display name for the filter mode.
     pub fn name(&self) -> &'static str {
         match self {
             FilterMode::Nearest => "Nearest (Sharp)",
+            FilterMode::Bilinear => "Bilinear (Smooth)",
             FilterMode::LcdGrid => "LCD Screen Grid",
             FilterMode::ColorCorrection => "Color Corrected GBA",
             FilterMode::LcdColor => "LCD + Color Corrected",
         }
     }
 
+    /// Cycles to the next available filter mode.
     pub fn next(&self) -> Self {
         match self {
-            FilterMode::Nearest => FilterMode::LcdGrid,
+            FilterMode::Nearest => FilterMode::Bilinear,
+            FilterMode::Bilinear => FilterMode::LcdGrid,
             FilterMode::LcdGrid => FilterMode::ColorCorrection,
             FilterMode::ColorCorrection => FilterMode::LcdColor,
             FilterMode::LcdColor => FilterMode::Nearest,
         }
     }
 
+    /// Returns the corresponding shader uniform integer value.
     pub fn as_u32(&self) -> u32 {
         *self as u32
     }
 }
 
+/// Uniform structure passed to WGSL post-processing shaders.
 #[repr(C)]
-#[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ShaderUniforms {
     pub texture_size: [f32; 2],
     pub output_size: [f32; 2],
@@ -55,7 +68,7 @@ impl Default for ShaderUniforms {
     }
 }
 
-/// WGSL shader supporting crisp Nearest sampling, authentic LCD subpixel grid lines, and GBA Color Correction.
+/// WGSL shader supporting crisp Nearest sampling, Bilinear smoothing, LCD subpixel phosphors, and GBA Color Correction.
 pub const SHADER_SOURCE: &str = r#"
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -130,17 +143,24 @@ fn apply_color_correction(color: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Nearest-neighbor texture sample
-    var raw_sample = textureSample(t_diffuse, s_diffuse_nearest, in.uv);
+    var raw_sample: vec4<f32>;
+    if (uniforms.filter_type == 1u) {
+        // Bilinear smooth sampling
+        raw_sample = textureSample(t_diffuse, s_diffuse_linear, in.uv);
+    } else {
+        // Nearest-neighbor texture sample
+        raw_sample = textureSample(t_diffuse, s_diffuse_nearest, in.uv);
+    }
+    
     var rgb = raw_sample.rgb;
 
-    if (uniforms.filter_type == 1u) {
+    if (uniforms.filter_type == 2u) {
         // LCD Screen Grid
         rgb = apply_lcd_grid(rgb, in.uv, uniforms.texture_size);
-    } else if (uniforms.filter_type == 2u) {
+    } else if (uniforms.filter_type == 3u) {
         // Color Correction
         rgb = apply_color_correction(rgb);
-    } else if (uniforms.filter_type == 3u) {
+    } else if (uniforms.filter_type == 4u) {
         // LCD Grid + Color Correction
         rgb = apply_color_correction(rgb);
         rgb = apply_lcd_grid(rgb, in.uv, uniforms.texture_size);
@@ -156,7 +176,8 @@ mod tests {
 
     #[test]
     fn test_filter_mode_cycling() {
-        assert_eq!(FilterMode::Nearest.next(), FilterMode::LcdGrid);
+        assert_eq!(FilterMode::Nearest.next(), FilterMode::Bilinear);
+        assert_eq!(FilterMode::Bilinear.next(), FilterMode::LcdGrid);
         assert_eq!(FilterMode::LcdGrid.next(), FilterMode::ColorCorrection);
         assert_eq!(FilterMode::ColorCorrection.next(), FilterMode::LcdColor);
         assert_eq!(FilterMode::LcdColor.next(), FilterMode::Nearest);
@@ -165,14 +186,16 @@ mod tests {
     #[test]
     fn test_filter_mode_as_u32() {
         assert_eq!(FilterMode::Nearest.as_u32(), 0);
-        assert_eq!(FilterMode::LcdGrid.as_u32(), 1);
-        assert_eq!(FilterMode::ColorCorrection.as_u32(), 2);
-        assert_eq!(FilterMode::LcdColor.as_u32(), 3);
+        assert_eq!(FilterMode::Bilinear.as_u32(), 1);
+        assert_eq!(FilterMode::LcdGrid.as_u32(), 2);
+        assert_eq!(FilterMode::ColorCorrection.as_u32(), 3);
+        assert_eq!(FilterMode::LcdColor.as_u32(), 4);
     }
 
     #[test]
     fn test_filter_mode_names() {
         assert_eq!(FilterMode::Nearest.name(), "Nearest (Sharp)");
+        assert_eq!(FilterMode::Bilinear.name(), "Bilinear (Smooth)");
         assert_eq!(FilterMode::LcdGrid.name(), "LCD Screen Grid");
         assert_eq!(FilterMode::ColorCorrection.name(), "Color Corrected GBA");
         assert_eq!(FilterMode::LcdColor.name(), "LCD + Color Corrected");
@@ -194,6 +217,6 @@ mod tests {
         assert!(SHADER_SOURCE.contains("fn fs_main"));
         assert!(SHADER_SOURCE.contains("apply_lcd_grid"));
         assert!(SHADER_SOURCE.contains("apply_color_correction"));
+        assert!(SHADER_SOURCE.contains("s_diffuse_linear"));
     }
 }
-

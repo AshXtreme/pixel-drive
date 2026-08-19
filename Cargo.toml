@@ -22,6 +22,7 @@ egui-winit = { version = "0.27", default-features = false, features = ["links"] 
 rfd = "0.14"
 bytemuck = { version = "1.16", features = ["derive"] }
 thiserror = "1.0"
+parking_lot = "0.12"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"

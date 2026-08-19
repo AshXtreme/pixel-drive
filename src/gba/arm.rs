@@ -6,22 +6,22 @@ use super::mmu::GbaMemoryBus;
 /// Check ARM Condition Field [31:28] against CPSR condition flags
 pub fn check_condition(cond: u32, regs: &Registers) -> bool {
     match cond {
-        0x0 => regs.z_flag(),                        // EQ (Equal)
-        0x1 => !regs.z_flag(),                       // NE (Not Equal)
-        0x2 => regs.c_flag(),                        // CS / HS (Carry Set / Unsigned Higher or Same)
-        0x3 => !regs.c_flag(),                       // CC / LO (Carry Clear / Unsigned Lower)
-        0x4 => regs.n_flag(),                        // MI (Minus / Negative)
-        0x5 => !regs.n_flag(),                       // PL (Plus / Positive)
-        0x6 => regs.v_flag(),                        // VS (Overflow Set)
-        0x7 => !regs.v_flag(),                       // VC (Overflow Clear)
-        0x8 => regs.c_flag() && !regs.z_flag(),      // HI (Unsigned Higher)
-        0x9 => !regs.c_flag() || regs.z_flag(),      // LS (Unsigned Lower or Same)
-        0xA => regs.n_flag() == regs.v_flag(),       // GE (Signed Greater or Equal)
-        0xB => regs.n_flag() != regs.v_flag(),       // LT (Signed Less Than)
+        0x0 => regs.z_flag(),                                      // EQ (Equal)
+        0x1 => !regs.z_flag(),                                     // NE (Not Equal)
+        0x2 => regs.c_flag(),  // CS / HS (Carry Set / Unsigned Higher or Same)
+        0x3 => !regs.c_flag(), // CC / LO (Carry Clear / Unsigned Lower)
+        0x4 => regs.n_flag(),  // MI (Minus / Negative)
+        0x5 => !regs.n_flag(), // PL (Plus / Positive)
+        0x6 => regs.v_flag(),  // VS (Overflow Set)
+        0x7 => !regs.v_flag(), // VC (Overflow Clear)
+        0x8 => regs.c_flag() && !regs.z_flag(), // HI (Unsigned Higher)
+        0x9 => !regs.c_flag() || regs.z_flag(), // LS (Unsigned Lower or Same)
+        0xA => regs.n_flag() == regs.v_flag(), // GE (Signed Greater or Equal)
+        0xB => regs.n_flag() != regs.v_flag(), // LT (Signed Less Than)
         0xC => !regs.z_flag() && (regs.n_flag() == regs.v_flag()), // GT (Signed Greater Than)
-        0xD => regs.z_flag() || (regs.n_flag() != regs.v_flag()),  // LE (Signed Less Than or Equal)
-        0xE => true,                                 // AL (Always)
-        0xF => false,                                // NV (Never / Reserved)
+        0xD => regs.z_flag() || (regs.n_flag() != regs.v_flag()), // LE (Signed Less Than or Equal)
+        0xE => true,           // AL (Always)
+        0xF => false,          // NV (Never / Reserved)
         _ => true,
     }
 }
@@ -172,10 +172,18 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
         let mask_bits = (instr >> 16) & 0x0F;
 
         let mut mask: u32 = 0;
-        if (mask_bits & 1) != 0 { mask |= 0x000000FF; } // c (control)
-        if (mask_bits & 2) != 0 { mask |= 0x0000FF00; } // x (extension)
-        if (mask_bits & 4) != 0 { mask |= 0x00FF0000; } // s (status)
-        if (mask_bits & 8) != 0 { mask |= 0xFF000000; } // f (flags)
+        if (mask_bits & 1) != 0 {
+            mask |= 0x000000FF;
+        } // c (control)
+        if (mask_bits & 2) != 0 {
+            mask |= 0x0000FF00;
+        } // x (extension)
+        if (mask_bits & 4) != 0 {
+            mask |= 0x00FF0000;
+        } // s (status)
+        if (mask_bits & 8) != 0 {
+            mask |= 0xFF000000;
+        } // f (flags)
 
         let val = if is_imm {
             let imm = instr & 0xFF;
@@ -247,27 +255,35 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
 
         let base = regs.r[rn];
         let addr = if p {
-            if u { base.wrapping_add(offset) } else { base.wrapping_sub(offset) }
+            if u {
+                base.wrapping_add(offset)
+            } else {
+                base.wrapping_sub(offset)
+            }
         } else {
             base
         };
 
         if l {
             let val = match (s, h) {
-                (false, true) => bus.read_u16(addr) as u32,                        // LDRH
-                (true, false) => (bus.read_u8(addr) as i8) as i32 as u32,           // LDRSB
-                (true, true) => (bus.read_u16(addr) as i16) as i32 as u32,          // LDRSH
+                (false, true) => bus.read_u16(addr) as u32, // LDRH
+                (true, false) => (bus.read_u8(addr) as i8) as i32 as u32, // LDRSB
+                (true, true) => (bus.read_u16(addr) as i16) as i32 as u32, // LDRSH
                 _ => 0,
             };
             regs.r[rd] = val;
         } else {
             if !s && h {
-                bus.write_u16(addr, regs.r[rd] as u16);                            // STRH
+                bus.write_u16(addr, regs.r[rd] as u16); // STRH
             }
         }
 
         if !p {
-            let writeback_addr = if u { base.wrapping_add(offset) } else { base.wrapping_sub(offset) };
+            let writeback_addr = if u {
+                base.wrapping_add(offset)
+            } else {
+                base.wrapping_sub(offset)
+            };
             regs.r[rn] = writeback_addr;
         } else if w {
             regs.r[rn] = addr;
@@ -295,7 +311,8 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
                 _ => ShiftType::ROR,
             };
             let shift_amt = (instr >> 7) & 0x1F;
-            let (shifted, _) = shift_operand(shift_type, shift_amt, regs.r[rm], regs.c_flag(), false);
+            let (shifted, _) =
+                shift_operand(shift_type, shift_amt, regs.r[rm], regs.c_flag(), false);
             shifted
         } else {
             instr & 0xFFF
@@ -303,7 +320,11 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
 
         let base = regs.r[rn];
         let addr = if p {
-            if u { base.wrapping_add(offset) } else { base.wrapping_sub(offset) }
+            if u {
+                base.wrapping_add(offset)
+            } else {
+                base.wrapping_sub(offset)
+            }
         } else {
             base
         };
@@ -324,7 +345,11 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
         }
 
         if !p {
-            let writeback_addr = if u { base.wrapping_add(offset) } else { base.wrapping_sub(offset) };
+            let writeback_addr = if u {
+                base.wrapping_add(offset)
+            } else {
+                base.wrapping_sub(offset)
+            };
             regs.r[rn] = writeback_addr;
         } else if w {
             regs.r[rn] = addr;
@@ -345,10 +370,18 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
         let curr_addr = regs.r[rn];
 
         let start_addr = if u {
-            if p { curr_addr.wrapping_add(4) } else { curr_addr }
+            if p {
+                curr_addr.wrapping_add(4)
+            } else {
+                curr_addr
+            }
         } else {
             let total_bytes = reg_count * 4;
-            if p { curr_addr.wrapping_sub(total_bytes) } else { curr_addr.wrapping_sub(total_bytes).wrapping_add(4) }
+            if p {
+                curr_addr.wrapping_sub(total_bytes)
+            } else {
+                curr_addr.wrapping_sub(total_bytes).wrapping_add(4)
+            }
         };
 
         let mut addr_iter = start_addr;
@@ -412,7 +445,11 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
             let imm = instr & 0xFF;
             let rotate = ((instr >> 8) & 0x0F) * 2;
             let val = imm.rotate_right(rotate);
-            let carry = if rotate == 0 { regs.c_flag() } else { (val & (1 << 31)) != 0 };
+            let carry = if rotate == 0 {
+                regs.c_flag()
+            } else {
+                (val & (1 << 31)) != 0
+            };
             (val, carry)
         } else {
             let rm = (instr & 0x0F) as usize;
@@ -429,7 +466,13 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
             } else {
                 (instr >> 7) & 0x1F
             };
-            shift_operand(shift_type, shift_amt, regs.r[rm], regs.c_flag(), is_reg_shift)
+            shift_operand(
+                shift_type,
+                shift_amt,
+                regs.r[rm],
+                regs.c_flag(),
+                is_reg_shift,
+            )
         };
 
         let op1 = regs.r[rn];
@@ -437,37 +480,42 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
 
         let mut write_rd = true;
         let (res, carry_out, overflow_out) = match opcode {
-            0x0 => (op1 & op2, shifter_carry, regs.v_flag()),                     // AND
-            0x1 => (op1 ^ op2, shifter_carry, regs.v_flag()),                     // EOR
-            0x2 => {                                                              // SUB
+            0x0 => (op1 & op2, shifter_carry, regs.v_flag()), // AND
+            0x1 => (op1 ^ op2, shifter_carry, regs.v_flag()), // EOR
+            0x2 => {
+                // SUB
                 let diff = (op1 as u64).wrapping_sub(op2 as u64);
                 let res = diff as u32;
                 let c = op1 >= op2;
                 let v = ((op1 ^ op2) & (op1 ^ res) & 0x80000000) != 0;
                 (res, c, v)
             }
-            0x3 => {                                                              // RSB
+            0x3 => {
+                // RSB
                 let diff = (op2 as u64).wrapping_sub(op1 as u64);
                 let res = diff as u32;
                 let c = op2 >= op1;
                 let v = ((op2 ^ op1) & (op2 ^ res) & 0x80000000) != 0;
                 (res, c, v)
             }
-            0x4 => {                                                              // ADD
+            0x4 => {
+                // ADD
                 let sum = (op1 as u64) + (op2 as u64);
                 let res = sum as u32;
                 let c = sum > 0xFFFFFFFF;
                 let v = (!(op1 ^ op2) & (op1 ^ res) & 0x80000000) != 0;
                 (res, c, v)
             }
-            0x5 => {                                                              // ADC
+            0x5 => {
+                // ADC
                 let sum = (op1 as u64) + (op2 as u64) + (carry_in as u64);
                 let res = sum as u32;
                 let c = sum > 0xFFFFFFFF;
                 let v = (!(op1 ^ op2) & (op1 ^ res) & 0x80000000) != 0;
                 (res, c, v)
             }
-            0x6 => {                                                              // SBC
+            0x6 => {
+                // SBC
                 let borrow = 1 - carry_in as u64;
                 let diff = (op1 as u64).wrapping_sub(op2 as u64).wrapping_sub(borrow);
                 let res = diff as u32;
@@ -475,7 +523,8 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
                 let v = ((op1 ^ op2) & (op1 ^ res) & 0x80000000) != 0;
                 (res, c, v)
             }
-            0x7 => {                                                              // RSC
+            0x7 => {
+                // RSC
                 let borrow = 1 - carry_in as u64;
                 let diff = (op2 as u64).wrapping_sub(op1 as u64).wrapping_sub(borrow);
                 let res = diff as u32;
@@ -483,9 +532,16 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
                 let v = ((op2 ^ op1) & (op2 ^ res) & 0x80000000) != 0;
                 (res, c, v)
             }
-            0x8 => { write_rd = false; (op1 & op2, shifter_carry, regs.v_flag()) } // TST
-            0x9 => { write_rd = false; (op1 ^ op2, shifter_carry, regs.v_flag()) } // TEQ
-            0xA => {                                                              // CMP
+            0x8 => {
+                write_rd = false;
+                (op1 & op2, shifter_carry, regs.v_flag())
+            } // TST
+            0x9 => {
+                write_rd = false;
+                (op1 ^ op2, shifter_carry, regs.v_flag())
+            } // TEQ
+            0xA => {
+                // CMP
                 write_rd = false;
                 let diff = (op1 as u64).wrapping_sub(op2 as u64);
                 let res = diff as u32;
@@ -493,7 +549,8 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
                 let v = ((op1 ^ op2) & (op1 ^ res) & 0x80000000) != 0;
                 (res, c, v)
             }
-            0xB => {                                                              // CMN
+            0xB => {
+                // CMN
                 write_rd = false;
                 let sum = (op1 as u64) + (op2 as u64);
                 let res = sum as u32;
@@ -501,10 +558,10 @@ pub fn execute_arm(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u32) -> 
                 let v = (!(op1 ^ op2) & (op1 ^ res) & 0x80000000) != 0;
                 (res, c, v)
             }
-            0xC => (op1 | op2, shifter_carry, regs.v_flag()),                     // ORR
-            0xD => (op2, shifter_carry, regs.v_flag()),                           // MOV
-            0xE => (op1 & !op2, shifter_carry, regs.v_flag()),                    // BIC
-            0xF => (!op2, shifter_carry, regs.v_flag()),                          // MVN
+            0xC => (op1 | op2, shifter_carry, regs.v_flag()), // ORR
+            0xD => (op2, shifter_carry, regs.v_flag()),       // MOV
+            0xE => (op1 & !op2, shifter_carry, regs.v_flag()), // BIC
+            0xF => (!op2, shifter_carry, regs.v_flag()),      // MVN
             _ => (0, false, false),
         };
 

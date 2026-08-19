@@ -51,7 +51,7 @@ impl GbaKeypad {
         if pressed {
             self.keyinput &= !(1 << bit); // Active low: 0 when pressed
         } else {
-            self.keyinput |= 1 << bit;   // Active low: 1 when released
+            self.keyinput |= 1 << bit; // Active low: 1 when released
         }
     }
 

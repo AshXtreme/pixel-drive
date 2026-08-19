@@ -111,7 +111,11 @@ impl MemoryBus {
             0xD000..=0xDFFF => {
                 let bank = if self.is_gbc {
                     let b = self.svbk & 0x07;
-                    if b == 0 { 1 } else { b as usize }
+                    if b == 0 {
+                        1
+                    } else {
+                        b as usize
+                    }
                 } else {
                     1
                 };
@@ -178,7 +182,11 @@ impl MemoryBus {
             0xD000..=0xDFFF => {
                 let bank = if self.is_gbc {
                     let b = self.svbk & 0x07;
-                    if b == 0 { 1 } else { b as usize }
+                    if b == 0 {
+                        1
+                    } else {
+                        b as usize
+                    }
                 } else {
                     1
                 };

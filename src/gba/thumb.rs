@@ -19,7 +19,11 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                 let rs = ((instr >> 3) & 7) as usize;
                 let rd = (instr & 7) as usize;
 
-                let val2 = if is_imm { rn_imm } else { regs.r[rn_imm as usize] };
+                let val2 = if is_imm {
+                    rn_imm
+                } else {
+                    regs.r[rn_imm as usize]
+                };
                 let val1 = regs.r[rs];
 
                 let (res, c, v) = if is_sub {
@@ -55,7 +59,8 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                     _ => ShiftType::ASR,
                 };
 
-                let (res, carry) = shift_operand(shift_type, offset5, regs.r[rs], regs.c_flag(), false);
+                let (res, carry) =
+                    shift_operand(shift_type, offset5, regs.r[rs], regs.c_flag(), false);
                 regs.r[rd] = res;
                 regs.set_n_flag((res & (1 << 31)) != 0);
                 regs.set_z_flag(res == 0);
@@ -124,40 +129,49 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                 let val2 = regs.r[rs];
 
                 match op {
-                    0x0 => { // AND
+                    0x0 => {
+                        // AND
                         let res = val1 & val2;
                         regs.r[rd] = res;
                         regs.set_n_flag((res & (1 << 31)) != 0);
                         regs.set_z_flag(res == 0);
                     }
-                    0x1 => { // EOR
+                    0x1 => {
+                        // EOR
                         let res = val1 ^ val2;
                         regs.r[rd] = res;
                         regs.set_n_flag((res & (1 << 31)) != 0);
                         regs.set_z_flag(res == 0);
                     }
-                    0x2 => { // LSL
-                        let (res, c) = shift_operand(ShiftType::LSL, val2 & 0xFF, val1, regs.c_flag(), true);
+                    0x2 => {
+                        // LSL
+                        let (res, c) =
+                            shift_operand(ShiftType::LSL, val2 & 0xFF, val1, regs.c_flag(), true);
                         regs.r[rd] = res;
                         regs.set_n_flag((res & (1 << 31)) != 0);
                         regs.set_z_flag(res == 0);
                         regs.set_c_flag(c);
                     }
-                    0x3 => { // LSR
-                        let (res, c) = shift_operand(ShiftType::LSR, val2 & 0xFF, val1, regs.c_flag(), true);
+                    0x3 => {
+                        // LSR
+                        let (res, c) =
+                            shift_operand(ShiftType::LSR, val2 & 0xFF, val1, regs.c_flag(), true);
                         regs.r[rd] = res;
                         regs.set_n_flag((res & (1 << 31)) != 0);
                         regs.set_z_flag(res == 0);
                         regs.set_c_flag(c);
                     }
-                    0x4 => { // ASR
-                        let (res, c) = shift_operand(ShiftType::ASR, val2 & 0xFF, val1, regs.c_flag(), true);
+                    0x4 => {
+                        // ASR
+                        let (res, c) =
+                            shift_operand(ShiftType::ASR, val2 & 0xFF, val1, regs.c_flag(), true);
                         regs.r[rd] = res;
                         regs.set_n_flag((res & (1 << 31)) != 0);
                         regs.set_z_flag(res == 0);
                         regs.set_c_flag(c);
                     }
-                    0x5 => { // ADC
+                    0x5 => {
+                        // ADC
                         let c_in = regs.c_flag() as u64;
                         let sum = (val1 as u64) + (val2 as u64) + c_in;
                         let res = sum as u32;
@@ -167,7 +181,8 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                         regs.set_c_flag(sum > 0xFFFFFFFF);
                         regs.set_v_flag(!(val1 ^ val2) & (val1 ^ res) & 0x80000000 != 0);
                     }
-                    0x6 => { // SBC
+                    0x6 => {
+                        // SBC
                         let c_in = regs.c_flag() as u64;
                         let borrow = 1 - c_in;
                         let diff = (val1 as u64).wrapping_sub(val2 as u64).wrapping_sub(borrow);
@@ -178,19 +193,23 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                         regs.set_c_flag((val1 as u64) >= ((val2 as u64) + borrow));
                         regs.set_v_flag(((val1 ^ val2) & (val1 ^ res) & 0x80000000) != 0);
                     }
-                    0x7 => { // ROR
-                        let (res, c) = shift_operand(ShiftType::ROR, val2 & 0xFF, val1, regs.c_flag(), true);
+                    0x7 => {
+                        // ROR
+                        let (res, c) =
+                            shift_operand(ShiftType::ROR, val2 & 0xFF, val1, regs.c_flag(), true);
                         regs.r[rd] = res;
                         regs.set_n_flag((res & (1 << 31)) != 0);
                         regs.set_z_flag(res == 0);
                         regs.set_c_flag(c);
                     }
-                    0x8 => { // TST
+                    0x8 => {
+                        // TST
                         let res = val1 & val2;
                         regs.set_n_flag((res & (1 << 31)) != 0);
                         regs.set_z_flag(res == 0);
                     }
-                    0x9 => { // NEG
+                    0x9 => {
+                        // NEG
                         let diff = 0u64.wrapping_sub(val2 as u64);
                         let res = diff as u32;
                         regs.r[rd] = res;
@@ -199,7 +218,8 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                         regs.set_c_flag(val2 == 0);
                         regs.set_v_flag((val2 & res & 0x80000000) != 0);
                     }
-                    0xA => { // CMP
+                    0xA => {
+                        // CMP
                         let diff = (val1 as u64).wrapping_sub(val2 as u64);
                         let res = diff as u32;
                         regs.set_n_flag((res & (1 << 31)) != 0);
@@ -207,7 +227,8 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                         regs.set_c_flag(val1 >= val2);
                         regs.set_v_flag(((val1 ^ val2) & (val1 ^ res) & 0x80000000) != 0);
                     }
-                    0xB => { // CMN
+                    0xB => {
+                        // CMN
                         let sum = (val1 as u64) + (val2 as u64);
                         let res = sum as u32;
                         regs.set_n_flag((res & (1 << 31)) != 0);
@@ -215,25 +236,29 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                         regs.set_c_flag(sum > 0xFFFFFFFF);
                         regs.set_v_flag(!(val1 ^ val2) & (val1 ^ res) & 0x80000000 != 0);
                     }
-                    0xC => { // ORR
+                    0xC => {
+                        // ORR
                         let res = val1 | val2;
                         regs.r[rd] = res;
                         regs.set_n_flag((res & (1 << 31)) != 0);
                         regs.set_z_flag(res == 0);
                     }
-                    0xD => { // MUL
+                    0xD => {
+                        // MUL
                         let res = val1.wrapping_mul(val2);
                         regs.r[rd] = res;
                         regs.set_n_flag((res & (1 << 31)) != 0);
                         regs.set_z_flag(res == 0);
                     }
-                    0xE => { // BIC
+                    0xE => {
+                        // BIC
                         let res = val1 & !val2;
                         regs.r[rd] = res;
                         regs.set_n_flag((res & (1 << 31)) != 0);
                         regs.set_z_flag(res == 0);
                     }
-                    0xF => { // MVN
+                    0xF => {
+                        // MVN
                         let res = !val2;
                         regs.r[rd] = res;
                         regs.set_n_flag((res & (1 << 31)) != 0);
@@ -253,7 +278,8 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                 let val2 = regs.r[rs];
 
                 match op {
-                    0 => { // ADD
+                    0 => {
+                        // ADD
                         let res = regs.r[rd].wrapping_add(val2);
                         if rd == 15 {
                             regs.r[15] = regs.r[15].wrapping_add(val2) & !1;
@@ -262,7 +288,8 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                             regs.r[rd] = res;
                         }
                     }
-                    1 => { // CMP
+                    1 => {
+                        // CMP
                         let val1 = regs.r[rd];
                         let diff = (val1 as u64).wrapping_sub(val2 as u64);
                         let res = diff as u32;
@@ -271,7 +298,8 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                         regs.set_c_flag(val1 >= val2);
                         regs.set_v_flag(((val1 ^ val2) & (val1 ^ res) & 0x80000000) != 0);
                     }
-                    2 => { // MOV
+                    2 => {
+                        // MOV
                         if rd == 15 {
                             regs.r[15] = val2 & !1;
                             return 3;
@@ -279,7 +307,8 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                             regs.r[rd] = val2;
                         }
                     }
-                    3 => { // BX / BLX
+                    3 => {
+                        // BX / BLX
                         if h1 {
                             regs.r[14] = (regs.r[15].wrapping_sub(2)) | 1;
                         }
@@ -330,9 +359,9 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
             } else {
                 // Format 8: Sign-extended LDRH/STRH/LDRSB/LDRSH
                 match (is_byte_or_sign, is_load) {
-                    (false, false) => bus.write_u16(addr, regs.r[rd] as u16),             // STRH
-                    (false, true) => regs.r[rd] = (bus.read_u8(addr) as i8) as i32 as u32,  // LDRSB
-                    (true, false) => regs.r[rd] = bus.read_u16(addr) as u32,              // LDRH
+                    (false, false) => bus.write_u16(addr, regs.r[rd] as u16), // STRH
+                    (false, true) => regs.r[rd] = (bus.read_u8(addr) as i8) as i32 as u32, // LDRSB
+                    (true, false) => regs.r[rd] = bus.read_u16(addr) as u32,  // LDRH
                     (true, true) => regs.r[rd] = (bus.read_u16(addr) as i16) as i32 as u32, // LDRSH
                 }
             }
@@ -402,11 +431,7 @@ pub fn execute_thumb(regs: &mut Registers, bus: &mut GbaMemoryBus, instr: u16) -
                 let use_sp = (instr & (1 << 11)) != 0;
                 let rd = ((instr >> 8) & 7) as usize;
                 let word8 = ((instr & 0xFF) as u32) * 4;
-                let base = if use_sp {
-                    regs.r[13]
-                } else {
-                    regs.r[15] & !2
-                };
+                let base = if use_sp { regs.r[13] } else { regs.r[15] & !2 };
                 regs.r[rd] = base.wrapping_add(word8);
                 1
             } else {

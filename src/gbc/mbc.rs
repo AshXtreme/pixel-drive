@@ -294,7 +294,9 @@ impl Mbc {
             } => match addr {
                 0x0000..=0x1FFF => *ram_enabled = (val & 0x0F) == 0x0A,
                 0x2000..=0x2FFF => *rom_bank = ((*rom_bank) & 0x0100) | (val as usize),
-                0x3000..=0x3FFF => *rom_bank = ((*rom_bank) & 0x00FF) | (((val & 0x01) as usize) << 8),
+                0x3000..=0x3FFF => {
+                    *rom_bank = ((*rom_bank) & 0x00FF) | (((val & 0x01) as usize) << 8)
+                }
                 0x4000..=0x5FFF => *ram_bank = (val & 0x0F) as usize,
                 _ => {}
             },

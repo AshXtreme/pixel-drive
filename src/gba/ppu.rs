@@ -6,9 +6,9 @@ pub const CYCLES_PER_SCANLINE: usize = 1232;
 pub const VISIBLE_SCANLINES: usize = 160;
 pub const TOTAL_SCANLINES: usize = 228;
 
-pub const PALETTE_SIZE: usize = 1024;  // 1 KB
+pub const PALETTE_SIZE: usize = 1024; // 1 KB
 pub const VRAM_SIZE: usize = 96 * 1024; // 96 KB
-pub const OAM_SIZE: usize = 1024;       // 1 KB
+pub const OAM_SIZE: usize = 1024; // 1 KB
 
 /// Convert 16-bit BGR555 color (0x0BBBBBGGGGGRRRRR) to 32-bit RGBA byte tuple (R, G, B, A)
 pub fn bgr555_to_rgba(color: u16) -> (u8, u8, u8, u8) {
@@ -180,7 +180,8 @@ impl GbaPpu {
                 let palette_idx = self.vram[vram_idx] as usize;
                 let pal_byte_idx = palette_idx * 2;
                 let color = if pal_byte_idx + 1 < self.palette.len() {
-                    self.palette[pal_byte_idx] as u16 | ((self.palette[pal_byte_idx + 1] as u16) << 8)
+                    self.palette[pal_byte_idx] as u16
+                        | ((self.palette[pal_byte_idx + 1] as u16) << 8)
                 } else {
                     0
                 };
@@ -208,7 +209,8 @@ impl GbaPpu {
             for x in 0..160 {
                 let vram_idx = line_start + x * 2;
                 if vram_idx + 1 < self.vram.len() {
-                    let color = self.vram[vram_idx] as u16 | ((self.vram[vram_idx + 1] as u16) << 8);
+                    let color =
+                        self.vram[vram_idx] as u16 | ((self.vram[vram_idx + 1] as u16) << 8);
                     let (r, g, b, a) = bgr555_to_rgba(color);
                     let dst_x = x + 40;
                     let pixel_idx = (line * GBA_SCREEN_WIDTH + dst_x) * 4;
@@ -338,9 +340,9 @@ impl GbaPpu {
     /// Render OAM (OBJ) Sprites for the given scanline
     pub fn render_oam(&mut self, line: usize) {
         const SPRITE_SIZES: [[(usize, usize); 4]; 3] = [
-            [(8, 8), (16, 16), (32, 32), (64, 64)],  // Square
-            [(16, 8), (32, 8), (32, 16), (64, 32)],  // Horizontal
-            [(8, 16), (8, 32), (16, 32), (32, 64)],  // Vertical
+            [(8, 8), (16, 16), (32, 32), (64, 64)], // Square
+            [(16, 8), (32, 8), (32, 16), (64, 32)], // Horizontal
+            [(8, 16), (8, 32), (16, 32), (32, 64)], // Vertical
         ];
 
         let is_1d_mapping = (self.dispcnt & (1 << 6)) != 0;
@@ -579,9 +581,9 @@ mod tests {
         ppu.render_scanline(50);
 
         let fb_idx = (50 * 240 + 50) * 4;
-        assert_eq!(ppu.framebuffer[fb_idx], 0);   // Red
+        assert_eq!(ppu.framebuffer[fb_idx], 0); // Red
         assert_eq!(ppu.framebuffer[fb_idx + 1], 255); // Green
-        assert_eq!(ppu.framebuffer[fb_idx + 2], 0);   // Blue
+        assert_eq!(ppu.framebuffer[fb_idx + 2], 0); // Blue
     }
 
     #[test]
@@ -601,14 +603,14 @@ mod tests {
         ppu.oam[1] = 0;
         ppu.oam[2] = 30; // Attr1 X=30
         ppu.oam[3] = 0;
-        ppu.oam[4] = 0;  // Attr2 Tile=0
+        ppu.oam[4] = 0; // Attr2 Tile=0
         ppu.oam[5] = 0;
 
         ppu.render_scanline(20);
 
         // Pixel at (30, 20) in framebuffer should be Pure Blue (0, 0, 255, 255)
         let fb_idx = (20 * GBA_SCREEN_WIDTH + 30) * 4;
-        assert_eq!(ppu.framebuffer[fb_idx], 0);     // Red
+        assert_eq!(ppu.framebuffer[fb_idx], 0); // Red
         assert_eq!(ppu.framebuffer[fb_idx + 1], 0); // Green
         assert_eq!(ppu.framebuffer[fb_idx + 2], 255); // Blue
         assert_eq!(ppu.framebuffer[fb_idx + 3], 255); // Alpha
