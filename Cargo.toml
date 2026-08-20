@@ -1,9 +1,18 @@
 [package]
 name = "pixel-drive"
-version = "1.0.0"
+version = "1.2.0"
 edition = "2021"
 authors = ["PixelDrive Team"]
-description = "Unified macOS Handheld Emulator in Rust"
+description = "High-Performance Unified Handheld Emulator (macOS, Windows, Android)"
+
+[lib]
+name = "pixeldrive"
+crate-type = ["cdylib", "rlib"]
+path = "src/lib.rs"
+
+[[bin]]
+name = "pixeldrive"
+path = "src/main.rs"
 
 [dependencies]
 winit = { version = "0.29", features = ["rwh_05"] }
@@ -23,6 +32,15 @@ rfd = "0.14"
 bytemuck = { version = "1.16", features = ["derive"] }
 thiserror = "1.0"
 parking_lot = "0.12"
+raw-window-handle = "0.5"
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }
+ndk = { version = "0.9", features = ["rwh_05"] }
+ndk-sys = "0.6"
+jni = "0.21"
+android_logger = "0.14"
+winit = { version = "0.29", default-features = false, features = ["android-native-activity", "rwh_05"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"

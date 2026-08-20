@@ -33,6 +33,12 @@ pub struct GbcCore {
 pub const MAX_GBC_ROM_SIZE: usize = 8 * 1024 * 1024; // 8 MB max
 pub const MAX_GBC_STATE_SIZE: usize = 16 * 1024 * 1024; // 16 MB max
 
+impl Default for GbcCore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GbcCore {
     pub fn new() -> Self {
         Self {

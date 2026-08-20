@@ -64,6 +64,12 @@ pub struct DcBlocker {
     r: f32,
 }
 
+impl Default for DcBlocker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DcBlocker {
     pub fn new() -> Self {
         Self {

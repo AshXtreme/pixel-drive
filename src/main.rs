@@ -1,12 +1,4 @@
-mod audio;
-mod core;
-mod error;
-mod gba;
-mod gbc;
-mod input;
-mod render;
-mod save;
-mod ui;
+use pixeldrive::{audio, core, gba, gbc, input, render, save, ui};
 
 use audio::{AudioPlayer, AudioProducer};
 use core::EmulatorCore;
