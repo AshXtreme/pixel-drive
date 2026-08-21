@@ -1,6 +1,8 @@
+pub mod overlay;
 pub mod shaders;
 
 use pixels::wgpu::{self, util::DeviceExt};
+pub use overlay::{TouchOverlayRenderer, TouchOverlayUniforms};
 pub use shaders::FilterMode;
 use shaders::{ShaderUniforms, SHADER_SOURCE};
 

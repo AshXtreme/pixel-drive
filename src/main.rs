@@ -6,12 +6,12 @@ use gba::GbaCore;
 use gbc::GbcCore;
 use log::{info, warn};
 use pixels::{Pixels, SurfaceTexture};
-use render::{FilterMode, ShaderPipeline};
+use render::{FilterMode, ShaderPipeline, TouchOverlayRenderer};
 use std::time::Instant;
 use ui::{GuiAction, GuiRenderer};
 use winit::{
     dpi::LogicalSize,
-    event::{ElementState, Event, KeyEvent, WindowEvent},
+    event::{ElementState, Event, KeyEvent, MouseButton, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
     window::WindowBuilder,
@@ -378,6 +378,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut gui = GuiRenderer::new(&window, window_size.width, window_size.height);
     let mut shader_pipeline =
         ShaderPipeline::new(pixels.device(), pixels::wgpu::TextureFormat::Bgra8UnormSrgb);
+    let mut touch_overlay_renderer =
+        TouchOverlayRenderer::new(pixels.device(), pixels::wgpu::TextureFormat::Bgra8UnormSrgb);
     let mut filter_mode = FilterMode::Nearest;
 
     let mut current_rom_path: Option<std::path::PathBuf> = None;
@@ -385,6 +387,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut fast_forward = false;
     let mut is_paused = false;
     let mut input_manager = input::InputManager::new();
+    let mut mouse_down = false;
+    let mut last_mouse_pos = (0.0f32, 0.0f32);
 
     // Check for CLI ROM argument on startup: cargo run -- path/to/game.gba
     if let Some(cli_rom_arg) = std::env::args().nth(1) {
@@ -495,6 +499,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         if !focused {
                             input_manager.clear_all();
+                            input_manager.dispatch_to_core(active_core.as_mut());
+                        }
+                    }
+
+                    WindowEvent::CursorMoved { position, .. } => {
+                        last_mouse_pos = (position.x as f32, position.y as f32);
+                        if mouse_down && input_manager.touch.visible && !consumed {
+                            let win_size = window.inner_size();
+                            input_manager.touch.handle_touch_move(
+                                999,
+                                last_mouse_pos.0,
+                                last_mouse_pos.1,
+                                win_size.width as f32,
+                                win_size.height as f32,
+                            );
+                            input_manager.dispatch_to_core(active_core.as_mut());
+                        }
+                    }
+
+                    WindowEvent::MouseInput {
+                        button: MouseButton::Left,
+                        state,
+                        ..
+                    } => {
+                        let pressed = state == ElementState::Pressed;
+                        mouse_down = pressed;
+                        if input_manager.touch.visible && !consumed {
+                            let win_size = window.inner_size();
+                            if pressed {
+                                input_manager.touch.handle_touch_down(
+                                    999,
+                                    last_mouse_pos.0,
+                                    last_mouse_pos.1,
+                                    win_size.width as f32,
+                                    win_size.height as f32,
+                                );
+                            } else {
+                                input_manager.touch.handle_touch_up(999);
+                            }
                             input_manager.dispatch_to_core(active_core.as_mut());
                         }
                     }
@@ -654,6 +697,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         gui.show_toast("No ROM loaded");
                                     }
                                 }
+                                KeyCode::F3 => {
+                                    input_manager.touch.visible = !input_manager.touch.visible;
+                                    gui.show_touch_overlay = input_manager.touch.visible;
+                                    if input_manager.touch.visible {
+                                        info!("🔘 Virtual Touch Controls: Enabled (F3)");
+                                        gui.show_toast("Touch Controls: Enabled");
+                                    } else {
+                                        info!("🔘 Virtual Touch Controls: Disabled (F3)");
+                                        gui.show_toast("Touch Controls: Disabled");
+                                    }
+                                }
                                 KeyCode::F4 => {
                                     filter_mode = filter_mode.next();
                                     gui.filter_mode = filter_mode;
@@ -729,6 +783,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             );
                             let (w, h) = active_core.display_dimensions();
                             let _ = pixels.resize_buffer(w, h);
+                        }
+
+                        // Process any actions triggered by touch overlay HUD buttons
+                        for action in input_manager.touch.poll_actions() {
+                            match action {
+                                pixeldrive::input::TouchAction::ToggleFastForward => {
+                                    fast_forward = !fast_forward;
+                                    gui.is_fast_forward = fast_forward;
+                                    if let Some(ref prod) = audio_producer {
+                                        prod.set_fast_forward(fast_forward);
+                                    }
+                                    let present_mode = if fast_forward {
+                                        pixels::wgpu::PresentMode::AutoNoVsync
+                                    } else {
+                                        pixels::wgpu::PresentMode::AutoVsync
+                                    };
+                                    pixels.set_present_mode(present_mode);
+                                    if fast_forward {
+                                        gui.show_toast("Fast-Forward: 2x Speed");
+                                    } else {
+                                        gui.show_toast("Normal Speed (1.0x)");
+                                    }
+                                }
+                                pixeldrive::input::TouchAction::OpenMenu => {
+                                    gui.show_menu_bar = !gui.show_menu_bar;
+                                }
+                                _ => {}
+                            }
                         }
 
                         // Prepare egui UI & process actions
@@ -896,10 +978,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     info!("Cycled Shader Filter: {}", filter_mode.name());
                                     gui.show_toast(format!("Shader: {}", filter_mode.name()));
                                 }
+                                GuiAction::ToggleTouchOverlay => {
+                                    input_manager.touch.visible = !input_manager.touch.visible;
+                                    gui.show_touch_overlay = input_manager.touch.visible;
+                                    if input_manager.touch.visible {
+                                        gui.show_toast("Touch Controls: Enabled");
+                                    } else {
+                                        gui.show_toast("Touch Controls: Disabled");
+                                    }
+                                }
+                                GuiAction::SetTouchOverlayOpacity(op) => {
+                                    input_manager.touch.set_opacity(op);
+                                    gui.touch_overlay_opacity = op;
+                                }
+                                GuiAction::SetTouchOverlayScale(sc) => {
+                                    input_manager.touch.set_scale(sc);
+                                    gui.touch_overlay_scale = sc;
+                                }
+                                GuiAction::SetTouchOverlayPreset(preset) => {
+                                    input_manager.touch.apply_preset(preset);
+                                    gui.touch_overlay_preset = preset;
+                                    gui.show_toast(format!("Layout: {}", preset.name()));
+                                }
+                                GuiAction::ToggleDynamicDpad => {
+                                    let dyn_dp = !input_manager.touch.dynamic_dpad;
+                                    input_manager.touch.set_dynamic_dpad(dyn_dp);
+                                    gui.touch_dynamic_dpad = dyn_dp;
+                                    if dyn_dp {
+                                        gui.show_toast("Dynamic D-Pad: Enabled");
+                                    } else {
+                                        gui.show_toast("Dynamic D-Pad: Disabled");
+                                    }
+                                }
                             }
                         }
 
-                        // Render Pixels framebuffer with post-processing shader + egui overlay
+                        // Render Pixels framebuffer with post-processing shader + touch overlay + egui overlay
                         let render_res = pixels.render_with(|encoder, render_target, context| {
                             let win_size = window.inner_size();
                             shader_pipeline.render(
@@ -909,6 +1023,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 filter_mode,
                                 core_width,
                                 core_height,
+                                win_size.width,
+                                win_size.height,
+                            );
+                            touch_overlay_renderer.render(
+                                encoder,
+                                render_target,
+                                context,
+                                &input_manager.touch,
                                 win_size.width,
                                 win_size.height,
                             );

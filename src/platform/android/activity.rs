@@ -16,7 +16,7 @@ use crate::audio::AudioProducer;
 use crate::core::EmulatorCore;
 use crate::gba::GbaCore;
 use crate::input::{InputManager, TouchOverlay};
-use crate::render::{FilterMode, ShaderPipeline};
+use crate::render::{FilterMode, ShaderPipeline, TouchOverlayRenderer};
 use crate::save::SaveManager;
 
 /// Safe wrapper around Android `NativeWindow` implementing `HasRawWindowHandle` and `HasRawDisplayHandle` (rwh 0.5).
@@ -87,6 +87,7 @@ fn android_main(app: AndroidApp) {
     // Graphics and pipeline state
     let mut pixels: Option<Pixels> = None;
     let mut shader_pipeline: Option<ShaderPipeline> = None;
+    let mut touch_overlay_renderer: Option<TouchOverlayRenderer> = None;
     let mut filter_mode = FilterMode::Nearest;
     let mut window_width: u32 = 0;
     let mut window_height: u32 = 0;
@@ -143,9 +144,14 @@ fn android_main(app: AndroidApp) {
                                             px.device(),
                                             pixels::wgpu::TextureFormat::Rgba8UnormSrgb,
                                         );
+                                        let overlay = TouchOverlayRenderer::new(
+                                            px.device(),
+                                            pixels::wgpu::TextureFormat::Rgba8UnormSrgb,
+                                        );
                                         shader_pipeline = Some(pipeline);
+                                        touch_overlay_renderer = Some(overlay);
                                         pixels = Some(px);
-                                        info!("WGPU Vulkan/GLES surface and ShaderPipeline successfully initialized!");
+                                        info!("WGPU Vulkan/GLES surface, ShaderPipeline, and TouchOverlayRenderer successfully initialized!");
                                     }
                                     Err(err) => {
                                         error!("Failed to create Pixels WGPU surface: {:?}", err);
@@ -158,6 +164,7 @@ fn android_main(app: AndroidApp) {
                             info!("Android MainEvent: TermWindow — Releasing WGPU surface");
                             // Release surface swapchain when backgrounded to prevent GPU driver deadlocks
                             shader_pipeline = None;
+                            touch_overlay_renderer = None;
                             pixels = None;
                         }
 
@@ -341,6 +348,16 @@ fn android_main(app: AndroidApp) {
                                 window_width,
                                 window_height,
                             );
+                            if let Some(ref mut overlay) = touch_overlay_renderer {
+                                overlay.render(
+                                    encoder,
+                                    render_target,
+                                    context,
+                                    &touch_overlay,
+                                    window_width,
+                                    window_height,
+                                );
+                            }
                             Ok(())
                         });
 

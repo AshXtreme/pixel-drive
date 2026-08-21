@@ -1,3 +1,4 @@
+use crate::input::TouchOverlayPreset;
 use crate::render::FilterMode;
 use egui::{epaint::Shadow, Align2, Color32, Context, FontId, Rounding, Stroke, Vec2};
 use egui_wgpu::{Renderer, ScreenDescriptor};
@@ -24,6 +25,11 @@ pub enum GuiAction {
     ToggleFpsHud,
     SetFilterMode(FilterMode),
     CycleFilterMode,
+    ToggleTouchOverlay,
+    SetTouchOverlayOpacity(f32),
+    SetTouchOverlayScale(f32),
+    SetTouchOverlayPreset(TouchOverlayPreset),
+    ToggleDynamicDpad,
 }
 
 /// GuiRenderer manages egui state, overlay drawing, top menu bar, and on-screen HUD.
@@ -53,6 +59,13 @@ pub struct GuiRenderer {
 
     // Ephemeral Toast notification
     pub toast: Option<(String, Instant)>,
+
+    // Virtual Touch Overlay state reflection
+    pub show_touch_overlay: bool,
+    pub touch_overlay_opacity: f32,
+    pub touch_overlay_scale: f32,
+    pub touch_overlay_preset: TouchOverlayPreset,
+    pub touch_dynamic_dpad: bool,
 }
 
 impl GuiRenderer {
@@ -86,6 +99,11 @@ impl GuiRenderer {
             loaded_rom_name: None,
             active_core_name: "GBC".to_string(),
             toast: None,
+            show_touch_overlay: false,
+            touch_overlay_opacity: 0.65,
+            touch_overlay_scale: 1.0,
+            touch_overlay_preset: TouchOverlayPreset::Standard,
+            touch_dynamic_dpad: false,
         }
     }
 
@@ -319,6 +337,60 @@ impl GuiRenderer {
                                 .changed()
                             {
                                 actions.push(GuiAction::ToggleFpsHud);
+                            }
+                        });
+
+                        // Touch Controls Menu
+                        ui.menu_button("Touch Controls", |ui| {
+                            let toggle_label = if self.show_touch_overlay {
+                                "🔘 Hide Touch Overlay (F3)"
+                            } else {
+                                "🔘 Show Touch Overlay (F3)"
+                            };
+                            if ui.button(toggle_label).clicked() {
+                                actions.push(GuiAction::ToggleTouchOverlay);
+                                ui.close_menu();
+                            }
+                            ui.separator();
+                            ui.label("Overlay Opacity:");
+                            let mut op = self.touch_overlay_opacity;
+                            if ui
+                                .add(egui::Slider::new(&mut op, 0.1..=1.0).text("Opacity"))
+                                .changed()
+                            {
+                                actions.push(GuiAction::SetTouchOverlayOpacity(op));
+                            }
+
+                            ui.label("Overlay Scale:");
+                            let mut sc = self.touch_overlay_scale;
+                            if ui
+                                .add(egui::Slider::new(&mut sc, 0.6..=1.6).text("Scale"))
+                                .changed()
+                            {
+                                actions.push(GuiAction::SetTouchOverlayScale(sc));
+                            }
+
+                            ui.separator();
+                            ui.label("Layout Presets:");
+                            for preset in [
+                                TouchOverlayPreset::Standard,
+                                TouchOverlayPreset::Compact,
+                                TouchOverlayPreset::Wide,
+                                TouchOverlayPreset::Ergonomic,
+                            ] {
+                                let selected = self.touch_overlay_preset == preset;
+                                if ui.selectable_label(selected, preset.name()).clicked() {
+                                    actions.push(GuiAction::SetTouchOverlayPreset(preset));
+                                    ui.close_menu();
+                                }
+                            }
+
+                            ui.separator();
+                            if ui
+                                .checkbox(&mut self.touch_dynamic_dpad, "Dynamic Floating D-Pad")
+                                .changed()
+                            {
+                                actions.push(GuiAction::ToggleDynamicDpad);
                             }
                         });
 

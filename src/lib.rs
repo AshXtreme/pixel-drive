@@ -19,6 +19,10 @@ pub use core::{Button, EmulatorCore};
 pub use error::PixelDriveError;
 pub use gba::GbaCore;
 pub use gbc::GbcCore;
-pub use input::{InputManager, InputSource, JoypadState, TouchOverlay};
-pub use render::{FilterMode, ShaderPipeline};
+pub use input::{
+    touch_bits, ButtonShape, ChordHitbox, InputManager, InputSource, JoypadState, TouchAction,
+    TouchInputManager, TouchOverlay, TouchOverlayPreset, TouchPhase, TouchPoint, TouchRect,
+    VirtualButton, VirtualButtonId, VirtualDPad,
+};
+pub use render::{FilterMode, ShaderPipeline, TouchOverlayRenderer, TouchOverlayUniforms};
 pub use save::SaveManager;
