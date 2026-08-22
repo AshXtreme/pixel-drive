@@ -24,5 +24,9 @@ pub use input::{
     TouchInputManager, TouchOverlay, TouchOverlayPreset, TouchPhase, TouchPoint, TouchRect,
     VirtualButton, VirtualButtonId, VirtualDPad,
 };
+pub use platform::{DesktopStorage, PlatformAudio, PlatformStorage};
+#[cfg(target_os = "android")]
+pub use platform::{AndroidAudioPlayer, AndroidStorage};
 pub use render::{FilterMode, ShaderPipeline, TouchOverlayRenderer, TouchOverlayUniforms};
 pub use save::SaveManager;
+

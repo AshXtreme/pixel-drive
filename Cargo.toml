@@ -19,7 +19,7 @@ winit = { version = "0.29", features = ["rwh_05"] }
 pixels = "0.15"
 log = "0.4"
 env_logger = "0.11"
-zip = "2.1"
+zip = { version = "2.1", default-features = false, features = ["deflate"] }
 libloading = "0.8"
 cpal = "0.15"
 ringbuf = "0.4"
@@ -28,19 +28,21 @@ bincode = "1.3"
 egui = "0.27"
 egui-wgpu = "0.27"
 egui-winit = { version = "0.27", default-features = false, features = ["links"] }
-rfd = "0.14"
 bytemuck = { version = "1.16", features = ["derive"] }
 thiserror = "1.0"
 parking_lot = "0.12"
-raw-window-handle = "0.5"
+raw-window-handle = "0.6"
 
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.6", features = ["native-activity"] }
-ndk = { version = "0.9", features = ["rwh_05"] }
+ndk = { version = "0.9", features = ["rwh_05", "rwh_06"] }
 ndk-sys = "0.6"
 jni = "0.21"
 android_logger = "0.14"
 winit = { version = "0.29", default-features = false, features = ["android-native-activity", "rwh_05"] }
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+rfd = "0.14"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"

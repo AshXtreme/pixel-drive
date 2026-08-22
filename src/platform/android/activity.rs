@@ -1,6 +1,7 @@
 //! Android NativeActivity lifecycle handler, WGPU/Pixels surface management,
-//! touch event processing, and frame pacing loop for PixelDrive.
+//! low-latency audio lifecycle, SAF scoped storage, touch event processing, and frame pacing loop.
 
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use android_activity::input::{InputEvent, KeyAction, MotionAction};
@@ -8,49 +9,50 @@ use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
 use log::{debug, error, info, warn};
 use pixels::{Pixels, SurfaceTexture};
 use raw_window_handle::{
-    AndroidDisplayHandle, AndroidNdkWindowHandle, HasRawDisplayHandle, HasRawWindowHandle,
+    AndroidDisplayHandle, AndroidNdkWindowHandle, HandleError, HasDisplayHandle, HasWindowHandle,
     RawDisplayHandle, RawWindowHandle,
 };
 
-use crate::audio::AudioProducer;
 use crate::core::EmulatorCore;
 use crate::gba::GbaCore;
-use crate::input::{InputManager, TouchOverlay};
+use crate::input::{InputManager, InputSource, TouchOverlay};
+use crate::platform::android::audio::AndroidAudioPlayer;
+use crate::platform::android::storage::AndroidStorage;
+use crate::platform::PlatformStorage;
 use crate::render::{FilterMode, ShaderPipeline, TouchOverlayRenderer};
-use crate::save::SaveManager;
 
-/// Safe wrapper around Android `NativeWindow` implementing `HasRawWindowHandle` and `HasRawDisplayHandle` (rwh 0.5).
-struct AndroidWindowHandle {
+/// Safe wrapper around Android `NativeWindow` implementing `HasWindowHandle` and `HasDisplayHandle` (rwh 0.6).
+struct AndroidWindowWrapper {
     ptr: *mut std::ffi::c_void,
 }
 
-unsafe impl Send for AndroidWindowHandle {}
-unsafe impl Sync for AndroidWindowHandle {}
+unsafe impl Send for AndroidWindowWrapper {}
+unsafe impl Sync for AndroidWindowWrapper {}
 
-unsafe impl HasRawWindowHandle for AndroidWindowHandle {
-    fn raw_window_handle(&self) -> RawWindowHandle {
-        let mut handle = AndroidNdkWindowHandle::empty();
-        handle.a_native_window = self.ptr;
-        RawWindowHandle::AndroidNdk(handle)
+impl HasWindowHandle for AndroidWindowWrapper {
+    fn window_handle(&self) -> Result<raw_window_handle::WindowHandle<'_>, HandleError> {
+        let handle = AndroidNdkWindowHandle::new(
+            std::ptr::NonNull::new(self.ptr).ok_or(HandleError::Unavailable)?,
+        );
+        unsafe { Ok(raw_window_handle::WindowHandle::borrow_raw(RawWindowHandle::AndroidNdk(handle))) }
     }
 }
 
-unsafe impl HasRawDisplayHandle for AndroidWindowHandle {
-    fn raw_display_handle(&self) -> RawDisplayHandle {
-        RawDisplayHandle::Android(AndroidDisplayHandle::empty())
+impl HasDisplayHandle for AndroidWindowWrapper {
+    fn display_handle(&self) -> Result<raw_window_handle::DisplayHandle<'_>, HandleError> {
+        let handle = AndroidDisplayHandle::new();
+        unsafe { Ok(raw_window_handle::DisplayHandle::borrow_raw(RawDisplayHandle::Android(handle))) }
     }
 }
 
 /// Flushes battery-backed SRAM save data from the active core to scoped storage.
-fn flush_core_save(core: &dyn EmulatorCore) {
-    if let Some(save_path) = core.save_path() {
-        if let Some(save_data) = core.get_save_data() {
-            if !save_data.is_empty() {
-                if let Err(err) = SaveManager::write_save_file(&save_path, save_data) {
-                    warn!("Failed to flush save file {:?}: {}", save_path, err);
-                } else {
-                    debug!("Flushed battery save data ({} bytes)", save_data.len());
-                }
+fn flush_core_save(core: &dyn EmulatorCore, storage: &AndroidStorage, game_title: &str) {
+    if let Some(save_data) = core.get_save_data() {
+        if !save_data.is_empty() {
+            if let Err(err) = storage.flush_sram(game_title, save_data) {
+                warn!("Failed to flush SRAM save file for {}: {}", game_title, err);
+            } else {
+                debug!("Flushed battery save data for {} ({} bytes)", game_title, save_data.len());
             }
         }
     }
@@ -67,41 +69,58 @@ fn android_main(app: AndroidApp) {
 
     info!("=== Starting PixelDrive v1.2 (Android NativeActivity) ===");
 
-    // Initialize Save directory in Android internal/external storage
-    if let Some(internal_path) = app.internal_data_path() {
-        info!("Android Internal Data Path: {}", internal_path.display());
-    }
-    if let Some(external_path) = app.external_data_path() {
-        info!("Android External Data Path: {}", external_path.display());
-    }
-    let _ = SaveManager::ensure_save_directory();
+    // 1. Initialize Android Scoped Storage directory
+    let base_storage_dir = app
+        .external_data_path()
+        .or_else(|| app.internal_data_path())
+        .unwrap_or_else(|| PathBuf::from("/data/local/tmp/pixeldrive"));
 
-    // Default core initialization (GBA 240x160)
+    let storage = AndroidStorage::new(base_storage_dir);
+    let current_game_title = "PixelDrive_GBA_Default".to_string();
+
+    // 2. Default core initialization (GBA 240x160)
     let mut active_core: Box<dyn EmulatorCore> = Box::new(GbaCore::new());
-    let (mut core_width, mut core_height) = active_core.display_dimensions();
+    let (core_width, core_height) = active_core.display_dimensions();
 
-    // Audio Producer placeholder for Android AAudio/Oboe backend
-    let (audio_producer, mut _audio_consumer) = AudioProducer::new_pair(4096 * 4);
-    active_core.load_save_data(&[]);
+    // 3. Initialize Android Low-Latency Audio Stream (AAudio/Oboe <= 30ms latency)
+    let mut audio_player: Option<AndroidAudioPlayer> = match AndroidAudioPlayer::new() {
+        Ok(player) => {
+            info!("Low-latency Android AAudio stream initialized successfully");
+            Some(player)
+        }
+        Err(err) => {
+            warn!("Failed to initialize Android AAudio stream: {:?}", err);
+            None
+        }
+    };
 
-    // Graphics and pipeline state
+    let audio_producer = audio_player.as_ref().map(|p| p.producer());
+
+    // Load any existing SRAM save data from scoped storage
+    if let Some(sram_data) = storage.load_save(&current_game_title) {
+        active_core.load_save_data(&sram_data);
+    } else {
+        active_core.load_save_data(&[]);
+    }
+
+    // 4. Graphics and pipeline state
     let mut pixels: Option<Pixels> = None;
     let mut shader_pipeline: Option<ShaderPipeline> = None;
     let mut touch_overlay_renderer: Option<TouchOverlayRenderer> = None;
-    let mut filter_mode = FilterMode::Nearest;
+    let filter_mode = FilterMode::Nearest;
     let mut window_width: u32 = 0;
     let mut window_height: u32 = 0;
 
-    // Input management and virtual touch overlay
+    // 5. Input management and virtual touch overlay
     let mut touch_overlay = TouchOverlay::new();
     let mut input_manager = InputManager::new();
 
-    // Lifecycle and state flags
+    // 6. Lifecycle and state flags
     let mut is_paused = false;
-    let mut fast_forward = false;
+    let fast_forward = false;
     let mut running = true;
 
-    // Timing and frame pacing
+    // 7. Timing and frame pacing
     let mut last_frame_time = Instant::now();
     let mut last_save_time = Instant::now();
     let auto_save_interval = Duration::from_secs(5);
@@ -128,7 +147,7 @@ fn android_main(app: AndroidApp) {
                                     window_width, window_height
                                 );
 
-                                let window_handle = AndroidWindowHandle {
+                                let window_handle = AndroidWindowWrapper {
                                     ptr: native_window.ptr().as_ptr() as *mut std::ffi::c_void,
                                 };
 
@@ -160,9 +179,8 @@ fn android_main(app: AndroidApp) {
                             }
                         }
 
-                        MainEvent::TermWindow { .. } => {
-                            info!("Android MainEvent: TermWindow — Releasing WGPU surface");
-                            // Release surface swapchain when backgrounded to prevent GPU driver deadlocks
+                        MainEvent::TerminateWindow { .. } => {
+                            info!("Android MainEvent: TerminateWindow — Releasing WGPU surface");
                             shader_pipeline = None;
                             touch_overlay_renderer = None;
                             pixels = None;
@@ -187,19 +205,25 @@ fn android_main(app: AndroidApp) {
                             }
                         }
 
-                        MainEvent::RedrawRequested { .. } => {
+                        MainEvent::RedrawNeeded { .. } => {
                             // Handled in main frame render loop below
                         }
 
                         MainEvent::Pause => {
-                            info!("Android MainEvent: Pause — Auto-pausing emulation and saving SRAM");
+                            info!("Android MainEvent: Pause — Auto-pausing audio, emulation, and flushing SRAM");
                             is_paused = true;
-                            flush_core_save(active_core.as_ref());
+                            if let Some(ref mut player) = audio_player {
+                                player.pause_audio_stream();
+                            }
+                            flush_core_save(active_core.as_ref(), &storage, &current_game_title);
                         }
 
-                        MainEvent::Resume => {
-                            info!("Android MainEvent: Resume — Resuming emulation");
+                        MainEvent::Resume { .. } => {
+                            info!("Android MainEvent: Resume — Resuming audio and emulation with clean buffer");
                             is_paused = false;
+                            if let Some(ref mut player) = audio_player {
+                                player.resume_audio_stream();
+                            }
                         }
 
                         MainEvent::InsetsChanged { .. } => {
@@ -208,7 +232,10 @@ fn android_main(app: AndroidApp) {
 
                         MainEvent::Destroy => {
                             info!("Android MainEvent: Destroy — Exiting PixelDrive");
-                            flush_core_save(active_core.as_ref());
+                            if let Some(ref mut player) = audio_player {
+                                player.pause_audio_stream();
+                            }
+                            flush_core_save(active_core.as_ref(), &storage, &current_game_title);
                             running = false;
                         }
 
@@ -301,7 +328,7 @@ fn android_main(app: AndroidApp) {
             // Periodic auto-save flush
             if now.duration_since(last_save_time) >= auto_save_interval {
                 last_save_time = now;
-                flush_core_save(active_core.as_ref());
+                flush_core_save(active_core.as_ref(), &storage, &current_game_title);
             }
 
             // Sub-millisecond fractional frame pacing (59.7275 Hz normal / 119.455 Hz fast-forward)
@@ -323,7 +350,9 @@ fn android_main(app: AndroidApp) {
 
                     let audio_samples = active_core.audio_buffer();
                     if !audio_samples.is_empty() {
-                        audio_producer.push_f32_slice(&audio_samples);
+                        if let Some(ref prod) = audio_producer {
+                            prod.push_f32_slice(&audio_samples);
+                        }
                     }
                 }
 

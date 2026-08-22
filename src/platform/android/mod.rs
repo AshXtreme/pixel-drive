@@ -1,5 +1,8 @@
-//! Android NativeActivity platform bindings, lifecycle management, and WGPU surface initialization.
+//! Android NativeActivity platform bindings, low-latency audio, SAF storage, and lifecycle management.
 
 pub mod activity;
+pub mod audio;
+pub mod storage;
 
-pub use activity::*;
+pub use audio::*;
+pub use storage::*;

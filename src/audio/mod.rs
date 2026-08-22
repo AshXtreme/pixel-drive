@@ -396,6 +396,14 @@ impl AudioProducer {
         self.muted.load(Ordering::Acquire)
     }
 
+    /// Clears any cached resampler frames, pending work buffer, and integral rate controller error.
+    pub fn clear_buffer(&self) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.work_buf.clear();
+            inner.integral_err = 0.0;
+        }
+    }
+
     /// Set the input sample rate from the active emulation core (e.g. 65536.0 Hz for GBA).
     pub fn set_input_sample_rate(&self, in_rate: f64) {
         if let Ok(mut inner) = self.inner.lock() {
@@ -682,6 +690,44 @@ impl AudioPlayer {
     /// Returns master volume (0.0 to 1.0).
     pub fn volume(&self) -> f32 {
         self.producer.volume()
+    }
+}
+
+impl crate::platform::PlatformAudio for AudioPlayer {
+    fn producer(&self) -> AudioProducer {
+        self.producer.clone()
+    }
+
+    fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    fn pause(&mut self) {
+        AudioPlayer::pause(self);
+    }
+
+    fn resume(&mut self) {
+        AudioPlayer::resume(self);
+    }
+
+    fn set_muted(&self, muted: bool) {
+        AudioPlayer::set_muted(self, muted);
+    }
+
+    fn is_muted(&self) -> bool {
+        AudioPlayer::is_muted(self)
+    }
+
+    fn set_volume(&self, volume: f32) {
+        AudioPlayer::set_volume(self, volume);
+    }
+
+    fn volume(&self) -> f32 {
+        AudioPlayer::volume(self)
+    }
+
+    fn set_fast_forward(&self, enabled: bool) {
+        AudioPlayer::set_fast_forward(self, enabled);
     }
 }
 

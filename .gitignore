@@ -22,3 +22,10 @@ saves/
 # IDE & Editor files
 .vscode/
 .idea/
+
+# Android & Gradle build artifacts
+.gradle/
+android/build/
+android/app/build/
+android/.gradle/
+local.properties
