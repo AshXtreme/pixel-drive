@@ -208,6 +208,11 @@ impl AndroidAudioPlayer {
         &self.device_name
     }
 
+    /// Sets fast-forward audio mute/throttling state.
+    pub fn set_fast_forward(&self, enabled: bool) {
+        self.producer.set_fast_forward(enabled);
+    }
+
     /// Returns the active stream configuration.
     pub fn stream_config(&self) -> &cpal::StreamConfig {
         &self.stream_config

@@ -8,7 +8,43 @@ use crate::save::SaveManager;
 pub mod android;
 
 #[cfg(target_os = "android")]
-pub use android::{AndroidAudioPlayer, AndroidStorage};
+pub use android::{AndroidAudioPlayer, AndroidHaptics, AndroidStorage};
+
+/// Unified platform abstraction for tactile haptic vibration feedback.
+pub trait PlatformHaptics {
+    /// Dispatches standard tactile click vibration impulse (~20ms).
+    fn vibrate_click(&self);
+
+    /// Dispatches custom vibration with duration (ms) and amplitude (0-255).
+    fn vibrate_custom(&self, duration_ms: u64, amplitude: u8);
+
+    /// Sets whether tactile haptic feedback is enabled.
+    fn set_enabled(&self, enabled: bool);
+
+    /// Returns whether tactile haptic feedback is enabled.
+    fn is_enabled(&self) -> bool;
+}
+
+/// No-op desktop haptics implementation for non-mobile platforms.
+#[derive(Debug, Clone, Default)]
+pub struct DesktopHaptics {
+    enabled: bool,
+}
+
+impl DesktopHaptics {
+    pub fn new() -> Self {
+        Self { enabled: false }
+    }
+}
+
+impl PlatformHaptics for DesktopHaptics {
+    fn vibrate_click(&self) {}
+    fn vibrate_custom(&self, _duration_ms: u64, _amplitude: u8) {}
+    fn set_enabled(&self, _enabled: bool) {}
+    fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+}
 
 /// Unified platform abstraction for host audio streams (Desktop cpal vs. Android AAudio/Oboe).
 pub trait PlatformAudio {

@@ -1,5 +1,5 @@
 //! Android NativeActivity lifecycle handler, WGPU/Pixels surface management,
-//! low-latency audio lifecycle, SAF scoped storage, touch event processing, and frame pacing loop.
+//! low-latency audio lifecycle, tactile haptics, SAF scoped storage, and thermal frame pacing.
 
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -15,8 +15,9 @@ use raw_window_handle::{
 
 use crate::core::EmulatorCore;
 use crate::gba::GbaCore;
-use crate::input::{InputManager, InputSource, TouchOverlay};
+use crate::input::{InputManager, InputSource, TouchAction, TouchOverlay};
 use crate::platform::android::audio::AndroidAudioPlayer;
+use crate::platform::android::haptics::AndroidHaptics;
 use crate::platform::android::storage::AndroidStorage;
 use crate::platform::PlatformStorage;
 use crate::render::{FilterMode, ShaderPipeline, TouchOverlayRenderer};
@@ -78,11 +79,27 @@ fn android_main(app: AndroidApp) {
     let storage = AndroidStorage::new(base_storage_dir);
     let current_game_title = "PixelDrive_GBA_Default".to_string();
 
-    // 2. Default core initialization (GBA 240x160)
+    // 2. Initialize Native Android Tactile Haptics Engine via JNI
+    let jvm_ptr = app.vm_as_ptr();
+    let activity_ptr = app.activity_as_ptr();
+    let haptics = if !jvm_ptr.is_null() && !activity_ptr.is_null() {
+        let vm = unsafe { jni::JavaVM::from_raw(jvm_ptr.cast()) };
+        match vm {
+            Ok(jvm) => AndroidHaptics::new(jvm, activity_ptr),
+            Err(err) => {
+                warn!("Failed to initialize JavaVM for haptics: {:?}", err);
+                AndroidHaptics::dummy()
+            }
+        }
+    } else {
+        AndroidHaptics::dummy()
+    };
+
+    // 3. Default core initialization (GBA 240x160)
     let mut active_core: Box<dyn EmulatorCore> = Box::new(GbaCore::new());
     let (core_width, core_height) = active_core.display_dimensions();
 
-    // 3. Initialize Android Low-Latency Audio Stream (AAudio/Oboe <= 30ms latency)
+    // 4. Initialize Android Low-Latency Audio Stream (AAudio/Oboe <= 30ms latency)
     let mut audio_player: Option<AndroidAudioPlayer> = match AndroidAudioPlayer::new() {
         Ok(player) => {
             info!("Low-latency Android AAudio stream initialized successfully");
@@ -103,7 +120,7 @@ fn android_main(app: AndroidApp) {
         active_core.load_save_data(&[]);
     }
 
-    // 4. Graphics and pipeline state
+    // 5. Graphics and pipeline state
     let mut pixels: Option<Pixels> = None;
     let mut shader_pipeline: Option<ShaderPipeline> = None;
     let mut touch_overlay_renderer: Option<TouchOverlayRenderer> = None;
@@ -111,16 +128,16 @@ fn android_main(app: AndroidApp) {
     let mut window_width: u32 = 0;
     let mut window_height: u32 = 0;
 
-    // 5. Input management and virtual touch overlay
+    // 6. Input management and virtual touch overlay
     let mut touch_overlay = TouchOverlay::new();
     let mut input_manager = InputManager::new();
 
-    // 6. Lifecycle and state flags
+    // 7. Lifecycle and state flags
     let mut is_paused = false;
-    let fast_forward = false;
+    let mut fast_forward = false;
     let mut running = true;
 
-    // 7. Timing and frame pacing
+    // 8. Frame pacing and thermal management
     let mut last_frame_time = Instant::now();
     let mut last_save_time = Instant::now();
     let auto_save_interval = Duration::from_secs(5);
@@ -128,7 +145,7 @@ fn android_main(app: AndroidApp) {
     while running {
         // 1. Process Android NativeActivity lifecycle and window events
         let timeout = if is_paused || pixels.is_none() {
-            None // Block until next event arrives when paused or without a surface
+            None // Block without CPU polling when paused or surface unavailable (Thermal / Battery saving)
         } else {
             Some(Duration::from_millis(1)) // Non-blocking polling during active gameplay
         };
@@ -303,8 +320,45 @@ fn android_main(app: AndroidApp) {
                         let touch_state = touch_overlay.poll();
                         let prev_state = input_manager.poll_merged();
                         let changes = touch_state.diff(prev_state);
+                        let mut newly_pressed = false;
+
                         for (btn, pressed) in changes {
+                            if pressed {
+                                newly_pressed = true;
+                            }
                             active_core.handle_input(btn, pressed);
+                        }
+
+                        // Tactile Haptic Trigger on virtual button activation
+                        if newly_pressed && touch_overlay.is_haptics_enabled() {
+                            haptics.vibrate_click();
+                        }
+
+                        // Process non-joypad HUD actions (Fast-Forward, Menu)
+                        for hud_action in touch_overlay.poll_actions() {
+                            if touch_overlay.is_haptics_enabled() {
+                                haptics.vibrate_click();
+                            }
+                            match hud_action {
+                                TouchAction::ToggleFastForward => {
+                                    fast_forward = !fast_forward;
+                                    if let Some(ref player) = audio_player {
+                                        player.set_fast_forward(fast_forward);
+                                    }
+                                }
+                                TouchAction::OpenMenu => {
+                                    is_paused = !is_paused;
+                                    if is_paused {
+                                        if let Some(ref mut player) = audio_player {
+                                            player.pause_audio_stream();
+                                        }
+                                        flush_core_save(active_core.as_ref(), &storage, &current_game_title);
+                                    } else if let Some(ref mut player) = audio_player {
+                                        player.resume_audio_stream();
+                                    }
+                                }
+                                _ => {}
+                            }
                         }
 
                         InputStatus::Handled
@@ -321,7 +375,7 @@ fn android_main(app: AndroidApp) {
             }) {}
         }
 
-        // 3. Emulation Stepping & Frame Pacing
+        // 3. Emulation Stepping & Frame Pacing with Thermal Management
         if !is_paused && pixels.is_some() {
             let now = Instant::now();
 
@@ -394,6 +448,13 @@ fn android_main(app: AndroidApp) {
                             warn!("Pixels Android render error: {:?}", err);
                         }
                     }
+                }
+            } else {
+                // Thermal sleep loop: Sleep remaining time to prevent thread spinning & thermal throttling
+                let remaining = target_frame_duration - elapsed;
+                let sleep_margin = Duration::from_micros(500);
+                if remaining > sleep_margin {
+                    std::thread::sleep(remaining - sleep_margin);
                 }
             }
         }

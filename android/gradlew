@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+# ==============================================================================
+# Gradle start up script for POSIX systems
+# ==============================================================================
+
+set -e
+
+APP_BASE_NAME=`basename "$0"`
+APP_HOME="`cd "\`dirname "$0"\`" >/dev/null 2>&1 && pwd`"
+
+# Check if system gradle exists
+if command -v gradle >/dev/null 2>&1; then
+    exec gradle "$@"
+fi
+
+# Locate java
+if [ -n "$JAVA_HOME" ] ; then
+    if [ -x "$JAVA_HOME/jre/sh/java" ] ; then
+        JAVACMD="$JAVA_HOME/jre/sh/java"
+    else
+        JAVACMD="$JAVA_HOME/bin/java"
+    fi
+else
+    JAVACMD="java"
+fi
+
+if ! command -v "$JAVACMD" >/dev/null 2>&1; then
+    echo "ERROR: JAVA_HOME is not set and no 'java' command could be found in your PATH." >&2
+    exit 1
+fi
+
+WRAPPER_JAR="$APP_HOME/gradle/wrapper/gradle-wrapper.jar"
+
+if [ -f "$WRAPPER_JAR" ]; then
+    exec "$JAVACMD" -jar "$WRAPPER_JAR" "$@"
+fi
+
+# If wrapper jar is not present, auto-download gradle if curl/wget is available
+GRADLE_VERSION="8.6"
+GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}"
+GRADLE_DIR="$GRADLE_USER_HOME/wrapper/dists/gradle-${GRADLE_VERSION}-bin"
+
+if [ ! -d "$GRADLE_DIR" ]; then
+    mkdir -p "$GRADLE_DIR"
+    ZIP_FILE="$GRADLE_DIR/gradle-${GRADLE_VERSION}-bin.zip"
+    echo "Downloading Gradle ${GRADLE_VERSION}..."
+    if command -v curl >/dev/null 2>&1; then
+        curl -sSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o "$ZIP_FILE"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -O "$ZIP_FILE"
+    fi
+    if [ -f "$ZIP_FILE" ]; then
+        unzip -q -o "$ZIP_FILE" -d "$GRADLE_DIR"
+        rm -f "$ZIP_FILE"
+    fi
+fi
+
+GRADLE_BIN=$(find "$GRADLE_DIR" -name "gradle" -type f -perm +111 2>/dev/null | head -n 1)
+
+if [ -n "$GRADLE_BIN" ] && [ -x "$GRADLE_BIN" ]; then
+    exec "$GRADLE_BIN" "$@"
+else
+    echo "ERROR: Unable to download or execute Gradle." >&2
+    exit 1
+fi

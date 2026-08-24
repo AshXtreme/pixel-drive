@@ -434,6 +434,7 @@ pub struct TouchInputManager {
     active_touches: HashMap<u64, TouchPoint>,
     pending_actions: Vec<TouchAction>,
     pressed_mask: u32,
+    prev_pressed_mask: u32,
 }
 
 /// Alias for backwards compatibility with existing codebase.
@@ -478,6 +479,7 @@ impl TouchInputManager {
             active_touches: HashMap::new(),
             pending_actions: Vec::new(),
             pressed_mask: 0,
+            prev_pressed_mask: 0,
         };
 
         manager.apply_preset(preset);
@@ -807,6 +809,29 @@ impl TouchInputManager {
     pub fn poll_actions(&mut self) -> Vec<TouchAction> {
         let actions = std::mem::take(&mut self.pending_actions);
         actions
+    }
+
+    /// Returns the 32-bit mask of virtual buttons that transitioned from unpressed to pressed
+    /// since the last call, updating the previous mask cache.
+    pub fn poll_newly_pressed_bits(&mut self) -> u32 {
+        let newly_pressed = self.pressed_mask & !self.prev_pressed_mask;
+        self.prev_pressed_mask = self.pressed_mask;
+        newly_pressed
+    }
+
+    /// Checks if any virtual button has transitioned from unpressed to pressed.
+    pub fn has_new_press(&mut self) -> bool {
+        self.poll_newly_pressed_bits() != 0
+    }
+
+    /// Sets whether tactile haptic feedback is enabled for on-screen touch button presses.
+    pub fn set_haptics_enabled(&mut self, enabled: bool) {
+        self.haptics_enabled = enabled;
+    }
+
+    /// Returns whether tactile haptic feedback is enabled.
+    pub fn is_haptics_enabled(&self) -> bool {
+        self.haptics_enabled
     }
 }
 

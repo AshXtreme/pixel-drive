@@ -64,6 +64,48 @@ jobs:
       - name: Upload macOS Release Asset
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/PixelDrive-1.0.0.dmg
+          files: dist/PixelDrive-*.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android NDK
+        run: |
+          sdkmanager --install "ndk;26.3.11579264"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> $GITHUB_ENV
+          echo "NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> $GITHUB_ENV
+
+      - name: Install Rust Toolchain & aarch64 target
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk
+
+      - name: Build & Package Android APK
+        run: |
+          chmod +x scripts/package_android.sh
+          ./scripts/package_android.sh --release
+
+      - name: Upload Android Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/PixelDrive-Android-v1.2.0.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
