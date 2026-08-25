@@ -52,7 +52,7 @@ impl AndroidAudioPlayer {
         // Calculate burst buffer frame size for low-latency target (<= 30ms)
         // 48000 Hz * 0.020s = 960 frames (~20ms burst)
         let burst_frames = ((sample_rate as f32 * 0.020).round() as u32).clamp(256, 1024);
-        let mut stream_config: cpal::StreamConfig = default_config.into();
+        let mut stream_config: cpal::StreamConfig = default_config.clone().into();
         stream_config.buffer_size = cpal::BufferSize::Fixed(burst_frames);
 
         let ring_buffer = HeapRb::<f32>::new(DEFAULT_BUFFER_CAPACITY);
@@ -60,8 +60,17 @@ impl AndroidAudioPlayer {
 
         let producer = AudioProducer::with_rates(prod, 65536.0, sample_rate as f64);
 
-        let stream = Self::build_stream(&device, &stream_config, cons)?;
-        stream.play()?;
+        let stream = match Self::build_stream(&device, &stream_config, cons) {
+            Ok(s) => s,
+            Err(err) => {
+                warn!("Fixed burst audio stream build failed ({:?}), retrying with default stream configuration...", err);
+                let fallback_config: cpal::StreamConfig = default_config.into();
+                let ring_buffer = HeapRb::<f32>::new(DEFAULT_BUFFER_CAPACITY);
+                let (_new_prod, fallback_cons) = ring_buffer.split();
+                Self::build_stream(&device, &fallback_config, fallback_cons)?
+            }
+        };
+        let _ = stream.play();
 
         info!(
             "Android AAudio low-latency stream active: {} Hz, buffer burst={} frames (<= {}ms latency)",

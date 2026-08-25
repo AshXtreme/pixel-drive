@@ -9,9 +9,13 @@ set -e
 APP_BASE_NAME=`basename "$0"`
 APP_HOME="`cd "\`dirname "$0"\`" >/dev/null 2>&1 && pwd`"
 
-# Check if system gradle exists
-if command -v gradle >/dev/null 2>&1; then
-    exec gradle "$@"
+# Auto-detect compatible JDK on macOS (prefer Java 21 or 17)
+if [ -x "/usr/libexec/java_home" ]; then
+    COMPAT_JAVA=$(/usr/libexec/java_home -v 21 2>/dev/null || /usr/libexec/java_home -v 17 2>/dev/null || true)
+    if [ -n "$COMPAT_JAVA" ] && [ -d "$COMPAT_JAVA" ]; then
+        export JAVA_HOME="$COMPAT_JAVA"
+        export PATH="$JAVA_HOME/bin:$PATH"
+    fi
 fi
 
 # Locate java
@@ -34,6 +38,11 @@ WRAPPER_JAR="$APP_HOME/gradle/wrapper/gradle-wrapper.jar"
 
 if [ -f "$WRAPPER_JAR" ]; then
     exec "$JAVACMD" -jar "$WRAPPER_JAR" "$@"
+fi
+
+# Check if system gradle exists
+if command -v gradle >/dev/null 2>&1; then
+    exec gradle "$@"
 fi
 
 # If wrapper jar is not present, auto-download gradle if curl/wget is available
@@ -61,6 +70,6 @@ GRADLE_BIN=$(find "$GRADLE_DIR" -name "gradle" -type f -perm +111 2>/dev/null | 
 if [ -n "$GRADLE_BIN" ] && [ -x "$GRADLE_BIN" ]; then
     exec "$GRADLE_BIN" "$@"
 else
-    echo "ERROR: Unable to download or execute Gradle." >&2
+    echo "ERROR: Unable to execute Gradle." >&2
     exit 1
 fi

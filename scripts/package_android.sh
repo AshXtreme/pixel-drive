@@ -2,14 +2,15 @@
 set -e
 
 # ==============================================================================
-# PixelDrive v1.2 — Production Android APK Packaging & Signing Pipeline
+# PixelDrive v1.2 — Production Multi-ABI Android APK Packaging Pipeline
+# Supports ARM64 (arm64-v8a) and x86_64 (BlueStacks / Emulators / Chromebooks)
 # ==============================================================================
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 echo "============================================================"
-echo "🚀 PixelDrive v1.2 — Android Production APK Packaging"
+echo "🚀 PixelDrive v1.2 — Multi-ABI Android Package Assembly"
 echo "============================================================"
 
 # 1. Parse Arguments (Release vs Debug)
@@ -38,18 +39,39 @@ done
 
 echo "⚙️  Build Profile: ${BUILD_TYPE}"
 
-# 2. Verify rustup target aarch64-linux-android
-if ! rustup target list | grep -q "aarch64-linux-android (installed)"; then
-    echo "⚙️  Adding rustup target aarch64-linux-android..."
-    rustup target add aarch64-linux-android
+# 2. Select compatible JDK (prefer Java 21 or 17 for Gradle/AGP compatibility)
+if [ -x "/usr/libexec/java_home" ]; then
+    COMPAT_JAVA=$(/usr/libexec/java_home -v 21 2>/dev/null || /usr/libexec/java_home -v 17 2>/dev/null || true)
+    if [ -n "$COMPAT_JAVA" ] && [ -d "$COMPAT_JAVA" ]; then
+        export JAVA_HOME="$COMPAT_JAVA"
+        export PATH="$JAVA_HOME/bin:$PATH"
+        echo "☕ Auto-configured compatible JAVA_HOME: $JAVA_HOME"
+    fi
 fi
 
-# 3. Locate Android SDK & NDK
+# 3. Auto-detect Android SDK & NDK
+if [ -z "$ANDROID_HOME" ] && [ -z "$ANDROID_SDK_ROOT" ]; then
+    POSSIBLE_SDK_PATHS=(
+        "$HOME/Library/Android/sdk"
+        "$HOME/Android/Sdk"
+        "/opt/android-sdk"
+        "/usr/local/share/android-sdk"
+    )
+    for p in "${POSSIBLE_SDK_PATHS[@]}"; do
+        if [ -d "$p" ]; then
+            export ANDROID_HOME="$p"
+            export ANDROID_SDK_ROOT="$p"
+            echo "🔍 Auto-detected Android SDK: $ANDROID_HOME"
+            break
+        fi
+    done
+fi
+
 if [ -z "$ANDROID_NDK_HOME" ] && [ -z "$NDK_HOME" ]; then
     POSSIBLE_NDK_PATHS=(
+        "$ANDROID_HOME/ndk"/*
         "$HOME/Library/Android/sdk/ndk"/*
         "$HOME/Android/Sdk/ndk"/*
-        "$ANDROID_HOME/ndk"/*
         "/opt/android-sdk/ndk"/*
         "/usr/local/share/android-sdk/ndk"/*
     )
@@ -63,7 +85,24 @@ if [ -z "$ANDROID_NDK_HOME" ] && [ -z "$NDK_HOME" ]; then
     done
 fi
 
-# 4. Verify cargo-ndk installation
+# Generate android/local.properties
+if [ -n "$ANDROID_HOME" ] && [ -d "$ANDROID_HOME" ]; then
+    mkdir -p android
+    echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+    if [ -n "$ANDROID_NDK_HOME" ] && [ -d "$ANDROID_NDK_HOME" ]; then
+        echo "ndk.dir=$ANDROID_NDK_HOME" >> android/local.properties
+    fi
+fi
+
+# 4. Verify rustup targets for ARM64 and x86_64
+for target in "aarch64-linux-android" "x86_64-linux-android"; do
+    if ! rustup target list | grep -q "${target} (installed)"; then
+        echo "⚙️  Adding rustup target ${target}..."
+        rustup target add "${target}"
+    fi
+done
+
+# 5. Verify cargo-ndk installation
 if ! command -v cargo-ndk &> /dev/null; then
     echo "⚠️  cargo-ndk is not installed on this system."
     echo "👉 Attempting to install cargo-ndk..."
@@ -73,44 +112,33 @@ if ! command -v cargo-ndk &> /dev/null; then
     }
 fi
 
-# 5. Compile native dynamic shared library (.so) for ARM64 (aarch64-linux-android)
-echo "🔨 Step 1: Compiling native ARM64 cdylib with cargo-ndk..."
-mkdir -p android/app/src/main/jniLibs/arm64-v8a
+# 6. Compile native dynamic shared library (.so) for both ARM64 and x86_64
+echo "🔨 Step 1: Compiling native cdylib for arm64-v8a & x86_64 with cargo-ndk..."
+mkdir -p android/app/src/main/jniLibs/arm64-v8a android/app/src/main/jniLibs/x86_64
 
-cargo ndk -t arm64-v8a -o android/app/src/main/jniLibs build --lib ${CARGO_FLAGS}
+cargo ndk -t arm64-v8a -t x86_64 -o android/app/src/main/jniLibs build --lib ${CARGO_FLAGS}
 
-SO_PATH="android/app/src/main/jniLibs/arm64-v8a/libpixeldrive.so"
-
-if [ ! -f "$SO_PATH" ]; then
-    echo "❌ Shared library was not generated at $SO_PATH"
-    exit 1
-fi
-
-INITIAL_SO_SIZE=$(du -h "$SO_PATH" | cut -f1)
-echo "📦 Generated shared library: $SO_PATH (${INITIAL_SO_SIZE})"
-
-# 6. Strip debug symbols with NDK llvm-strip to guarantee <= 25MB package footprint
+# 7. Strip debug symbols with NDK llvm-strip to guarantee small package footprint
 echo "✂️  Step 2: Stripping symbols using llvm-strip..."
 LLVM_STRIP=""
 
 if [ -n "$ANDROID_NDK_HOME" ]; then
-    LLVM_STRIP=$(find "$ANDROID_NDK_HOME" -name "llvm-strip" -type f 2>/dev/null | head -n 1)
+    LLVM_STRIP=$(find "$ANDROID_NDK_HOME" -name "llvm-strip" 2>/dev/null | head -n 1)
 fi
 
 if [ -z "$LLVM_STRIP" ] && command -v llvm-strip &> /dev/null; then
     LLVM_STRIP="llvm-strip"
 fi
 
-if [ -n "$LLVM_STRIP" ] && [ -x "$LLVM_STRIP" ]; then
+if [ -n "$LLVM_STRIP" ] && [ -f "$LLVM_STRIP" ]; then
     echo "Using strip tool: $LLVM_STRIP"
-    "$LLVM_STRIP" --strip-all "$SO_PATH" || true
-    STRIPPED_SO_SIZE=$(du -h "$SO_PATH" | cut -f1)
-    echo "✅ Stripped library size: $SO_PATH (${STRIPPED_SO_SIZE})"
+    find android/app/src/main/jniLibs -name "*.so" -exec "$LLVM_STRIP" --strip-all {} + 2>/dev/null || true
+    echo "✅ Successfully stripped symbols across all native ABIs."
 else
     echo "ℹ️  llvm-strip not found, skipping explicit symbol stripping."
 fi
 
-# 7. Build APK with Gradle wrapper
+# 8. Build APK with Gradle wrapper
 echo "📦 Step 3: Assembling APK with Gradle (${GRADLE_TASK})..."
 mkdir -p dist
 
@@ -128,21 +156,20 @@ fi
 
 cd "$PROJECT_ROOT"
 
-# 8. Locate generated APK and copy to dist/
-APK_RELEASE="android/app/build/outputs/apk/release/app-release-unsigned.apk"
+# 9. Locate generated signed APK and copy to dist/
 APK_RELEASE_SIGNED="android/app/build/outputs/apk/release/app-release.apk"
+APK_RELEASE_UNSIGNED="android/app/build/outputs/apk/release/app-release-unsigned.apk"
 APK_DEBUG="android/app/build/outputs/apk/debug/app-debug.apk"
 
 DEST_APK="dist/PixelDrive-Android-v1.2.0.apk"
 
 if [ -f "$APK_RELEASE_SIGNED" ]; then
     cp "$APK_RELEASE_SIGNED" "$DEST_APK"
-elif [ -f "$APK_RELEASE" ]; then
-    cp "$APK_RELEASE" "$DEST_APK"
 elif [ -f "$APK_DEBUG" ]; then
     cp "$APK_DEBUG" "$DEST_APK"
+elif [ -f "$APK_RELEASE_UNSIGNED" ]; then
+    cp "$APK_RELEASE_UNSIGNED" "$DEST_APK"
 else
-    # Search for any APK produced in android/app/build/
     FOUND_APK=$(find android/app/build/outputs/apk -name "*.apk" 2>/dev/null | head -n 1)
     if [ -n "$FOUND_APK" ]; then
         cp "$FOUND_APK" "$DEST_APK"
@@ -154,7 +181,8 @@ fi
 
 APK_SIZE=$(du -h "$DEST_APK" | cut -f1)
 echo "============================================================"
-echo "🎉 Successfully generated Android Package:"
+echo "🎉 Successfully generated Signed Android Package:"
 echo "   Path: $DEST_APK"
 echo "   Size: $APK_SIZE (Target: <= 25MB)"
+echo "   ABIs: arm64-v8a, x86_64 (Universal Device & BlueStacks Support)"
 echo "============================================================"

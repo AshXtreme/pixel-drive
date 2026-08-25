@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use android_activity::input::{InputEvent, KeyAction, MotionAction};
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
 use log::{debug, error, info, warn};
-use pixels::{Pixels, SurfaceTexture};
+use pixels::{Pixels, PixelsBuilder, SurfaceTexture};
 use raw_window_handle::{
     AndroidDisplayHandle, AndroidNdkWindowHandle, HandleError, HasDisplayHandle, HasWindowHandle,
     RawDisplayHandle, RawWindowHandle,
@@ -46,6 +46,33 @@ impl HasDisplayHandle for AndroidWindowWrapper {
     }
 }
 
+/// Helper to create Pixels WGPU surface with automatic Vulkan -> GLES fallback.
+fn create_pixels_surface(
+    core_width: u32,
+    core_height: u32,
+    window_width: u32,
+    window_height: u32,
+    native_window_ptr: *mut std::ffi::c_void,
+) -> Result<Pixels<'static>, pixels::Error> {
+    let window_handle = AndroidWindowWrapper { ptr: native_window_ptr };
+    let surface_texture = SurfaceTexture::new(window_width, window_height, window_handle);
+
+    // Primary: OpenGL ES (EGL / GLES3) is 100% universal across all physical devices and Android emulators
+    PixelsBuilder::new(core_width, core_height, surface_texture)
+        .wgpu_backend(pixels::wgpu::Backends::GL)
+        .present_mode(pixels::wgpu::PresentMode::Fifo)
+        .build()
+        .or_else(|err| {
+            warn!("Pixels GL backend initialization failed ({:?}), retrying with Vulkan...", err);
+            let window_handle = AndroidWindowWrapper { ptr: native_window_ptr };
+            let surface_texture = SurfaceTexture::new(window_width, window_height, window_handle);
+            PixelsBuilder::new(core_width, core_height, surface_texture)
+                .wgpu_backend(pixels::wgpu::Backends::VULKAN)
+                .present_mode(pixels::wgpu::PresentMode::AutoVsync)
+                .build()
+        })
+}
+
 /// Flushes battery-backed SRAM save data from the active core to scoped storage.
 fn flush_core_save(core: &dyn EmulatorCore, storage: &AndroidStorage, game_title: &str) {
     if let Some(save_data) = core.get_save_data() {
@@ -68,12 +95,27 @@ fn android_main(app: AndroidApp) {
             .with_tag("PixelDrive"),
     );
 
+    std::panic::set_hook(Box::new(|panic_info| {
+        error!("CRITICAL RUST PANIC in PixelDrive: {:?}", panic_info);
+    }));
+
     info!("=== Starting PixelDrive v1.2 (Android NativeActivity) ===");
 
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        run_android_app(app);
+    }));
+
+    if let Err(err) = result {
+        error!("PixelDrive runtime terminated with panic: {:?}", err);
+    }
+}
+
+/// Core application event and rendering loop.
+fn run_android_app(app: AndroidApp) {
     // 1. Initialize Android Scoped Storage directory
     let base_storage_dir = app
-        .external_data_path()
-        .or_else(|| app.internal_data_path())
+        .internal_data_path()
+        .or_else(|| app.external_data_path())
         .unwrap_or_else(|| PathBuf::from("/data/local/tmp/pixeldrive"));
 
     let storage = AndroidStorage::new(base_storage_dir);
@@ -145,9 +187,9 @@ fn android_main(app: AndroidApp) {
     while running {
         // 1. Process Android NativeActivity lifecycle and window events
         let timeout = if is_paused || pixels.is_none() {
-            None // Block without CPU polling when paused or surface unavailable (Thermal / Battery saving)
+            Some(Duration::from_millis(16)) // 16ms poll cadence while waiting for window/paused
         } else {
-            Some(Duration::from_millis(1)) // Non-blocking polling during active gameplay
+            Some(Duration::from_millis(1)) // 1ms cadence during active frame stepping
         };
 
         app.poll_events(timeout, |poll_event| {
@@ -157,40 +199,38 @@ fn android_main(app: AndroidApp) {
                         MainEvent::InitWindow { .. } => {
                             info!("Android MainEvent: InitWindow");
                             if let Some(native_window) = app.native_window() {
-                                window_width = native_window.width() as u32;
-                                window_height = native_window.height() as u32;
+                                window_width = (native_window.width() as u32).max(240);
+                                window_height = (native_window.height() as u32).max(160);
                                 info!(
                                     "Native window acquired: {}x{}",
                                     window_width, window_height
                                 );
 
-                                let window_handle = AndroidWindowWrapper {
-                                    ptr: native_window.ptr().as_ptr() as *mut std::ffi::c_void,
-                                };
-
-                                let surface_texture = SurfaceTexture::new(
+                                match create_pixels_surface(
+                                    core_width,
+                                    core_height,
                                     window_width,
                                     window_height,
-                                    window_handle,
-                                );
-
-                                match Pixels::new(core_width, core_height, surface_texture) {
+                                    native_window.ptr().as_ptr() as *mut std::ffi::c_void,
+                                ) {
                                     Ok(px) => {
+                                        let surface_format = px.render_texture_format();
+                                        info!("Configuring shader pipeline with surface format: {:?}", surface_format);
                                         let pipeline = ShaderPipeline::new(
                                             px.device(),
-                                            pixels::wgpu::TextureFormat::Rgba8UnormSrgb,
+                                            surface_format,
                                         );
                                         let overlay = TouchOverlayRenderer::new(
                                             px.device(),
-                                            pixels::wgpu::TextureFormat::Rgba8UnormSrgb,
+                                            surface_format,
                                         );
                                         shader_pipeline = Some(pipeline);
                                         touch_overlay_renderer = Some(overlay);
                                         pixels = Some(px);
-                                        info!("WGPU Vulkan/GLES surface, ShaderPipeline, and TouchOverlayRenderer successfully initialized!");
+                                        info!("WGPU surface, ShaderPipeline, and TouchOverlayRenderer successfully initialized!");
                                     }
                                     Err(err) => {
-                                        error!("Failed to create Pixels WGPU surface: {:?}", err);
+                                        error!("Failed to create Pixels surface: {:?}", err);
                                     }
                                 }
                             }
@@ -205,8 +245,8 @@ fn android_main(app: AndroidApp) {
 
                         MainEvent::WindowResized { .. } => {
                             if let Some(native_window) = app.native_window() {
-                                window_width = native_window.width() as u32;
-                                window_height = native_window.height() as u32;
+                                window_width = (native_window.width() as u32).max(240);
+                                window_height = (native_window.height() as u32).max(160);
                                 debug!(
                                     "Android WindowResized: {}x{}",
                                     window_width, window_height
@@ -284,8 +324,8 @@ fn android_main(app: AndroidApp) {
                                         pointer.pointer_id() as u64,
                                         pointer.x(),
                                         pointer.y(),
-                                        window_width as f32,
-                                        window_height as f32,
+                                        window_width.max(1) as f32,
+                                        window_height.max(1) as f32,
                                     );
                                 }
                             }
@@ -296,8 +336,8 @@ fn android_main(app: AndroidApp) {
                                         pointer.pointer_id() as u64,
                                         pointer.x(),
                                         pointer.y(),
-                                        window_width as f32,
-                                        window_height as f32,
+                                        window_width.max(1) as f32,
+                                        window_height.max(1) as f32,
                                     );
                                 }
                             }

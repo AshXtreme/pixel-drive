@@ -34,9 +34,9 @@ parking_lot = "0.12"
 raw-window-handle = "0.6"
 
 [target.'cfg(target_os = "android")'.dependencies]
-android-activity = { version = "0.6", features = ["native-activity"] }
-ndk = { version = "0.9", features = ["rwh_05", "rwh_06"] }
-ndk-sys = "0.6"
+android-activity = { version = "0.5", features = ["native-activity"] }
+ndk = { version = "0.8", features = ["rwh_05"] }
+ndk-sys = "0.5"
 jni = "0.21"
 android_logger = "0.14"
 winit = { version = "0.29", default-features = false, features = ["android-native-activity", "rwh_05"] }

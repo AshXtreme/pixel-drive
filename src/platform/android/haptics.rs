@@ -39,7 +39,7 @@ impl AndroidHaptics {
     pub fn new(vm: JavaVM, activity_raw: *mut std::ffi::c_void) -> Self {
         let arc_vm = Arc::new(vm);
         let activity_ref = if !activity_raw.is_null() {
-            if let Ok(env) = arc_vm.attach_current_thread() {
+            if let Ok(mut env) = arc_vm.attach_current_thread() {
                 let local_obj = unsafe { JObject::from_raw(activity_raw as _) };
                 env.new_global_ref(local_obj).ok()
             } else {
