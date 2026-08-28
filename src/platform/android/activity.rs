@@ -239,6 +239,9 @@ fn load_rom_bytes_into_core(
         .unwrap_or("")
         .to_lowercase();
 
+    // Drop any existing core first so previous Libretro native instance unloads and deinits cleanly
+    *active_core = Box::new(GbcCore::new());
+
     // 3. Try GBA Core first if extension matches or GBA header parses
     if ext == "gba" || GbaHeader::parse(bytes).is_some() {
         info!("Hot-loading GBA ROM ({} bytes, hint: '{}')", bytes.len(), resolved_hint);
@@ -363,13 +366,13 @@ fn run_android_app(app: AndroidApp) {
 
     let audio_producer = audio_player.as_ref().map(|p| p.producer());
 
-    // 4. Default core initialization (GBA 240x160) with pre-configured audio producer
+    // 4. Default core initialization (Lightweight idle GBC core before ROM is selected)
     let mut active_core: Box<dyn EmulatorCore> = {
-        let mut core = GbaCore::new();
+        let mut core = GbcCore::new();
         core.set_audio_producer(audio_producer.clone());
         Box::new(core)
     };
-    let (mut core_width, mut core_height) = active_core.display_dimensions();
+    let (mut core_width, mut core_height) = (240, 160); // Default to standard 240x160 viewport
 
     // Load any existing SRAM save data from scoped storage
     if let Some(sram_data) = storage.load_save(&current_game_title) {
@@ -723,7 +726,8 @@ fn run_android_app(app: AndroidApp) {
         }
 
         // 4. Emulation Stepping & Frame Pacing with Thermal Management
-        if !is_paused && pixels.is_some() {
+        let surface_ready = pixels.is_some() && shader_pipeline.is_some() && app.native_window().is_some();
+        if !is_paused && surface_ready {
             let now = Instant::now();
 
             // Periodic auto-save flush

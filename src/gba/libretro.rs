@@ -80,7 +80,7 @@ pub struct RetroGameInfo {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct RetroSystemInfo {
     pub library_name: *const c_char,
     pub library_version: *const c_char,
@@ -292,6 +292,18 @@ pub fn convert_0rgb1555_to_rgba(
 
 static SYSTEM_DIR_CSTRING: Mutex<Option<std::ffi::CString>> = Mutex::new(None);
 static SAVE_DIR_CSTRING: Mutex<Option<std::ffi::CString>> = Mutex::new(None);
+static ACTIVE_ROM_PATH: Mutex<Option<std::ffi::CString>> = Mutex::new(None);
+static LOADED_ROM_DATA: Mutex<Vec<u8>> = Mutex::new(Vec::new());
+
+// Static fallback C-strings for core options
+static COLOR_CORRECTION_DEFAULT: &[u8] = b"OFF\0";
+static INTERFRAME_DEFAULT: &[u8] = b"OFF\0";
+static SOLAR_SENSOR_DEFAULT: &[u8] = b"0\0";
+static FRAMESKIP_DEFAULT: &[u8] = b"0\0";
+static BIOS_DEFAULT: &[u8] = b"OFF\0";
+static SKIP_BIOS_DEFAULT: &[u8] = b"OFF\0";
+static IDLE_LOOP_DEFAULT: &[u8] = b"OFF\0";
+static ALLOW_OPPOSING_DEFAULT: &[u8] = b"OFF\0";
 
 /// Set or update the global system and save directories for Libretro cores.
 pub fn set_directories<P: AsRef<Path>>(system_path: P, save_path: P) {
@@ -349,6 +361,7 @@ unsafe extern "C" fn retro_environment_cb(cmd: c_uint, data: *mut c_void) -> boo
             }
         }
 
+        // GET_CAN_DUPE (CMD 3)
         RETRO_ENVIRONMENT_GET_CAN_DUPE => {
             if !data.is_null() {
                 *(data as *mut bool) = true;
@@ -358,87 +371,146 @@ unsafe extern "C" fn retro_environment_cb(cmd: c_uint, data: *mut c_void) -> boo
             }
         }
 
-        RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY | RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY => {
+        // GET_SYSTEM_DIRECTORY (9), GET_SAVE_DIRECTORY (31), GET_CORE_ASSETS_DIRECTORY (30), GET_LIBRETRO_PATH (19)
+        RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY
+        | RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY
+        | 30
+        | 19 => {
             if !data.is_null() {
+                let out_ptr = data as *mut *const c_char;
                 if let Ok(lock) = BRIDGE_STATE.lock() {
                     if let Some(ref state) = *lock {
-                        let dir_ptr = if cmd == RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY {
-                            state.system_dir.as_ref().map(|s| s.as_ptr())
-                        } else {
+                        let dir_ptr = if cmd == RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY {
                             state.save_dir.as_ref().map(|s| s.as_ptr())
+                        } else {
+                            state.system_dir.as_ref().map(|s| s.as_ptr())
                         };
 
                         if let Some(ptr) = dir_ptr {
-                            *(data as *mut *const c_char) = ptr;
+                            *out_ptr = ptr;
                             return true;
                         }
                     }
                 }
 
                 // Fallback from static cached directories
-                let static_lock = if cmd == RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY {
-                    SYSTEM_DIR_CSTRING.lock().ok()
-                } else {
+                let static_lock = if cmd == RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY {
                     SAVE_DIR_CSTRING.lock().ok()
+                } else {
+                    SYSTEM_DIR_CSTRING.lock().ok()
                 };
 
                 if let Some(Some(ref cstr)) = static_lock.as_deref() {
-                    *(data as *mut *const c_char) = cstr.as_ptr();
+                    *out_ptr = cstr.as_ptr();
                     return true;
                 }
+
+                *out_ptr = std::ptr::null();
             }
             false
         }
 
-        RETRO_ENVIRONMENT_GET_VARIABLE => {
+        // GET_LANGUAGE (CMD 39)
+        39 => {
             if !data.is_null() {
-                let var = data as *mut RetroVariable;
-                if !var.is_null() && !(*var).key.is_null() {
-                    let key_cstr = CStr::from_ptr((*var).key);
-                    let key = key_cstr.to_string_lossy();
-                    debug!("Libretro Environment: GET_VARIABLE query for '{}'", key);
-
-                    static OPT_OFF: &[u8] = b"OFF\0";
-                    static OPT_ON: &[u8] = b"ON\0";
-
-                    let val_ptr = match key.as_ref() {
-                        "mgba_solar_sensor" => OPT_OFF.as_ptr(),
-                        "mgba_frameskip" => OPT_OFF.as_ptr(),
-                        "mgba_use_bios" => OPT_ON.as_ptr(),
-                        "mgba_skip_bios" => OPT_OFF.as_ptr(),
-                        "mgba_idle_loop_remove" => OPT_OFF.as_ptr(),
-                        "mgba_allow_opposing_directions" => OPT_OFF.as_ptr(),
-                        "mgba_color_correction" => OPT_OFF.as_ptr(),
-                        "vbanext_frameskip" => OPT_OFF.as_ptr(),
-                        _ => std::ptr::null(),
-                    };
-
-                    (*var).value = val_ptr as *const c_char;
-                    return !val_ptr.is_null();
-                } else if !var.is_null() {
-                    (*var).value = std::ptr::null();
-                }
-            }
-            false
-        }
-
-        RETRO_ENVIRONMENT_SET_VARIABLES
-        | RETRO_ENVIRONMENT_SET_CORE_OPTIONS
-        | RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL
-        | RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY
-        | RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2
-        | RETRO_ENVIRONMENT_SET_CORE_OPTIONS_V2_INTL => true,
-
-        RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION => {
-            if !data.is_null() {
-                *(data as *mut c_uint) = 2;
+                *(data as *mut c_uint) = 0; // RETRO_LANGUAGE_ENGLISH
                 true
             } else {
                 false
             }
         }
 
-        RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS | RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME => true,
+        // GET_AUDIO_VIDEO_ENABLE (CMD 35)
+        35 => {
+            if !data.is_null() {
+                *(data as *mut std::ffi::c_int) = 1 | 2; // bit 0 = video enabled, bit 1 = audio enabled
+                true
+            } else {
+                false
+            }
+        }
+
+        RETRO_ENVIRONMENT_GET_VARIABLE => {
+            if data.is_null() {
+                return false;
+            }
+            let var = unsafe { &mut *(data as *mut RetroVariable) };
+            if var.key.is_null() {
+                var.value = std::ptr::null();
+                return false;
+            }
+
+            let key = unsafe { CStr::from_ptr(var.key) }.to_string_lossy();
+            debug!("Libretro Environment: GET_VARIABLE query for '{}'", key);
+
+            match key.as_ref() {
+                "mgba_color_correction" => {
+                    var.value = COLOR_CORRECTION_DEFAULT.as_ptr() as *const c_char;
+                    true
+                }
+                "mgba_interframe_blending" => {
+                    var.value = INTERFRAME_DEFAULT.as_ptr() as *const c_char;
+                    true
+                }
+                "mgba_solar_sensor" => {
+                    var.value = SOLAR_SENSOR_DEFAULT.as_ptr() as *const c_char;
+                    true
+                }
+                "mgba_frameskip" => {
+                    var.value = FRAMESKIP_DEFAULT.as_ptr() as *const c_char;
+                    true
+                }
+                "mgba_use_bios" => {
+                    var.value = BIOS_DEFAULT.as_ptr() as *const c_char;
+                    true
+                }
+                "mgba_skip_bios" => {
+                    var.value = SKIP_BIOS_DEFAULT.as_ptr() as *const c_char;
+                    true
+                }
+                "mgba_idle_loop_remove" => {
+                    var.value = IDLE_LOOP_DEFAULT.as_ptr() as *const c_char;
+                    true
+                }
+                "mgba_allow_opposing_directions" => {
+                    var.value = ALLOW_OPPOSING_DEFAULT.as_ptr() as *const c_char;
+                    true
+                }
+                _ => {
+                    var.value = std::ptr::null();
+                    false
+                }
+            }
+        }
+
+        // GET_VARIABLE_UPDATE (17)
+        RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE => {
+            if !data.is_null() {
+                unsafe {
+                    *(data as *mut bool) = false;
+                }
+            }
+            true
+        }
+
+        RETRO_ENVIRONMENT_SET_VARIABLES
+        | RETRO_ENVIRONMENT_SET_CORE_OPTIONS
+        | RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL => true,
+
+        RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION => {
+            if !data.is_null() {
+                *(data as *mut c_uint) = 0;
+                true
+            } else {
+                false
+            }
+        }
+
+        // SET_INPUT_DESCRIPTORS (11), SET_SUPPORT_NO_GAME (18), SET_PERFORMANCE_LEVEL (8), SET_MESSAGE (6)
+        RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS
+        | RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME
+        | RETRO_ENVIRONMENT_SET_PERFORMANCE_LEVEL
+        | RETRO_ENVIRONMENT_SET_MESSAGE => true,
 
         _ => {
             debug!("Libretro Environment: Unhandled cmd {}", cmd);
@@ -626,6 +698,9 @@ pub struct LibretroCore {
     framebuffer_cache: Vec<u8>,
     width: u32,
     height: u32,
+    pending_save_data: Option<Vec<u8>>,
+    _game_path_cstr: Option<std::ffi::CString>,
+    _pinned_rom_data: Option<Vec<u8>>,
 }
 
 impl LibretroCore {
@@ -682,48 +757,27 @@ impl LibretroCore {
         let retro_serialize: RetroSerializeFn = unsafe { *lib.get(b"retro_serialize")? };
         let retro_unserialize: RetroUnserializeFn = unsafe { *lib.get(b"retro_unserialize")? };
 
-        let api_ver = unsafe { (retro_api_version)() };
-        info!("Libretro Core API Version: {}", api_ver);
-        if api_ver != RETRO_API_VERSION {
-            warn!(
-                "Core API version mismatch (got {}, expected {}). Attempting to proceed.",
-                api_ver, RETRO_API_VERSION
-            );
-        }
+        // Initialize bridge state with default system & save directory paths from storage
+        let (sys_dir_c, save_dir_c) = {
+            let sys_guard = SYSTEM_DIR_CSTRING.lock().unwrap_or_else(|e| e.into_inner());
+            let save_guard = SAVE_DIR_CSTRING.lock().unwrap_or_else(|e| e.into_inner());
+            (sys_guard.clone(), save_guard.clone())
+        };
 
-        // Initialize global bridge state
-        {
-            let mut state_lock = BRIDGE_STATE.lock().map_err(|e| e.to_string())?;
-            let system_dir = SYSTEM_DIR_CSTRING
-                .lock()
-                .ok()
-                .and_then(|l| l.clone())
-                .or_else(|| {
-                    std::env::current_dir()
-                        .ok()
-                        .and_then(|p| p.to_str().and_then(|s| std::ffi::CString::new(s).ok()))
-                })
-                .or_else(|| std::ffi::CString::new("/data/local/tmp").ok());
-            let save_dir = SAVE_DIR_CSTRING
-                .lock()
-                .ok()
-                .and_then(|l| l.clone())
-                .or_else(|| system_dir.clone());
-
-            *state_lock = Some(BridgeState {
-                pixel_format: RETRO_PIXEL_FORMAT_RGB565, // Default expectation
-                framebuffer: vec![0; 240 * 160 * 4],
+        if let Ok(mut lock) = BRIDGE_STATE.lock() {
+            *lock = Some(BridgeState {
                 width: 240,
                 height: 160,
-                key_states: [false; 16],
-                audio_samples: Vec::new(),
+                framebuffer: vec![0; 240 * 160 * 4],
+                pixel_format: RETRO_PIXEL_FORMAT_RGB565,
                 audio_producer: None,
-                system_dir,
-                save_dir,
+                audio_samples: Vec::new(),
+                key_states: [false; 16],
+                system_dir: sys_dir_c,
+                save_dir: save_dir_c,
             });
         }
 
-        // Connect C callbacks BEFORE retro_init
         unsafe {
             (retro_set_environment)(retro_environment_cb);
             (retro_set_video_refresh)(retro_video_refresh_cb);
@@ -734,39 +788,29 @@ impl LibretroCore {
             (retro_init)();
         }
 
-        let mut sys_info = RetroSystemInfo {
-            library_name: std::ptr::null(),
-            library_version: std::ptr::null(),
-            valid_extensions: std::ptr::null(),
-            need_fullpath: false,
-            block_extract: false,
-        };
+        let mut sys_info = RetroSystemInfo::default();
         unsafe {
             (retro_get_system_info)(&mut sys_info);
         }
 
         let library_name = if !sys_info.library_name.is_null() {
-            unsafe {
-                CStr::from_ptr(sys_info.library_name)
-                    .to_string_lossy()
-                    .into_owned()
-            }
+            unsafe { CStr::from_ptr(sys_info.library_name) }
+                .to_string_lossy()
+                .into_owned()
         } else {
             "Unknown Libretro Core".to_string()
         };
 
         let library_version = if !sys_info.library_version.is_null() {
-            unsafe {
-                CStr::from_ptr(sys_info.library_version)
-                    .to_string_lossy()
-                    .into_owned()
-            }
+            unsafe { CStr::from_ptr(sys_info.library_version) }
+                .to_string_lossy()
+                .into_owned()
         } else {
             "0.0.0".to_string()
         };
 
         info!(
-            "Successfully initialized Libretro Core: '{}' (v{})",
+            "Initialized Libretro core: {} (v{})",
             library_name, library_version
         );
 
@@ -800,6 +844,9 @@ impl LibretroCore {
             framebuffer_cache: vec![0; 240 * 160 * 4],
             width: 240,
             height: 160,
+            pending_save_data: None,
+            _game_path_cstr: None,
+            _pinned_rom_data: None,
         })
     }
 
@@ -813,14 +860,25 @@ impl LibretroCore {
             self.is_game_loaded = false;
         }
 
+        let mut rom_guard = LOADED_ROM_DATA.lock().unwrap_or_else(|e| e.into_inner());
+        *rom_guard = rom_bytes.to_vec();
+
         let c_path = path_hint
             .and_then(|p| std::ffi::CString::new(p).ok())
             .unwrap_or_else(|| std::ffi::CString::new("game.gba").unwrap());
 
+        let path_ptr = {
+            let mut lock = ACTIVE_ROM_PATH.lock().unwrap_or_else(|e| e.into_inner());
+            *lock = Some(c_path.clone());
+            lock.as_ref().unwrap().as_ptr()
+        };
+        self._game_path_cstr = Some(c_path);
+        self._pinned_rom_data = Some(rom_bytes.to_vec());
+
         let game_info = RetroGameInfo {
-            path: c_path.as_ptr(),
-            data: rom_bytes.as_ptr() as *const c_void,
-            size: rom_bytes.len(),
+            path: path_ptr,
+            data: rom_guard.as_ptr() as *const c_void,
+            size: rom_guard.len(),
             meta: std::ptr::null(),
         };
 
@@ -895,6 +953,27 @@ impl LibretroCore {
 
         unsafe {
             (self.retro_run)();
+        }
+
+        // Deferred SRAM injection: If save data was queued before SRAM table allocation, inject after retro_run
+        if let Some(ref pending) = self.pending_save_data {
+            let size = unsafe { (self.retro_get_memory_size)(RETRO_MEMORY_SAVE_RAM) };
+            let ptr = unsafe { (self.retro_get_memory_data)(RETRO_MEMORY_SAVE_RAM) };
+            if size > 0
+                && !ptr.is_null()
+                && ptr as usize != usize::MAX
+                && ptr as usize != (u32::MAX as usize)
+            {
+                let copy_len = size.min(pending.len());
+                unsafe {
+                    std::ptr::copy_nonoverlapping(pending.as_ptr(), ptr as *mut u8, copy_len);
+                }
+                info!(
+                    "Deferred loaded {} bytes into Libretro Save RAM after retro_run tick",
+                    copy_len
+                );
+                self.pending_save_data = None;
+            }
         }
 
         // Copy latest frame from bridge state to core's local cache
@@ -990,12 +1069,24 @@ impl LibretroCore {
 
     /// Load saved data into the core's save RAM.
     pub fn load_save_data(&mut self, data: &[u8]) -> bool {
-        if !self.is_game_loaded || data.is_empty() {
+        if data.is_empty() {
             return false;
         }
+
         let _lock = LIBRETRO_LOCK.lock();
+
+        if !self.is_game_loaded {
+            info!(
+                "Game not yet loaded in LibretroCore, caching {} bytes save data for post-load injection",
+                data.len()
+            );
+            self.pending_save_data = Some(data.to_vec());
+            return true;
+        }
+
         let size = unsafe { (self.retro_get_memory_size)(RETRO_MEMORY_SAVE_RAM) };
         let ptr = unsafe { (self.retro_get_memory_data)(RETRO_MEMORY_SAVE_RAM) };
+
         if size > 0
             && !ptr.is_null()
             && ptr as usize != usize::MAX
@@ -1009,9 +1100,15 @@ impl LibretroCore {
                 "Loaded {} bytes into Libretro Save RAM (total size: {})",
                 copy_len, size
             );
+            self.pending_save_data = None;
             true
         } else {
-            false
+            info!(
+                "Libretro Save RAM not yet available (ptr: {:?}, size: {}). Deferring {} bytes save data.",
+                ptr, size, data.len()
+            );
+            self.pending_save_data = Some(data.to_vec());
+            true
         }
     }
 
