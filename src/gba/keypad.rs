@@ -116,7 +116,57 @@ mod tests {
         keypad.handle_input(Button::L, true);
         keypad.handle_input(Button::R, true);
 
-        assert_eq!((keypad.keyinput >> 9) & 1, 0); // L shoulder pressed
-        assert_eq!((keypad.keyinput >> 8) & 1, 0); // R shoulder pressed
+        assert_eq!((keypad.keyinput >> 9) & 1, 0); // L shoulder pressed (Bit 9)
+        assert_eq!((keypad.keyinput >> 8) & 1, 0); // R shoulder pressed (Bit 8)
+    }
+
+    #[test]
+    fn test_all_individual_gba_buttons() {
+        let buttons = [
+            (Button::A, 0),
+            (Button::B, 1),
+            (Button::Select, 2),
+            (Button::Start, 3),
+            (Button::Right, 4),
+            (Button::Left, 5),
+            (Button::Up, 6),
+            (Button::Down, 7),
+            (Button::R, 8),
+            (Button::L, 9),
+        ];
+
+        for (btn, bit) in buttons {
+            let mut keypad = GbaKeypad::new();
+            assert_eq!((keypad.keyinput >> bit) & 1, 1, "Button {:?} should start released", btn);
+            keypad.handle_input(btn, true);
+            assert_eq!((keypad.keyinput >> bit) & 1, 0, "Button {:?} should be active low (0) when pressed", btn);
+            keypad.handle_input(btn, false);
+            assert_eq!((keypad.keyinput >> bit) & 1, 1, "Button {:?} should be high (1) when released", btn);
+        }
+    }
+
+    #[test]
+    fn test_simultaneous_multi_button_chord() {
+        let mut keypad = GbaKeypad::new();
+
+        // Simulate simultaneous DPad Right + B + A + L shoulder press
+        keypad.handle_input(Button::Right, true);
+        keypad.handle_input(Button::B, true);
+        keypad.handle_input(Button::A, true);
+        keypad.handle_input(Button::L, true);
+
+        // Expected bits:
+        // Bit 0 (A) = 0
+        // Bit 1 (B) = 0
+        // Bit 4 (Right) = 0
+        // Bit 9 (L) = 0
+        // Other bits = 1
+        let expected_mask = !((1 << 0) | (1 << 1) | (1 << 4) | (1 << 9)) & 0x03FF;
+        assert_eq!(keypad.keyinput, expected_mask);
+
+        // Release A only
+        keypad.handle_input(Button::A, false);
+        let expected_mask_after_a = !((1 << 1) | (1 << 4) | (1 << 9)) & 0x03FF;
+        assert_eq!(keypad.keyinput, expected_mask_after_a);
     }
 }

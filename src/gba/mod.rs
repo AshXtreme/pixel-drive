@@ -138,24 +138,38 @@ impl GbaCore {
             self.cpu.regs.set_thumb_mode(false); // ARM Mode
             self.cpu.regs.set_mode(CpuMode::Supervisor); // Supervisor Mode (0x13)
         } else {
-            self.cpu.regs.set_pc(0x08000000);
-            self.cpu.regs.set_sp(0x03007F00); // IWRAM Stack Pointer
+            self.cpu.regs.set_pc(0x08000000); // Cartridge ROM base
+            self.cpu.regs.r[13] = 0x03007F00; // SP_sys / user
+            self.cpu.regs.r13_sys = 0x03007F00;
+            self.cpu.regs.r13_svc = 0x03007FE0; // SP_svc
+            self.cpu.regs.r13_irq = 0x03007FA0; // SP_irq
             self.cpu.regs.set_mode(CpuMode::System); // System Mode (0x1F)
+            self.cpu.regs.cpsr = 0x0000001F; // System mode, ARM state, IRQs enabled
             self.cpu.regs.set_thumb_mode(false); // ARM Mode
+
+            // Standard BIOS cartridge waitstate timings & post-boot flag
+            self.mmu.write_u16(0x04000204, 0x4317); // WAITCNT
+            self.mmu.write_u8(0x04000300, 0x01); // POSTFLG
         }
     }
 
     /// Load raw ROM byte buffer into GBA MMU memory space and reset CPU boot state.
     pub fn load_rom(&mut self, rom_bytes: &[u8]) {
+        self.load_rom_with_hint(rom_bytes, "game.gba");
+    }
+
+    /// Load raw ROM byte buffer into GBA MMU memory space with a filename hint.
+    pub fn load_rom_with_hint(&mut self, rom_bytes: &[u8], filename_hint: &str) {
         self.header = GbaHeader::parse(rom_bytes);
         self.mmu.load_rom(rom_bytes);
         self.reset_boot_state();
 
         if let Some(ref mut lr) = self.libretro {
-            let loaded = lr.load_rom(rom_bytes);
+            let loaded = lr.load_rom_with_path(rom_bytes, Some(filename_hint));
             if !loaded {
                 warn!(
-                    "LibretroCore failed to load ROM. Emulation may fallback or encounter issues."
+                    "LibretroCore failed to load ROM with hint '{}'. Emulation may fallback or encounter issues.",
+                    filename_hint
                 );
             }
         }
@@ -182,6 +196,11 @@ impl GbaCore {
     pub fn load_rom_file<P: AsRef<Path>>(&mut self, path: P) -> std::io::Result<GbaHeader> {
         let path_ref = path.as_ref();
         info!("Loading GBA ROM file: {}", path_ref.display());
+
+        let filename_hint = path_ref
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("game.gba");
 
         let bytes = if path_ref
             .extension()
@@ -210,7 +229,10 @@ impl GbaCore {
                     if buffer.len() > MAX_GBA_ROM_SIZE {
                         return Err(std::io::Error::new(
                             std::io::ErrorKind::InvalidData,
-                            "GBA ROM inside ZIP archive exceeds maximum allowed size (32MB)",
+                            format!(
+                                "ROM in zip exceeds maximum allowed size of {} bytes",
+                                MAX_GBA_ROM_SIZE
+                            ),
                         ));
                     }
                     rom_bytes = Some(buffer);
@@ -218,25 +240,27 @@ impl GbaCore {
                 }
             }
 
-            match rom_bytes {
-                Some(b) => b,
-                None => {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::NotFound,
-                        "No valid .gba ROM file found inside ZIP archive",
-                    ));
-                }
-            }
+            rom_bytes.ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "No .gba ROM found inside ZIP archive",
+                )
+            })?
         } else {
-            let data = std::fs::read(path_ref)?;
-            if data.len() > MAX_GBA_ROM_SIZE {
+            let metadata = std::fs::metadata(path_ref)?;
+            if metadata.len() > MAX_GBA_ROM_SIZE as u64 {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    "GBA ROM file exceeds maximum allowed size (32MB)",
+                    format!(
+                        "ROM file exceeds maximum allowed size of {} bytes",
+                        MAX_GBA_ROM_SIZE
+                    ),
                 ));
             }
-            data
+            std::fs::read(path_ref)?
         };
+
+        self.load_rom_with_hint(&bytes, filename_hint);
 
         let header = GbaHeader::parse(&bytes).unwrap_or_else(|| {
             log::warn!("GBA ROM missing standard header magic byte (0x96). Using fallback header.");
@@ -282,6 +306,8 @@ impl EmulatorCore for GbaCore {
 
                 let check = self.mmu.read_u16(0x03007FF8);
                 self.mmu.write_u16(0x03007FF8, check | 1);
+
+                self.cpu.halted = false;
             }
 
             let ime = self.mmu.read_u32(0x04000208) & 1 != 0;

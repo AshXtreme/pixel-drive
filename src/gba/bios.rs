@@ -99,12 +99,14 @@ pub fn handle_swi(comment: u8, regs: &mut Registers, bus: &mut GbaMemoryBus) {
             }
             if (flags & (1 << 7)) != 0 {
                 // Reset Display and Other I/O Registers (0x04000000 - 0x04000056)
-                bus.ppu.dispcnt = 0;
+                bus.ppu.dispcnt = 0x0080; // Standard Forced Blank during reset
                 bus.ppu.dispstat = 0;
                 bus.ppu.bg0cnt = 0;
                 bus.ppu.bg1cnt = 0;
                 bus.ppu.bg2cnt = 0;
                 bus.ppu.bg3cnt = 0;
+                bus.write_u16(0x04000204, 0x4317); // WAITCNT
+                bus.write_u8(0x04000300, 0x01); // POSTFLG
             }
 
             // GBA BIOS spec: RegisterRamReset clears R0 to 0 upon completion
@@ -222,9 +224,26 @@ pub fn handle_swi(comment: u8, regs: &mut Registers, bus: &mut GbaMemoryBus) {
         }
 
         0x08 => {
-            // SWI 0x08: Sqrt — R0 = sqrt(R0), result in R0
+            // SWI 0x08: Sqrt — R0 = isqrt(R0), result in R0
             let val = regs.r[0];
-            regs.r[0] = (val as f64).sqrt() as u32;
+            let mut op = val;
+            let mut res = 0u32;
+            let mut one = 1u32 << 30;
+
+            while one > op {
+                one >>= 2;
+            }
+
+            while one != 0 {
+                if op >= res + one {
+                    op -= res + one;
+                    res = (res >> 1) + one;
+                } else {
+                    res >>= 1;
+                }
+                one >>= 2;
+            }
+            regs.r[0] = res;
         }
 
         0x09 => {
@@ -284,7 +303,15 @@ fn hle_signal_vblank(bus: &mut GbaMemoryBus) {
 /// In HLE mode, pre-satisfy the requested interrupt mask so the game's wait loop
 /// exits on the very next check rather than spinning forever.
 fn handle_intr_wait(regs: &mut Registers, bus: &mut GbaMemoryBus) {
+    let discard_old = regs.r[0] != 0;
     let irq_mask = regs.r[1] as u16;
+
+    if discard_old {
+        let cur_check = bus.read_u16(0x03007FF8);
+        let cleared = cur_check & !irq_mask;
+        bus.iwram[0x7FF8] = cleared as u8;
+        bus.iwram[0x7FF9] = (cleared >> 8) as u8;
+    }
 
     // Pre-satisfy: write the requested IRQ bits into IF so the game sees them fired
     let cur_if = bus.read_u16(0x04000202);
@@ -297,6 +324,9 @@ fn handle_intr_wait(regs: &mut Registers, bus: &mut GbaMemoryBus) {
     let new_check = intr_check | irq_mask;
     bus.iwram[0x7FF8] = new_check as u8;
     bus.iwram[0x7FF9] = (new_check >> 8) as u8;
+
+    // Enable IME (0x04000208 = 1) per BIOS spec so interrupt dispatch can execute
+    bus.io[0x208] = 1;
 }
 
 /// GBA BIOS LZ77 Decompressor (used by GBA games for graphics & WRAM loading)

@@ -404,6 +404,8 @@ pub mod touch_bits {
     pub const BTN_MENU: u32 = 1 << 10;
     pub const BTN_FAST_FORWARD: u32 = 1 << 11;
     pub const CHORD_AB: u32 = 1 << 12;
+    pub const BTN_QUICK_SAVE: u32 = 1 << 13;
+    pub const BTN_QUICK_LOAD: u32 = 1 << 14;
 }
 
 /// Multi-Touch Input Engine & On-Screen Overlay Manager.
@@ -429,6 +431,8 @@ pub struct TouchInputManager {
     pub btn_select: VirtualButton,
     pub btn_menu: VirtualButton,
     pub btn_fast_forward: VirtualButton,
+    pub btn_quick_save: VirtualButton,
+    pub btn_quick_load: VirtualButton,
 
     // Active Pointer Tracking
     active_touches: HashMap<u64, TouchPoint>,
@@ -475,6 +479,8 @@ impl TouchInputManager {
             btn_start: VirtualButton::new_pill(VirtualButtonId::Start, 0.53, 0.90, 0.09, 0.05, 0.025),
             btn_menu: VirtualButton::new_circle(VirtualButtonId::Menu, 0.44, 0.07, 0.035),
             btn_fast_forward: VirtualButton::new_circle(VirtualButtonId::FastForward, 0.56, 0.07, 0.035),
+            btn_quick_save: VirtualButton::new_circle(VirtualButtonId::QuickSave, 0.32, 0.07, 0.035),
+            btn_quick_load: VirtualButton::new_circle(VirtualButtonId::QuickLoad, 0.68, 0.07, 0.035),
 
             active_touches: HashMap::new(),
             pending_actions: Vec::new(),
@@ -514,8 +520,10 @@ impl TouchInputManager {
                 self.btn_start = VirtualButton::new_pill(VirtualButtonId::Start, 0.53, 0.90, 0.09 * s, 0.05 * s, 0.025 * s);
 
                 // Top center quick actions
+                self.btn_quick_save = VirtualButton::new_circle(VirtualButtonId::QuickSave, 0.32, 0.07, 0.032 * s);
                 self.btn_menu = VirtualButton::new_circle(VirtualButtonId::Menu, 0.44, 0.07, 0.032 * s);
                 self.btn_fast_forward = VirtualButton::new_circle(VirtualButtonId::FastForward, 0.56, 0.07, 0.032 * s);
+                self.btn_quick_load = VirtualButton::new_circle(VirtualButtonId::QuickLoad, 0.68, 0.07, 0.032 * s);
             }
             TouchOverlayPreset::Compact => {
                 self.dpad = VirtualDPad::new(0.12, 0.80, 0.095 * s, 0.020 * s);
@@ -534,8 +542,10 @@ impl TouchInputManager {
                 self.btn_select = VirtualButton::new_pill(VirtualButtonId::Select, 0.39, 0.92, 0.08 * s, 0.045 * s, 0.022 * s);
                 self.btn_start = VirtualButton::new_pill(VirtualButtonId::Start, 0.53, 0.92, 0.08 * s, 0.045 * s, 0.022 * s);
 
+                self.btn_quick_save = VirtualButton::new_circle(VirtualButtonId::QuickSave, 0.35, 0.06, 0.028 * s);
                 self.btn_menu = VirtualButton::new_circle(VirtualButtonId::Menu, 0.45, 0.06, 0.028 * s);
                 self.btn_fast_forward = VirtualButton::new_circle(VirtualButtonId::FastForward, 0.55, 0.06, 0.028 * s);
+                self.btn_quick_load = VirtualButton::new_circle(VirtualButtonId::QuickLoad, 0.65, 0.06, 0.028 * s);
             }
             TouchOverlayPreset::Wide => {
                 self.dpad = VirtualDPad::new(0.16, 0.72, 0.125 * s, 0.028 * s);
@@ -554,8 +564,10 @@ impl TouchInputManager {
                 self.btn_select = VirtualButton::new_pill(VirtualButtonId::Select, 0.36, 0.88, 0.11 * s, 0.055 * s, 0.028 * s);
                 self.btn_start = VirtualButton::new_pill(VirtualButtonId::Start, 0.53, 0.88, 0.11 * s, 0.055 * s, 0.028 * s);
 
+                self.btn_quick_save = VirtualButton::new_circle(VirtualButtonId::QuickSave, 0.29, 0.08, 0.036 * s);
                 self.btn_menu = VirtualButton::new_circle(VirtualButtonId::Menu, 0.43, 0.08, 0.036 * s);
                 self.btn_fast_forward = VirtualButton::new_circle(VirtualButtonId::FastForward, 0.57, 0.08, 0.036 * s);
+                self.btn_quick_load = VirtualButton::new_circle(VirtualButtonId::QuickLoad, 0.71, 0.08, 0.036 * s);
             }
             TouchOverlayPreset::Ergonomic => {
                 // Ergonomic curved arc positioning
@@ -575,8 +587,10 @@ impl TouchInputManager {
                 self.btn_select = VirtualButton::new_pill(VirtualButtonId::Select, 0.37, 0.89, 0.10 * s, 0.052 * s, 0.026 * s);
                 self.btn_start = VirtualButton::new_pill(VirtualButtonId::Start, 0.53, 0.89, 0.10 * s, 0.052 * s, 0.026 * s);
 
+                self.btn_quick_save = VirtualButton::new_circle(VirtualButtonId::QuickSave, 0.32, 0.075, 0.034 * s);
                 self.btn_menu = VirtualButton::new_circle(VirtualButtonId::Menu, 0.44, 0.075, 0.034 * s);
                 self.btn_fast_forward = VirtualButton::new_circle(VirtualButtonId::FastForward, 0.56, 0.075, 0.034 * s);
+                self.btn_quick_load = VirtualButton::new_circle(VirtualButtonId::QuickLoad, 0.68, 0.075, 0.034 * s);
             }
         }
 
@@ -655,6 +669,10 @@ impl TouchInputManager {
                     self.pending_actions.push(TouchAction::ToggleFastForward);
                 } else if self.btn_menu.contains(norm_x, norm_y) {
                     self.pending_actions.push(TouchAction::OpenMenu);
+                } else if self.btn_quick_save.contains(norm_x, norm_y) {
+                    self.pending_actions.push(TouchAction::QuickSave);
+                } else if self.btn_quick_load.contains(norm_x, norm_y) {
+                    self.pending_actions.push(TouchAction::QuickLoad);
                 }
             }
             TouchPhase::Moved => {
@@ -775,6 +793,12 @@ impl TouchInputManager {
             if self.btn_menu.contains(px, py) {
                 mask |= touch_bits::BTN_MENU;
             }
+            if self.btn_quick_save.contains(px, py) {
+                mask |= touch_bits::BTN_QUICK_SAVE;
+            }
+            if self.btn_quick_load.contains(px, py) {
+                mask |= touch_bits::BTN_QUICK_LOAD;
+            }
         }
 
         self.pressed_mask = mask;
@@ -796,7 +820,8 @@ impl TouchInputManager {
             VirtualButtonId::Select => (self.pressed_mask & touch_bits::BTN_SELECT) != 0,
             VirtualButtonId::FastForward => (self.pressed_mask & touch_bits::BTN_FAST_FORWARD) != 0,
             VirtualButtonId::Menu => (self.pressed_mask & touch_bits::BTN_MENU) != 0,
-            _ => false,
+            VirtualButtonId::QuickSave => (self.pressed_mask & touch_bits::BTN_QUICK_SAVE) != 0,
+            VirtualButtonId::QuickLoad => (self.pressed_mask & touch_bits::BTN_QUICK_LOAD) != 0,
         }
     }
 
@@ -1098,5 +1123,15 @@ mod tests {
         overlay.handle_touch_down(2, menu_pos.0 * screen_w, menu_pos.1 * screen_h, screen_w, screen_h);
         let actions2 = overlay.poll_actions();
         assert_eq!(actions2, vec![TouchAction::OpenMenu]);
+
+        let qs_pos = overlay.btn_quick_save.center();
+        overlay.handle_touch_down(3, qs_pos.0 * screen_w, qs_pos.1 * screen_h, screen_w, screen_h);
+        let actions3 = overlay.poll_actions();
+        assert_eq!(actions3, vec![TouchAction::QuickSave]);
+
+        let ql_pos = overlay.btn_quick_load.center();
+        overlay.handle_touch_down(4, ql_pos.0 * screen_w, ql_pos.1 * screen_h, screen_w, screen_h);
+        let actions4 = overlay.poll_actions();
+        assert_eq!(actions4, vec![TouchAction::QuickLoad]);
     }
 }

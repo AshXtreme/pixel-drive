@@ -1,6 +1,6 @@
 [package]
 name = "pixel-drive"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2021"
 authors = ["PixelDrive Team"]
 description = "High-Performance Unified Handheld Emulator (macOS, Windows, Android)"
@@ -32,6 +32,7 @@ bytemuck = { version = "1.16", features = ["derive"] }
 thiserror = "1.0"
 parking_lot = "0.12"
 raw-window-handle = "0.6"
+pollster = "0.3"
 
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.5", features = ["native-activity"] }

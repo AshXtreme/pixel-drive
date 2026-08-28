@@ -41,6 +41,9 @@ struct TouchOverlayUniforms {
     btn_menu_pos: vec2<f32>,
 
     btn_ff_pos: vec2<f32>,
+    btn_qs_pos: vec2<f32>,
+
+    btn_ql_pos: vec2<f32>,
     _pad: vec2<f32>,
 };
 
@@ -60,6 +63,8 @@ const BTN_L: u32 = 1u << 9u;
 const BTN_MENU: u32 = 1u << 10u;
 const BTN_FAST_FORWARD: u32 = 1u << 11u;
 const CHORD_AB: u32 = 1u << 12u;
+const BTN_QUICK_SAVE: u32 = 1u << 13u;
+const BTN_QUICK_LOAD: u32 = 1u << 14u;
 
 // --- Signed Distance Field (SDF) 2D Primitives ---
 
@@ -169,6 +174,20 @@ fn draw_menu_bars(p: vec2<f32>, size: f32) -> f32 {
     let b2 = sd_segment(p, vec2<f32>(-w, 0.0), vec2<f32>(w, 0.0)) - th;
     let b3 = sd_segment(p, vec2<f32>(-w, s * 0.65), vec2<f32>(w, s * 0.65)) - th;
     return min(min(b1, b2), b3);
+}
+
+fn draw_save_icon(p: vec2<f32>, size: f32) -> f32 {
+    let s = size * 0.35;
+    let stem = sd_segment(p, vec2<f32>(0.0, -s * 0.7), vec2<f32>(0.0, s * 0.2)) - size * 0.07;
+    let arrow = draw_arrow(p - vec2<f32>(0.0, s * 0.35), vec2<f32>(0.0, 1.0), s * 1.1);
+    return min(stem, arrow);
+}
+
+fn draw_load_icon(p: vec2<f32>, size: f32) -> f32 {
+    let s = size * 0.35;
+    let stem = sd_segment(p, vec2<f32>(0.0, s * 0.7), vec2<f32>(0.0, -s * 0.2)) - size * 0.07;
+    let arrow = draw_arrow(p - vec2<f32>(0.0, -s * 0.35), vec2<f32>(0.0, -1.0), s * 1.1);
+    return min(stem, arrow);
 }
 
 // Render styling for circular action button
@@ -447,14 +466,27 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // ========================================================================
-    // 6. HUD Quick Actions: Fast-Forward & Menu (Top Center)
+    // 6. HUD Quick Actions: Quick Save, Menu, Fast-Forward, Quick Load (Top Center)
     // ========================================================================
+    let qs_c = vec2<f32>(uniforms.btn_qs_pos.x * aspect, uniforms.btn_qs_pos.y);
     let menu_c = vec2<f32>(uniforms.btn_menu_pos.x * aspect, uniforms.btn_menu_pos.y);
     let ff_c = vec2<f32>(uniforms.btn_ff_pos.x * aspect, uniforms.btn_ff_pos.y);
-    let hud_r = btn_r * 0.60;
+    let ql_c = vec2<f32>(uniforms.btn_ql_pos.x * aspect, uniforms.btn_ql_pos.y);
+    let hud_r = btn_r * 0.55;
 
+    let qs_pressed = (pressed_mask & BTN_QUICK_SAVE) != 0u;
     let menu_pressed = (pressed_mask & BTN_MENU) != 0u;
     let ff_pressed = (pressed_mask & BTN_FAST_FORWARD) != 0u;
+    let ql_pressed = (pressed_mask & BTN_QUICK_LOAD) != 0u;
+
+    // Quick Save Button (Save Icon / Emerald Glow)
+    let qs_p = p - qs_c;
+    if (length(qs_p) < hud_r * 1.5) {
+        let qs_col = render_round_button(qs_p, hud_r, qs_pressed, col_dark, col_emerald_glow, aa);
+        let save_d = draw_save_icon(qs_p, hud_r);
+        let glyph_col = vec4<f32>(vec3<f32>(1.0), 0.90 * smoothstep(aa, -aa, save_d));
+        final_color = blend_over(blend_over(glyph_col, qs_col), final_color);
+    }
 
     // Menu Button (3 Bars Icon)
     let menu_p = p - menu_c;
@@ -472,6 +504,15 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let ff_d = draw_fast_forward(ff_p, hud_r);
         let glyph_col = vec4<f32>(vec3<f32>(1.0), 0.90 * smoothstep(aa, -aa, ff_d));
         final_color = blend_over(blend_over(glyph_col, ff_col), final_color);
+    }
+
+    // Quick Load Button (Load Icon / Purple Glow)
+    let ql_p = p - ql_c;
+    if (length(ql_p) < hud_r * 1.5) {
+        let ql_col = render_round_button(ql_p, hud_r, ql_pressed, col_dark, col_purple_glow, aa);
+        let load_d = draw_load_icon(ql_p, hud_r);
+        let glyph_col = vec4<f32>(vec3<f32>(1.0), 0.90 * smoothstep(aa, -aa, load_d));
+        final_color = blend_over(blend_over(glyph_col, ql_col), final_color);
     }
 
     // Apply global opacity uniform

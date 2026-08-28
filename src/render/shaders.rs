@@ -94,9 +94,8 @@ struct ShaderUniforms {
 };
 
 @group(0) @binding(0) var t_diffuse: texture_2d<f32>;
-@group(0) @binding(1) var s_diffuse_nearest: sampler;
-@group(0) @binding(2) var s_diffuse_linear: sampler;
-@group(0) @binding(3) var<uniform> uniforms: ShaderUniforms;
+@group(0) @binding(1) var s_diffuse: sampler;
+@group(0) @binding(2) var<uniform> uniforms: ShaderUniforms;
 
 fn apply_lcd_grid(color: vec3<f32>, uv: vec2<f32>, tex_size: vec2<f32>) -> vec3<f32> {
     let pixel_coord = uv * tex_size;
@@ -143,30 +142,47 @@ fn apply_color_correction(color: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    var raw_sample: vec4<f32>;
-    if (uniforms.filter_type == 1u) {
-        // Bilinear smooth sampling
-        raw_sample = textureSample(t_diffuse, s_diffuse_linear, in.uv);
+    let screen_w = uniforms.output_size.x;
+    let screen_h = uniforms.output_size.y;
+    let tex_w = max(uniforms.texture_size.x, 1.0);
+    let tex_h = max(uniforms.texture_size.y, 1.0);
+
+    let target_aspect = tex_w / tex_h;
+    let screen_aspect = screen_w / max(screen_h, 1.0);
+
+    var uv = in.uv;
+    if (screen_aspect > target_aspect) {
+        // Screen is wider than target game aspect ratio (pillarboxing)
+        let scale = screen_aspect / target_aspect;
+        uv.x = (in.uv.x - 0.5) * scale + 0.5;
+        if (uv.x < 0.0 || uv.x > 1.0) {
+            return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        }
     } else {
-        // Nearest-neighbor texture sample
-        raw_sample = textureSample(t_diffuse, s_diffuse_nearest, in.uv);
+        // Screen is taller than target game aspect ratio (letterboxing)
+        let scale = target_aspect / screen_aspect;
+        uv.y = (in.uv.y - 0.5) * scale + 0.5;
+        if (uv.y < 0.0 || uv.y > 1.0) {
+            return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        }
     }
-    
+
+    let raw_sample = textureSample(t_diffuse, s_diffuse, uv);
     var rgb = raw_sample.rgb;
 
     if (uniforms.filter_type == 2u) {
         // LCD Screen Grid
-        rgb = apply_lcd_grid(rgb, in.uv, uniforms.texture_size);
+        rgb = apply_lcd_grid(rgb, uv, uniforms.texture_size);
     } else if (uniforms.filter_type == 3u) {
         // Color Correction
         rgb = apply_color_correction(rgb);
     } else if (uniforms.filter_type == 4u) {
         // LCD Grid + Color Correction
         rgb = apply_color_correction(rgb);
-        rgb = apply_lcd_grid(rgb, in.uv, uniforms.texture_size);
+        rgb = apply_lcd_grid(rgb, uv, uniforms.texture_size);
     }
 
-    return vec4<f32>(rgb, raw_sample.a);
+    return vec4<f32>(rgb, 1.0);
 }
 "#;
 
@@ -217,6 +233,6 @@ mod tests {
         assert!(SHADER_SOURCE.contains("fn fs_main"));
         assert!(SHADER_SOURCE.contains("apply_lcd_grid"));
         assert!(SHADER_SOURCE.contains("apply_color_correction"));
-        assert!(SHADER_SOURCE.contains("s_diffuse_linear"));
+        assert!(SHADER_SOURCE.contains("s_diffuse"));
     }
 }

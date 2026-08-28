@@ -1,9 +1,11 @@
 pub mod overlay;
 pub mod shaders;
+pub mod viewport;
 
 use pixels::wgpu::{self, util::DeviceExt};
 pub use overlay::{TouchOverlayRenderer, TouchOverlayUniforms};
 pub use shaders::FilterMode;
+pub use viewport::{ViewportConfig, ViewportRect};
 use shaders::{ShaderUniforms, SHADER_SOURCE};
 
 /// Post-processing Shader Pipeline managing WGSL shader passes, filter modes, and samplers.
@@ -13,7 +15,8 @@ pub struct ShaderPipeline {
     sampler_nearest: wgpu::Sampler,
     sampler_linear: wgpu::Sampler,
     uniform_buffer: wgpu::Buffer,
-    bind_group: Option<wgpu::BindGroup>,
+    bind_group_nearest: Option<wgpu::BindGroup>,
+    bind_group_linear: Option<wgpu::BindGroup>,
     cached_uniforms: Option<ShaderUniforms>,
     current_filter: FilterMode,
     current_tex_size: (u32, u32),
@@ -68,23 +71,16 @@ impl ShaderPipeline {
                     },
                     count: None,
                 },
-                // Binding 1: Sampler Nearest
+                // Binding 1: Sampler (1:1 with texture)
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
-                // Binding 2: Sampler Linear
+                // Binding 2: Uniform Buffer
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // Binding 3: Uniform Buffer
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
@@ -139,7 +135,8 @@ impl ShaderPipeline {
             sampler_nearest,
             sampler_linear,
             uniform_buffer,
-            bind_group: None,
+            bind_group_nearest: None,
+            bind_group_linear: None,
             cached_uniforms: None,
             current_filter: FilterMode::Nearest,
             current_tex_size: (0, 0),
@@ -159,15 +156,16 @@ impl ShaderPipeline {
         out_width: u32,
         out_height: u32,
     ) {
-        // Zero-allocation bind group caching: only recreate bind group if texture dimension changed
-        if self.bind_group.is_none() || self.current_tex_size != (tex_width, tex_height) {
+        // Zero-allocation bind group caching: create both nearest & linear 1:1 sampler bind groups when texture size changes
+        if self.bind_group_nearest.is_none() || self.current_tex_size != (tex_width, tex_height) {
             let texture_view = context
                 .texture
                 .create_view(&wgpu::TextureViewDescriptor::default());
-            let bind_group = context
+
+            let bg_nearest = context
                 .device
                 .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("PostProcess_BindGroup"),
+                    label: Some("PostProcess_BindGroup_Nearest"),
                     layout: &self.bind_group_layout,
                     entries: &[
                         wgpu::BindGroupEntry {
@@ -180,15 +178,34 @@ impl ShaderPipeline {
                         },
                         wgpu::BindGroupEntry {
                             binding: 2,
-                            resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
                             resource: self.uniform_buffer.as_entire_binding(),
                         },
                     ],
                 });
-            self.bind_group = Some(bind_group);
+
+            let bg_linear = context
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("PostProcess_BindGroup_Linear"),
+                    layout: &self.bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&texture_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.sampler_linear),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: self.uniform_buffer.as_entire_binding(),
+                        },
+                    ],
+                });
+
+            self.bind_group_nearest = Some(bg_nearest);
+            self.bind_group_linear = Some(bg_linear);
             self.current_tex_size = (tex_width, tex_height);
         }
 
@@ -209,8 +226,15 @@ impl ShaderPipeline {
             self.current_filter = filter_mode;
         }
 
+        // Select the active 1:1 bind group (Linear for Bilinear mode, Nearest for all other modes)
+        let active_bind_group = if filter_mode == FilterMode::Bilinear {
+            self.bind_group_linear.as_ref()
+        } else {
+            self.bind_group_nearest.as_ref()
+        };
+
         // Perform post-processing pass
-        if let Some(ref bind_group) = self.bind_group {
+        if let Some(bind_group) = active_bind_group {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("PostProcess_RenderPass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {

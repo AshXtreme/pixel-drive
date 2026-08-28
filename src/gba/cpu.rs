@@ -358,6 +358,7 @@ pub struct Cpu {
     pub cycle_count: usize,
     pub last_pc: u32,
     pub pc_repeat_count: usize,
+    pub halted: bool,
 }
 
 impl Default for Cpu {
@@ -373,6 +374,7 @@ impl Cpu {
             cycle_count: 0,
             last_pc: 0,
             pc_repeat_count: 0,
+            halted: false,
         }
     }
 
@@ -430,6 +432,17 @@ impl Cpu {
 
     /// Execute single CPU instruction step (ARM 32-bit or THUMB 16-bit).
     pub fn step(&mut self, bus: &mut GbaMemoryBus) -> usize {
+        if self.halted {
+            let ie = bus.read_u16(0x04000200);
+            let if_flags = bus.read_u16(0x04000202);
+            if (ie & if_flags) != 0 {
+                self.halted = false;
+            } else {
+                self.cycle_count += 2;
+                return 2;
+            }
+        }
+
         let pc = if self.regs.thumb_mode() {
             self.regs.r[15] & !1
         } else {

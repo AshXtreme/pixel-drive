@@ -147,6 +147,8 @@ impl GbaMemoryBus {
             has_real_bios: false,
         };
         bus.init_hle_bios();
+        bus.write_u16(0x04000204, 0x4317); // WAITCNT
+        bus.write_u8(0x04000300, 0x01); // POSTFLG
         bus
     }
 
@@ -166,6 +168,8 @@ impl GbaMemoryBus {
 
         self.has_real_bios = false;
         self.init_hle_bios();
+        self.write_u16(0x04000204, 0x4317); // WAITCNT
+        self.write_u8(0x04000300, 0x01); // POSTFLG
         log::info!("No gba_bios.bin found. Falling back to High-Level Emulation (HLE).");
         false
     }
@@ -205,6 +209,9 @@ impl GbaMemoryBus {
         self.ppu.reset();
         self.keypad.reset();
         self.dma.reset();
+        self.io.fill(0);
+        self.write_u16(0x04000204, 0x4317); // WAITCNT
+        self.write_u8(0x04000300, 0x01); // POSTFLG
     }
 
     /// Load raw ROM bytes into the Game Pak ROM space (mapped at 0x08000000).
@@ -338,8 +345,8 @@ impl GbaMemoryBus {
                 }
             }
             0x08..=0x0D => {
-                let offset = (addr & 0x01FFFFFF) as usize;
-                if offset < self.rom.len() {
+                if !self.rom.is_empty() {
+                    let offset = (addr & 0x01FFFFFF) as usize % self.rom.len();
                     self.rom[offset]
                 } else {
                     0
@@ -486,10 +493,11 @@ impl GbaMemoryBus {
                 lo | (hi << 8)
             }
             0x08..=0x0D => {
-                let rom_off = (addr & 0x01FFFFFF) as usize;
-                if rom_off + 1 < self.rom.len() {
+                if !self.rom.is_empty() {
+                    let rom_len = self.rom.len();
+                    let rom_off = (addr & 0x01FFFFFF) as usize % rom_len;
                     let low = self.rom[rom_off] as u16;
-                    let high = self.rom[rom_off + 1] as u16;
+                    let high = self.rom[(rom_off + 1) % rom_len] as u16;
                     (high << 8) | low
                 } else {
                     self.fallback_read_u16(addr)
@@ -564,12 +572,13 @@ impl GbaMemoryBus {
                 u32::from_le_bytes([b0, b1, b2, b3])
             }
             0x08..=0x0D => {
-                let rom_off = (addr & 0x01FFFFFF) as usize;
-                if rom_off + 3 < self.rom.len() {
+                if !self.rom.is_empty() {
+                    let rom_len = self.rom.len();
+                    let rom_off = (addr & 0x01FFFFFF) as usize % rom_len;
                     let b0 = self.rom[rom_off];
-                    let b1 = self.rom[rom_off + 1];
-                    let b2 = self.rom[rom_off + 2];
-                    let b3 = self.rom[rom_off + 3];
+                    let b1 = self.rom[(rom_off + 1) % rom_len];
+                    let b2 = self.rom[(rom_off + 2) % rom_len];
+                    let b3 = self.rom[(rom_off + 3) % rom_len];
                     u32::from_le_bytes([b0, b1, b2, b3])
                 } else {
                     self.fallback_read_u32(addr)

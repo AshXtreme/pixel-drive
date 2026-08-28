@@ -116,7 +116,46 @@ fi
 echo "🔨 Step 1: Compiling native cdylib for arm64-v8a & x86_64 with cargo-ndk..."
 mkdir -p android/app/src/main/jniLibs/arm64-v8a android/app/src/main/jniLibs/x86_64
 
-cargo ndk -t arm64-v8a -t x86_64 -o android/app/src/main/jniLibs build --lib ${CARGO_FLAGS}
+RUSTFLAGS="-C link-arg=-lc++_shared -C link-arg=-Wl,-z,max-page-size=16384 ${RUSTFLAGS}" cargo ndk -t arm64-v8a -t x86_64 -o android/app/src/main/jniLibs build --lib ${CARGO_FLAGS}
+
+# Bundle libc++_shared.so from Android NDK toolchain
+if [ -n "$ANDROID_NDK_HOME" ]; then
+    echo "📦 Bundling libc++_shared.so from Android NDK..."
+    LIBCXX_ARM64=$(find "$ANDROID_NDK_HOME" -path "*/aarch64-linux-android/libc++_shared.so" 2>/dev/null | head -n 1)
+    LIBCXX_X86_64=$(find "$ANDROID_NDK_HOME" -path "*/x86_64-linux-android/libc++_shared.so" 2>/dev/null | head -n 1)
+
+    if [ -n "$LIBCXX_ARM64" ] && [ -f "$LIBCXX_ARM64" ]; then
+        cp "$LIBCXX_ARM64" android/app/src/main/jniLibs/arm64-v8a/
+        echo "  -> Copied arm64-v8a libc++_shared.so"
+    fi
+
+    if [ -n "$LIBCXX_X86_64" ] && [ -f "$LIBCXX_X86_64" ]; then
+        cp "$LIBCXX_X86_64" android/app/src/main/jniLibs/x86_64/
+        echo "  -> Copied x86_64 libc++_shared.so"
+    fi
+fi
+
+# Bundle pre-compiled Libretro GBA core (mGBA)
+echo "📦 Bundling Libretro GBA Core (libmgba_core.so)..."
+if [ ! -f "cores/android_arm64/mgba_libretro_android.so" ]; then
+    mkdir -p cores/android_arm64
+    curl -sSL "https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/mgba_libretro_android.so.zip" -o cores/android_arm64/mgba.zip 2>/dev/null || true
+    unzip -o cores/android_arm64/mgba.zip -d cores/android_arm64/ 2>/dev/null || true
+fi
+if [ ! -f "cores/android_x86_64/mgba_libretro_android.so" ]; then
+    mkdir -p cores/android_x86_64
+    curl -sSL "https://buildbot.libretro.com/nightly/android/latest/x86_64/mgba_libretro_android.so.zip" -o cores/android_x86_64/mgba.zip 2>/dev/null || true
+    unzip -o cores/android_x86_64/mgba.zip -d cores/android_x86_64/ 2>/dev/null || true
+fi
+
+if [ -f "cores/android_arm64/mgba_libretro_android.so" ]; then
+    cp "cores/android_arm64/mgba_libretro_android.so" android/app/src/main/jniLibs/arm64-v8a/libmgba_core.so
+    echo "  -> Copied arm64-v8a libmgba_core.so"
+fi
+if [ -f "cores/android_x86_64/mgba_libretro_android.so" ]; then
+    cp "cores/android_x86_64/mgba_libretro_android.so" android/app/src/main/jniLibs/x86_64/libmgba_core.so
+    echo "  -> Copied x86_64 libmgba_core.so"
+fi
 
 # 7. Strip debug symbols with NDK llvm-strip to guarantee small package footprint
 echo "✂️  Step 2: Stripping symbols using llvm-strip..."
@@ -132,7 +171,7 @@ fi
 
 if [ -n "$LLVM_STRIP" ] && [ -f "$LLVM_STRIP" ]; then
     echo "Using strip tool: $LLVM_STRIP"
-    find android/app/src/main/jniLibs -name "*.so" -exec "$LLVM_STRIP" --strip-all {} + 2>/dev/null || true
+    find android/app/src/main/jniLibs -name "*.so" -exec "$LLVM_STRIP" --strip-unneeded {} + 2>/dev/null || true
     echo "✅ Successfully stripped symbols across all native ABIs."
 else
     echo "ℹ️  llvm-strip not found, skipping explicit symbol stripping."
@@ -161,7 +200,7 @@ APK_RELEASE_SIGNED="android/app/build/outputs/apk/release/app-release.apk"
 APK_RELEASE_UNSIGNED="android/app/build/outputs/apk/release/app-release-unsigned.apk"
 APK_DEBUG="android/app/build/outputs/apk/debug/app-debug.apk"
 
-DEST_APK="dist/PixelDrive-Android-v1.2.0.apk"
+DEST_APK="dist/PixelDrive-Android-v1.2.1.apk"
 
 if [ -f "$APK_RELEASE_SIGNED" ]; then
     cp "$APK_RELEASE_SIGNED" "$DEST_APK"

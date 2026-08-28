@@ -290,6 +290,34 @@ pub fn convert_0rgb1555_to_rgba(
     }
 }
 
+static SYSTEM_DIR_CSTRING: Mutex<Option<std::ffi::CString>> = Mutex::new(None);
+static SAVE_DIR_CSTRING: Mutex<Option<std::ffi::CString>> = Mutex::new(None);
+
+/// Set or update the global system and save directories for Libretro cores.
+pub fn set_directories<P: AsRef<Path>>(system_path: P, save_path: P) {
+    let sys_p = system_path.as_ref();
+    let save_p = save_path.as_ref();
+    let _ = std::fs::create_dir_all(sys_p);
+    let _ = std::fs::create_dir_all(save_p);
+
+    let sys_c = sys_p.to_str().and_then(|s| std::ffi::CString::new(s).ok());
+    let save_c = save_p.to_str().and_then(|s| std::ffi::CString::new(s).ok());
+
+    if let Ok(mut lock) = SYSTEM_DIR_CSTRING.lock() {
+        *lock = sys_c.clone();
+    }
+    if let Ok(mut lock) = SAVE_DIR_CSTRING.lock() {
+        *lock = save_c.clone();
+    }
+
+    if let Ok(mut lock) = BRIDGE_STATE.lock() {
+        if let Some(ref mut state) = *lock {
+            state.system_dir = sys_c;
+            state.save_dir = save_c;
+        }
+    }
+}
+
 // ============================================================================
 // Libretro C Callbacks
 // ============================================================================
@@ -346,6 +374,18 @@ unsafe extern "C" fn retro_environment_cb(cmd: c_uint, data: *mut c_void) -> boo
                         }
                     }
                 }
+
+                // Fallback from static cached directories
+                let static_lock = if cmd == RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY {
+                    SYSTEM_DIR_CSTRING.lock().ok()
+                } else {
+                    SAVE_DIR_CSTRING.lock().ok()
+                };
+
+                if let Some(Some(ref cstr)) = static_lock.as_deref() {
+                    *(data as *mut *const c_char) = cstr.as_ptr();
+                    return true;
+                }
             }
             false
         }
@@ -353,11 +393,31 @@ unsafe extern "C" fn retro_environment_cb(cmd: c_uint, data: *mut c_void) -> boo
         RETRO_ENVIRONMENT_GET_VARIABLE => {
             if !data.is_null() {
                 let var = data as *mut RetroVariable;
-                if !(*var).key.is_null() {
-                    let key = CStr::from_ptr((*var).key).to_string_lossy();
+                if !var.is_null() && !(*var).key.is_null() {
+                    let key_cstr = CStr::from_ptr((*var).key);
+                    let key = key_cstr.to_string_lossy();
                     debug!("Libretro Environment: GET_VARIABLE query for '{}'", key);
+
+                    static OPT_OFF: &[u8] = b"OFF\0";
+                    static OPT_ON: &[u8] = b"ON\0";
+
+                    let val_ptr = match key.as_ref() {
+                        "mgba_solar_sensor" => OPT_OFF.as_ptr(),
+                        "mgba_frameskip" => OPT_OFF.as_ptr(),
+                        "mgba_use_bios" => OPT_ON.as_ptr(),
+                        "mgba_skip_bios" => OPT_OFF.as_ptr(),
+                        "mgba_idle_loop_remove" => OPT_OFF.as_ptr(),
+                        "mgba_allow_opposing_directions" => OPT_OFF.as_ptr(),
+                        "mgba_color_correction" => OPT_OFF.as_ptr(),
+                        "vbanext_frameskip" => OPT_OFF.as_ptr(),
+                        _ => std::ptr::null(),
+                    };
+
+                    (*var).value = val_ptr as *const c_char;
+                    return !val_ptr.is_null();
+                } else if !var.is_null() {
+                    (*var).value = std::ptr::null();
                 }
-                (*var).value = std::ptr::null();
             }
             false
         }
@@ -634,10 +694,21 @@ impl LibretroCore {
         // Initialize global bridge state
         {
             let mut state_lock = BRIDGE_STATE.lock().map_err(|e| e.to_string())?;
-            let system_dir = std::env::current_dir()
+            let system_dir = SYSTEM_DIR_CSTRING
+                .lock()
                 .ok()
-                .and_then(|p| p.to_str().and_then(|s| std::ffi::CString::new(s).ok()));
-            let save_dir = system_dir.clone();
+                .and_then(|l| l.clone())
+                .or_else(|| {
+                    std::env::current_dir()
+                        .ok()
+                        .and_then(|p| p.to_str().and_then(|s| std::ffi::CString::new(s).ok()))
+                })
+                .or_else(|| std::ffi::CString::new("/data/local/tmp").ok());
+            let save_dir = SAVE_DIR_CSTRING
+                .lock()
+                .ok()
+                .and_then(|l| l.clone())
+                .or_else(|| system_dir.clone());
 
             *state_lock = Some(BridgeState {
                 pixel_format: RETRO_PIXEL_FORMAT_RGB565, // Default expectation
@@ -652,7 +723,7 @@ impl LibretroCore {
             });
         }
 
-        // Connect C callbacks
+        // Connect C callbacks BEFORE retro_init
         unsafe {
             (retro_set_environment)(retro_environment_cb);
             (retro_set_video_refresh)(retro_video_refresh_cb);
@@ -732,8 +803,8 @@ impl LibretroCore {
         })
     }
 
-    /// Load a ROM byte buffer into the Libretro core.
-    pub fn load_rom(&mut self, rom_bytes: &[u8]) -> bool {
+    /// Load a ROM byte buffer into the Libretro core with an optional file path hint.
+    pub fn load_rom_with_path(&mut self, rom_bytes: &[u8], path_hint: Option<&str>) -> bool {
         let _lock = LIBRETRO_LOCK.lock();
         if self.is_game_loaded {
             unsafe {
@@ -742,8 +813,12 @@ impl LibretroCore {
             self.is_game_loaded = false;
         }
 
+        let c_path = path_hint
+            .and_then(|p| std::ffi::CString::new(p).ok())
+            .unwrap_or_else(|| std::ffi::CString::new("game.gba").unwrap());
+
         let game_info = RetroGameInfo {
-            path: std::ptr::null(),
+            path: c_path.as_ptr(),
             data: rom_bytes.as_ptr() as *const c_void,
             size: rom_bytes.len(),
             meta: std::ptr::null(),
@@ -772,6 +847,14 @@ impl LibretroCore {
             let fb_size = (self.width * self.height * 4) as usize;
             self.framebuffer_cache.resize(fb_size, 0);
 
+            if let Ok(mut lock) = BRIDGE_STATE.lock() {
+                if let Some(ref mut state) = *lock {
+                    state.width = self.width;
+                    state.height = self.height;
+                    state.framebuffer.resize(fb_size, 0);
+                }
+            }
+
             info!(
                 "Libretro Core loaded ROM successfully! Geometry: {}x{} (Aspect: {:.2}), Timing: {:.2} FPS, {:.0} Hz",
                 self.width,
@@ -795,6 +878,11 @@ impl LibretroCore {
         }
 
         ok
+    }
+
+    /// Load a ROM byte buffer into the Libretro core.
+    pub fn load_rom(&mut self, rom_bytes: &[u8]) -> bool {
+        self.load_rom_with_path(rom_bytes, None)
     }
 
     /// Advance the Libretro core simulation by 1 frame.
@@ -1008,16 +1096,60 @@ impl Drop for LibretroCore {
 pub fn find_available_core() -> Option<PathBuf> {
     let mut candidate_paths = Vec::new();
 
+    // 0. Android internal library and core directories
+    #[cfg(target_os = "android")]
+    {
+        for name in &[
+            "libmgba_core.so",
+            "libmgba_libretro_android.so",
+            "mgba_libretro_android.so",
+            "libvbanext_libretro_android.so",
+        ] {
+            // Direct native library name (resolved by Android dynamic linker)
+            candidate_paths.push(PathBuf::from(name));
+            // Standard Android native library installation directories
+            candidate_paths.push(PathBuf::from(format!(
+                "/data/data/com.pixeldrive.emulator/lib/{}",
+                name
+            )));
+            candidate_paths.push(PathBuf::from(format!(
+                "/data/user/0/com.pixeldrive.emulator/lib/{}",
+                name
+            )));
+            // Scoped internal/external files cores directories
+            candidate_paths.push(PathBuf::from(format!(
+                "/data/data/com.pixeldrive.emulator/files/cores/{}",
+                name
+            )));
+            candidate_paths.push(PathBuf::from(format!(
+                "/data/user/0/com.pixeldrive.emulator/files/cores/{}",
+                name
+            )));
+        }
+    }
+
     // 1. Search ./cores/ directory relative to current working directory
     let cwd_cores = PathBuf::from("cores");
-    for name in &["mgba_libretro", "gba_libretro", "vbam_libretro"] {
+    for name in &[
+        "mgba_libretro",
+        "gba_libretro",
+        "vbam_libretro",
+        "libmgba_core",
+        "mgba_libretro_android",
+    ] {
         candidate_paths.push(cwd_cores.join(format!("{}.dylib", name)));
         candidate_paths.push(cwd_cores.join(format!("{}.so", name)));
         candidate_paths.push(cwd_cores.join(format!("{}.dll", name)));
     }
 
     // 2. Search root working directory
-    for name in &["mgba_libretro", "gba_libretro", "vbam_libretro"] {
+    for name in &[
+        "mgba_libretro",
+        "gba_libretro",
+        "vbam_libretro",
+        "libmgba_core",
+        "mgba_libretro_android",
+    ] {
         candidate_paths.push(PathBuf::from(format!("{}.dylib", name)));
         candidate_paths.push(PathBuf::from(format!("{}.so", name)));
         candidate_paths.push(PathBuf::from(format!("{}.dll", name)));
@@ -1028,7 +1160,13 @@ pub fn find_available_core() -> Option<PathBuf> {
         if let Some(exe_dir) = exe_path.parent() {
             // (a) macOS .app Bundle Resources: ../Resources/cores/
             let bundle_resources_cores = exe_dir.join("../Resources/cores");
-            for name in &["mgba_libretro", "gba_libretro", "vbam_libretro"] {
+            for name in &[
+                "mgba_libretro",
+                "gba_libretro",
+                "vbam_libretro",
+                "libmgba_core",
+                "mgba_libretro_android",
+            ] {
                 candidate_paths.push(bundle_resources_cores.join(format!("{}.dylib", name)));
                 candidate_paths.push(bundle_resources_cores.join(format!("{}.so", name)));
                 candidate_paths.push(bundle_resources_cores.join(format!("{}.dll", name)));
@@ -1036,14 +1174,26 @@ pub fn find_available_core() -> Option<PathBuf> {
 
             // (b) Adjacent cores/ directory: ./cores/ next to executable
             let exe_cores = exe_dir.join("cores");
-            for name in &["mgba_libretro", "gba_libretro", "vbam_libretro"] {
+            for name in &[
+                "mgba_libretro",
+                "gba_libretro",
+                "vbam_libretro",
+                "libmgba_core",
+                "mgba_libretro_android",
+            ] {
                 candidate_paths.push(exe_cores.join(format!("{}.dylib", name)));
                 candidate_paths.push(exe_cores.join(format!("{}.so", name)));
                 candidate_paths.push(exe_cores.join(format!("{}.dll", name)));
             }
 
             // (c) Direct executable directory
-            for name in &["mgba_libretro", "gba_libretro", "vbam_libretro"] {
+            for name in &[
+                "mgba_libretro",
+                "gba_libretro",
+                "vbam_libretro",
+                "libmgba_core",
+                "mgba_libretro_android",
+            ] {
                 candidate_paths.push(exe_dir.join(format!("{}.dylib", name)));
                 candidate_paths.push(exe_dir.join(format!("{}.so", name)));
                 candidate_paths.push(exe_dir.join(format!("{}.dll", name)));
@@ -1051,7 +1201,13 @@ pub fn find_available_core() -> Option<PathBuf> {
 
             // (d) Development workspace root (if running inside target/debug/ or target/release/)
             let workspace_cores = exe_dir.join("../../cores");
-            for name in &["mgba_libretro", "gba_libretro", "vbam_libretro"] {
+            for name in &[
+                "mgba_libretro",
+                "gba_libretro",
+                "vbam_libretro",
+                "libmgba_core",
+                "mgba_libretro_android",
+            ] {
                 candidate_paths.push(workspace_cores.join(format!("{}.dylib", name)));
                 candidate_paths.push(workspace_cores.join(format!("{}.so", name)));
                 candidate_paths.push(workspace_cores.join(format!("{}.dll", name)));
@@ -1061,8 +1217,21 @@ pub fn find_available_core() -> Option<PathBuf> {
 
     for path in candidate_paths {
         if path.exists() {
-            info!("Found Libretro core candidate: {}", path.display());
+            info!("Found Libretro core candidate on disk: {}", path.display());
             return Some(path);
+        }
+
+        // On Android, also check if libloading can load by library name directly (from system/APK linker path)
+        #[cfg(target_os = "android")]
+        {
+            if let Ok(lib) = unsafe { libloading::Library::new(&path) } {
+                drop(lib);
+                info!(
+                    "Found Libretro core dynamically loadable by Android linker: {}",
+                    path.display()
+                );
+                return Some(path);
+            }
         }
     }
 

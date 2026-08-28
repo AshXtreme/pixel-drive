@@ -36,6 +36,9 @@ pub struct TouchOverlayUniforms {
     pub btn_menu_pos: [f32; 2],
 
     pub btn_ff_pos: [f32; 2],
+    pub btn_qs_pos: [f32; 2],
+
+    pub btn_ql_pos: [f32; 2],
     pub _pad: [f32; 2],
 }
 
@@ -58,6 +61,8 @@ impl Default for TouchOverlayUniforms {
             btn_select_pos: [0.425, 0.925],
             btn_menu_pos: [0.44, 0.07],
             btn_ff_pos: [0.56, 0.07],
+            btn_qs_pos: [0.34, 0.07],
+            btn_ql_pos: [0.66, 0.07],
             _pad: [0.0, 0.0],
         }
     }
@@ -202,6 +207,14 @@ impl TouchOverlayRenderer {
                 touch_manager.btn_fast_forward.center().0,
                 touch_manager.btn_fast_forward.center().1,
             ],
+            btn_qs_pos: [
+                touch_manager.btn_quick_save.center().0,
+                touch_manager.btn_quick_save.center().1,
+            ],
+            btn_ql_pos: [
+                touch_manager.btn_quick_load.center().0,
+                touch_manager.btn_quick_load.center().1,
+            ],
             _pad: [0.0, 0.0],
         };
 
@@ -267,12 +280,12 @@ mod tests {
 
     #[test]
     fn test_touch_overlay_uniforms_layout_and_size() {
-        assert_eq!(std::mem::size_of::<TouchOverlayUniforms>(), 112);
+        assert_eq!(std::mem::size_of::<TouchOverlayUniforms>(), 128);
         assert_eq!(std::mem::size_of::<TouchOverlayUniforms>() % 16, 0);
 
         let uniforms = [TouchOverlayUniforms::default()];
         let bytes: &[u8] = bytemuck::cast_slice(&uniforms);
-        assert_eq!(bytes.len(), 112);
+        assert_eq!(bytes.len(), 128);
     }
 
     #[test]
@@ -288,5 +301,7 @@ mod tests {
         assert!(OVERLAY_SHADER_SOURCE.contains("draw_letter_a"));
         assert!(OVERLAY_SHADER_SOURCE.contains("draw_letter_b"));
         assert!(OVERLAY_SHADER_SOURCE.contains("draw_fast_forward"));
+        assert!(OVERLAY_SHADER_SOURCE.contains("draw_save_icon"));
+        assert!(OVERLAY_SHADER_SOURCE.contains("draw_load_icon"));
     }
 }
