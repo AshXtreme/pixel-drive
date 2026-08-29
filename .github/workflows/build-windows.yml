@@ -1,0 +1,67 @@
+name: Build & Release Windows Binary
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows Release (x86_64-pc-windows-msvc)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain (x86_64-pc-windows-msvc)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build Windows Binary in Release Mode
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Package Windows Release Archive
+        shell: bash
+        run: |
+          TAG_NAME="${GITHUB_REF_NAME:-v1.2.1}"
+          DIST_DIR="dist/PixelDrive-Windows"
+          mkdir -p "$DIST_DIR/cores" "$DIST_DIR/saves" "$DIST_DIR/assets"
+
+          # Copy compiled binary
+          if [ -f "target/x86_64-pc-windows-msvc/release/pixel-drive.exe" ]; then
+            cp target/x86_64-pc-windows-msvc/release/pixel-drive.exe "$DIST_DIR/PixelDrive.exe"
+          elif [ -f "target/x86_64-pc-windows-msvc/release/pixeldrive.exe" ]; then
+            cp target/x86_64-pc-windows-msvc/release/pixeldrive.exe "$DIST_DIR/PixelDrive.exe"
+          fi
+
+          # Copy metadata and assets
+          cp README.md LICENSE LEGAL.md "$DIST_DIR/" 2>/dev/null || true
+          [ -f "assets/windows/icon.ico" ] && cp assets/windows/icon.ico "$DIST_DIR/assets/" || true
+
+          # Copy any dynamic cores if present
+          if [ -d "cores" ] && [ "$(ls -A cores 2>/dev/null)" ]; then
+            cp -r cores/* "$DIST_DIR/cores/" || true
+          fi
+
+          # Create distribution zip files
+          cd dist
+          powershell -Command "Compress-Archive -Path PixelDrive-Windows -DestinationPath PixelDrive-Windows-$TAG_NAME.zip -Force"
+          powershell -Command "Copy-Item PixelDrive-Windows-$TAG_NAME.zip PixelDrive-Windows-x86_64.zip -Force"
+
+      - name: Upload Windows Release Assets to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/PixelDrive-Windows-*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
