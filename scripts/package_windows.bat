@@ -27,9 +27,9 @@ if exist assets\windows\icon.ico copy assets\windows\icon.ico %DIST_DIR%\assets\
 if exist cores\*.dll copy cores\*.dll %DIST_DIR%\cores\ >nul 2>&1
 
 echo Creating ZIP distribution archive...
-powershell -Command "Compress-Archive -Path '%DIST_DIR%' -DestinationPath 'dist\PixelDrive-Windows-v1.0.0.zip' -Force"
+powershell -Command "Compress-Archive -Path '%DIST_DIR%' -DestinationPath 'dist\PixelDrive-Windows-v1.2.1.zip' -Force"
 
 echo ============================================
 echo [SUCCESS] Windows package created:
-echo dist\PixelDrive-Windows-v1.0.0.zip
+echo dist\PixelDrive-Windows-v1.2.1.zip
 echo ============================================

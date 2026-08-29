@@ -32,5 +32,6 @@ if [ -d "cores" ] && [ "$(ls -A cores 2>/dev/null)" ]; then
 fi
 
 cd dist
-zip -r PixelDrive-Windows-x86_64.zip PixelDrive-Windows
-echo "✅ Windows bundle created: dist/PixelDrive-Windows-x86_64.zip"
+zip -r PixelDrive-Windows-v1.2.1.zip PixelDrive-Windows
+cp PixelDrive-Windows-v1.2.1.zip PixelDrive-Windows-x86_64.zip
+echo "✅ Windows bundle created: dist/PixelDrive-Windows-v1.2.1.zip"

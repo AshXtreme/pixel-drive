@@ -12,7 +12,7 @@ MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 
 echo "🧹 Cleaning previous staging & disk image files..."
-rm -rf dist/dmg_staging "dist/$APP_NAME-1.0.0.dmg"
+rm -rf dist/dmg_staging "dist/$APP_NAME-v1.2.1.dmg"
 mkdir -p "$MACOS" "$RESOURCES/cores" "$RESOURCES/saves"
 
 echo "📦 Assembling $APP_NAME.app bundle..."
@@ -51,9 +51,9 @@ hdiutil create -volname "$APP_NAME" \
                -srcfolder "$DMG_DIR" \
                -ov \
                -format UDZO \
-               "dist/$APP_NAME-1.0.0.dmg"
+               "dist/$APP_NAME-v1.2.1.dmg"
 
 echo "🧹 Cleaning up temporary staging files..."
 rm -rf "$DMG_DIR"
 
-echo "✅ Success! macOS DMG created at: dist/$APP_NAME-1.0.0.dmg"
+echo "✅ Success! macOS DMG created at: dist/$APP_NAME-v1.2.1.dmg"

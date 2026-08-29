@@ -5,7 +5,7 @@
 <h1 align="center">🕹️ PixelDrive</h1>
 
 <p align="center">
-  <strong>A modern, high-performance Game Boy (GB / GBC) and Game Boy Advance (GBA) emulator built in Rust for macOS and Windows.</strong>
+  <strong>A modern, high-performance Game Boy (GB / GBC) and Game Boy Advance (GBA) emulator built in Rust for Android, macOS, and Windows.</strong>
 </p>
 
 <p align="center">
@@ -24,35 +24,44 @@
 
 - **Multi-System Dual-Core Architecture:**
   - **Game Boy / Game Boy Color:** Native cycle-accurate pure-Rust emulation core featuring full 4-channel APU audio synthesis, MBC1/2/3/5 cartridge banking, and accurate PPU rendering.
-  - **Game Boy Advance:** High-performance dynamic Libretro core bridge (`libloading`) supporting official `mgba_libretro` dynamic libraries (`.dylib` / `.dll` / `.so`).
+  - **Game Boy Advance:** High-performance dynamic Libretro core bridge (`libloading`) with pre-bundled official `libmgba_core` dynamic libraries (`.so`, `.dylib`, `.dll`) and built-in ARM7TDMI / HLE BIOS interpreter fallback.
 - **Cross-Platform Hardware-Accelerated Rendering (WGPU):**
-  - Native GPU acceleration across **Metal (macOS)**, **DirectX 12 (Windows)**, and **Vulkan (Linux/Windows)**.
+  - Native GPU acceleration across **Vulkan / OpenGL ES (Android)**, **Metal (macOS)**, and **DirectX 12 / Vulkan (Windows/Linux)**.
   - **Real-Time WGSL Shaders:** Instant cycling between Nearest-Neighbor integer scaling, authentic LCD subpixel grid lines, and GBA color correction tone curves.
-- **Low-Latency Audio Engine:**
+  - **Procedural Touch Overlay:** GPU-rendered on-screen virtual game controller with subpixel anti-aliasing, tactile press feedback, and responsive aspect-ratio letterboxing.
+- **Native Android Experience (Android 8.0+ / API 26+):**
+  - **Storage Access Framework (SAF):** Full Android document picker integration with streaming JNI byte loading for `.gba`, `.gbc`, `.gb`, and `.zip` archives.
+  - **Low-Latency AAudio / Oboe Engine:** Real-time stereo audio stream ($\le 30\,\text{ms}$ latency) with Catmull-Rom cubic Hermite spline resampling and lock-free ring buffering.
+  - **Multi-Touch Gamepad & Haptic Feedback:** Multi-finger tracking supporting simultaneous D-Pad chords, floating dynamic centers, A+B bridge hitbox, and hardware vibration feedback (`VibrationEffect`).
+- **Low-Latency Desktop Audio Engine:**
   - Real-time stereo audio pipeline powered by **cpal** (CoreAudio on macOS, WASAPI on Windows) with lock-free ring buffering (`ringbuf`).
-  - High-precision Catmull-Rom cubic Hermite spline resampler and 2nd-order Butterworth lowpass filter.
 - **Save Management & Persistence:**
-  - **Battery Saves (`.sav`):** In-game cartridge RAM automatically flushes to `./saves/<rom_name>.sav`.
-  - **Real-Time Save States:** Persistent multi-slot state snapshots saved to disk (`./saves/<rom_name>.state<slot>`) with instant Quick Save / Quick Load.
-- **Native OS Desktop Integration:**
-  - **macOS:** Dynamic `NSDockTile` custom view injection, retina icon set (`AppIcon.icns`), and `.app` drag-and-drop `.dmg` installer.
-  - **Windows:** Native Windows `.rc` resource embedding with multi-resolution `.ico` icon for File Explorer and Taskbar integration.
-- **Modern On-Screen Display (egui Overlay):**
-  - Native menu bar with File Dialog loading (`rfd`), shader selector, save slot manager, audio mute toggle, and live FPS/T-cycle diagnostic HUD.
+  - **Battery Saves (`.sav`):** In-game cartridge RAM automatically flushes to scoped storage or `./saves/<rom_name>.sav`.
+  - **Real-Time Save States:** Persistent multi-slot state snapshots saved to disk (`./saves/<rom_name>.state1..9`) with instant Quick Save / Quick Load.
+- **Modern On-Screen Display & HUD:**
+  - On-screen touch menu / load button on mobile, and desktop menu bar (`rfd` / `egui`) with shader cycling, audio mute toggle, save slot manager, and live FPS diagnostics.
 
 ---
 
 ## 🚀 Installation & Quickstart
 
+### 🤖 Android: Signed Universal APK (.apk)
+Download `PixelDrive-Android-v1.2.1.apk` from the **[Releases](../../releases)** page (supports `arm64-v8a` physical devices and `x86_64` emulators/BlueStacks):
+```bash
+# Install directly via ADB:
+adb install -r PixelDrive-Android-v1.2.1.apk
+```
+Or download and open the APK directly on your Android device to install.
+
 ### 🍎 macOS: Disk Image Installer (.dmg)
-Download the latest `PixelDrive-1.0.0.dmg` from the **[Releases](../../releases)** page:
-1. Open `PixelDrive-1.0.0.dmg`.
+Download the latest `PixelDrive-v1.2.1.dmg` from the **[Releases](../../releases)** page:
+1. Open `PixelDrive-v1.2.1.dmg`.
 2. Drag **PixelDrive.app** into your **Applications** folder.
 3. Launch PixelDrive from Launchpad, Spotlight, or Finder.
 
 ### 🪟 Windows: Portable Standalone (.zip)
-Download `PixelDrive-Windows-x86_64.zip` from the **[Releases](../../releases)** page:
-1. Extract `PixelDrive-Windows-x86_64.zip` to your desired directory.
+Download `PixelDrive-Windows-v1.2.1.zip` from the **[Releases](../../releases)** page:
+1. Extract `PixelDrive-Windows-v1.2.1.zip` to your desired directory.
 2. Double-click **PixelDrive.exe** to launch.
 
 ### 🛠️ Build from Source (Cargo)
@@ -64,7 +73,7 @@ Ensure you have [Rust (stable)](https://rustup.rs/) installed:
 git clone https://github.com/AshXtreme/pixel-drive.git
 cd pixel-drive
 
-# Run PixelDrive in Release mode
+# Run PixelDrive desktop in Release mode
 cargo run --release
 
 # Or launch directly with a ROM file:
@@ -75,7 +84,21 @@ cargo run --release -- path/to/game.gba
 
 ## 🎮 Controls & Hotkeys
 
-### Gamepad Controls (Player 1)
+### Android Touch Controls
+
+| Virtual Button | Description / Action |
+| :--- | :--- |
+| **8-Way D-Pad** | Smooth directional navigation with floating touch center |
+| **A / B Buttons** | Action buttons with multi-touch chord support |
+| **A+B Bridge** | Central chord hitbox to trigger A + B simultaneously |
+| **L / R Shoulder** | Top-left and top-right shoulder triggers (GBA) |
+| **Start / Select** | Lower menu utility buttons |
+| **Fast-Forward (FF)** | Toggle 2x emulation speed with audio throttling |
+| **Quick Save (QS)** | Snapshot real-time game state to active slot |
+| **Quick Load (QL)** | Restore real-time game state snapshot |
+| **Load ROM / Menu** | Top-left menu icon to trigger Android Document Picker |
+
+### Desktop Gamepad & Keyboard Controls (Player 1)
 
 | Game Boy / GBA Key | Keyboard Key |
 | :--- | :--- |
@@ -110,19 +133,32 @@ PixelDrive/
 ├── .github/
 │   └── workflows/
 │       └── release.yml     # Automated multi-platform CI/CD release workflow
+├── android/                # Native Android Gradle project & packaging
+│   ├── app/
+│   │   ├── src/main/
+│   │   │   ├── AndroidManifest.xml # NativeActivity configuration & SAF permissions
+│   │   │   ├── java/com/pixeldrive/emulator/RomPickerActivity.java # SAF document picker
+│   │   │   ├── jniLibs/    # Pre-compiled native cdylibs (arm64-v8a, x86_64)
+│   │   │   └── res/        # Adaptive app icons and launch themes
+│   │   └── build.gradle.kts # Android packaging configuration
 ├── assets/                 # High-resolution icons and platform metadata
 │   ├── macos/              # AppIcon.icns & Info.plist
 │   ├── windows/            # icon.ico & resources.rc (Windows VERSIONINFO)
 │   └── icon.png            # Master 1024x1024 application logo
-├── cores/                  # Dynamic Libretro core libraries (.dylib / .dll / .so)
+├── cores/                  # Dynamic Libretro core libraries (.so / .dylib / .dll)
+├── dist/                   # Built production packages (.apk, .dmg, .zip)
 ├── saves/                  # Persistent battery saves (.sav) and save states (.state1..9)
 ├── scripts/                # Packaging and release automation scripts
+│   ├── package_android.sh  # Multi-ABI Android APK release packager
 │   ├── build_macos_dmg.sh  # macOS .app bundle & .dmg installer generator
 │   ├── package_windows.bat # Native Windows release batch packager (.zip)
-│   ├── package_windows.sh  # Cross-platform / CI Windows release packager
-│   └── package.sh          # General release tarball packager
+│   └── package_windows.sh  # Cross-platform Windows release packager
+├── shaders/                # GPU WGSL shaders
+│   ├── shader.wgsl         # Integer scaling, LCD grid lines & color correction
+│   └── overlay.wgsl        # Procedural virtual gamepad touch overlay
 ├── src/
-│   ├── main.rs             # Event loop, WGPU/Pixels setup, input dispatch, timing
+│   ├── main.rs             # Desktop entry point, WGPU event loop, input dispatch
+│   ├── lib.rs              # Unified library crate exports & Android entry point
 │   ├── core/               # Shared EmulatorCore trait, Button matrix & system enums
 │   ├── gbc/                # Native Game Boy / Game Boy Color core
 │   │   ├── cpu.rs          # LR35902 8-bit Z80-derivative CPU & opcode decoder
@@ -132,7 +168,7 @@ PixelDrive/
 │   │   ├── apu.rs          # 4-channel audio synthesizer (Square 1/2, Wave, Noise)
 │   │   └── joypad.rs       # Active-low joypad matrix
 │   ├── gba/                # Game Boy Advance emulation layer
-│   │   ├── libretro.rs     # FFI Libretro dynamic bridge with AV & input callbacks
+│   │   ├── libretro.rs     # FFI Libretro dynamic bridge with AV & static callbacks
 │   │   ├── cpu.rs          # ARM7TDMI 32-bit CPU core & mode registers
 │   │   ├── arm.rs          # ARM instruction decoder & barrel shifter
 │   │   ├── thumb.rs        # 16-bit THUMB instruction decoder
@@ -140,14 +176,20 @@ PixelDrive/
 │   │   ├── ppu.rs          # GBA PPU with Modes 0-5 bitmap and affine backgrounds
 │   │   ├── bios.rs         # SWI BIOS routines & HLE fallback
 │   │   └── keypad.rs       # GBA KEYINPUT 10-button active-low matrix
+│   ├── input/              # Multi-finger touch state machine & keyboard mapping
+│   │   └── touch.rs        # VirtualButton hitboxes, multi-touch tracking, chords
+│   ├── platform/           # Platform abstraction layer
+│   │   ├── android/        # Android NativeActivity, AAudio, SAF, Haptics, JNI
+│   │   └── desktop/        # Desktop file dialogs, storage paths, CPAL audio
 │   ├── render/             # Hardware-accelerated rendering & video shaders
 │   │   ├── mod.rs          # WGPU ShaderPipeline controller & render pass
-│   │   └── shaders.rs      # WGSL shaders (Nearest, LCD Grid, Color Correction)
+│   │   ├── overlay.rs      # Procedural touch overlay renderer & uniform buffer
+│   │   ├── shaders.rs      # WGSL shaders (Nearest, LCD Grid, Color Correction)
+│   │   └── viewport.rs     # Dynamic viewport calculations & aspect ratio letterboxing
 │   ├── audio/              # Low-latency CPAL stereo audio engine & lock-free ring buffer
 │   ├── save.rs             # Battery save (.sav) & state snapshot manager (.state1..9)
 │   ├── ui/                 # egui OSD overlay, top menu bar, and live HUD
 │   └── error.rs            # Unified PixelDriveError enum with thiserror
-├── build.rs                # Windows resource compiler (winres)
 ├── Cargo.toml              # Dependencies and release optimization profiles
 ├── LEGAL.md                # Legal disclaimers and trademark acknowledgments
 ├── SECURITY.md             # Security policy and vulnerability disclosure guidelines
@@ -158,11 +200,17 @@ PixelDrive/
 
 ## 📦 Packaging & Distribution
 
+### 🤖 Build Android Release Package (APK):
+```bash
+./scripts/package_android.sh
+```
+Compiles `arm64-v8a` and `x86_64` native cdylibs using `cargo-ndk`, strips debug symbols, bundles `libc++_shared.so` and `libmgba_core.so`, and builds `dist/PixelDrive-Android-v1.2.1.apk`.
+
 ### 🍎 Build macOS DMG Installer:
 ```bash
 ./scripts/build_macos_dmg.sh
 ```
-Produces `dist/PixelDrive-1.0.0.dmg` with `/Applications` drag-and-drop symlink.
+Produces `dist/PixelDrive-v1.2.1.dmg` with `/Applications` drag-and-drop symlink.
 
 ### 🪟 Build Windows Release Package:
 On Windows (Command Prompt / PowerShell):
@@ -173,22 +221,22 @@ Or on Unix / CI toolchains:
 ```bash
 ./scripts/package_windows.sh
 ```
-Produces `dist/PixelDrive-Windows-x86_64.zip` containing the compiled `PixelDrive.exe` with embedded `.rc` icons and metadata.
+Produces `dist/PixelDrive-Windows-v1.2.1.zip` (and `PixelDrive-Windows-x86_64.zip`) containing the compiled `PixelDrive.exe` with embedded `.rc` icons and metadata.
 
 ---
 
 ## 🧪 Testing & Verification
 
-Run the full unit and integration test suite:
+Run the full unit and integration test suite (90 passing tests):
 
 ```bash
 cargo test -- --test-threads=1
 ```
 
-Run clippy for static analysis with zero warnings:
+Verify Android compilation for `arm64-v8a`:
 
 ```bash
-cargo clippy --all-targets -- -D warnings
+cargo ndk -t arm64-v8a check --lib
 ```
 
 ---
