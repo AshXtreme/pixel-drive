@@ -19,6 +19,7 @@ use crate::core::EmulatorCore;
 use crate::gba::{GbaCore, GbaHeader};
 use crate::gbc::GbcCore;
 use crate::input::{InputSource, JoypadState, TouchAction, TouchOverlay};
+use crate::ui::menu::{MenuItem, MenuState};
 use crate::platform::android::audio::AndroidAudioPlayer;
 use crate::platform::android::haptics::AndroidHaptics;
 use crate::platform::android::storage::jni_bridge;
@@ -395,6 +396,7 @@ fn run_android_app(app: AndroidApp) {
 
     // 7. Lifecycle and state flags
     let mut is_paused = false;
+    let mut menu_state = MenuState::Hidden;
     let mut fast_forward = false;
     let mut running = true;
 
@@ -669,7 +671,7 @@ fn run_android_app(app: AndroidApp) {
                             haptics.vibrate_click();
                         }
 
-                        // Process non-joypad HUD actions (Fast-Forward, Menu / Load ROM, Quick Save, Quick Load)
+                        // Process non-joypad HUD and in-game menu actions
                         for hud_action in touch_overlay.poll_actions() {
                             if touch_overlay.is_haptics_enabled() {
                                 haptics.vibrate_click();
@@ -683,8 +685,56 @@ fn run_android_app(app: AndroidApp) {
                                     info!("Fast-Forward toggled: {}", fast_forward);
                                 }
                                 TouchAction::OpenMenu => {
-                                    info!("Menu / Load ROM tapped: launching SAF Document Picker...");
+                                    info!("In-game menu opened (emulation paused)");
+                                    menu_state = MenuState::MainMenu;
+                                    touch_overlay.set_menu_state(MenuState::MainMenu);
+                                    is_paused = true;
+                                    if let Some(ref mut player) = audio_player {
+                                        player.pause_audio_stream();
+                                    }
+                                }
+                                TouchAction::CloseMenu => {
+                                    info!("In-game menu closed (emulation resumed)");
+                                    menu_state = MenuState::Hidden;
+                                    touch_overlay.set_menu_state(MenuState::Hidden);
+                                    is_paused = false;
+                                    if let Some(ref mut player) = audio_player {
+                                        player.resume_audio_stream();
+                                    }
+                                }
+                                TouchAction::MenuSelect(MenuItem::Resume) => {
+                                    info!("Menu option 'Resume Game' selected (emulation resumed)");
+                                    menu_state = MenuState::Hidden;
+                                    touch_overlay.set_menu_state(MenuState::Hidden);
+                                    is_paused = false;
+                                    if let Some(ref mut player) = audio_player {
+                                        player.resume_audio_stream();
+                                    }
+                                }
+                                TouchAction::MenuSelect(MenuItem::LoadRom) => {
+                                    info!("Menu option 'Load ROM' selected: launching SAF Document Picker...");
+                                    menu_state = MenuState::Hidden;
+                                    touch_overlay.set_menu_state(MenuState::Hidden);
                                     launch_saf_picker(jvm_ptr, activity_ptr);
+                                }
+                                TouchAction::MenuSelect(MenuItem::ResetGame) => {
+                                    info!("Menu option 'Reset Game' selected: resetting core state...");
+                                    menu_state = MenuState::Hidden;
+                                    touch_overlay.set_menu_state(MenuState::Hidden);
+                                    active_core.reset();
+                                    is_paused = false;
+                                    if let Some(ref mut player) = audio_player {
+                                        player.resume_audio_stream();
+                                    }
+                                }
+                                TouchAction::MenuSelect(MenuItem::SaveLoadStates) => {
+                                    info!("Menu option 'Save / Load States' selected (Phase 2 placeholder)");
+                                }
+                                TouchAction::MenuSelect(MenuItem::Settings) => {
+                                    info!("Menu option 'Settings' selected (Phase 3 placeholder)");
+                                }
+                                TouchAction::MenuSelect(MenuItem::Cheats) => {
+                                    info!("Menu option 'Cheat Codes' selected (Phase 4 placeholder)");
                                 }
                                 TouchAction::QuickSave => {
                                     info!("QuickSave triggered for '{}'", current_game_title);
@@ -727,17 +777,17 @@ fn run_android_app(app: AndroidApp) {
 
         // 4. Emulation Stepping & Frame Pacing with Thermal Management
         let surface_ready = pixels.is_some() && shader_pipeline.is_some() && app.native_window().is_some();
-        if !is_paused && surface_ready {
+        if surface_ready {
             let now = Instant::now();
 
-            // Periodic auto-save flush
-            if now.duration_since(last_save_time) >= auto_save_interval {
+            // Periodic auto-save flush (only while emulation is actively advancing)
+            if !is_paused && now.duration_since(last_save_time) >= auto_save_interval {
                 last_save_time = now;
                 flush_core_save(active_core.as_ref(), &storage, &current_game_title);
             }
 
-            // Sub-millisecond fractional frame pacing (59.7275 Hz normal / 119.455 Hz fast-forward)
-            let target_frame_nanos = if fast_forward { 8_371_353 } else { 16_742_706 };
+            // Sub-millisecond fractional frame pacing (59.7275 Hz normal / 119.455 Hz fast-forward / 60 Hz paused menu)
+            let target_frame_nanos = if fast_forward && !is_paused { 8_371_353 } else { 16_742_706 };
             let target_frame_duration = Duration::from_nanos(target_frame_nanos);
             let elapsed = now.duration_since(last_frame_time);
 
@@ -748,20 +798,22 @@ fn run_android_app(app: AndroidApp) {
                     last_frame_time + target_frame_duration
                 };
 
-                // Step core emulation
-                let steps = if fast_forward { 2 } else { 1 };
-                for _ in 0..steps {
-                    active_core.step_frame();
+                // Step core emulation and audio generation ONLY when unpaused
+                if !is_paused {
+                    let steps = if fast_forward { 2 } else { 1 };
+                    for _ in 0..steps {
+                        active_core.step_frame();
 
-                    let audio_samples = active_core.audio_buffer();
-                    if !audio_samples.is_empty() {
-                        if let Some(ref prod) = audio_producer {
-                            prod.push_f32_slice(&audio_samples);
+                        let audio_samples = active_core.audio_buffer();
+                        if !audio_samples.is_empty() {
+                            if let Some(ref prod) = audio_producer {
+                                prod.push_f32_slice(&audio_samples);
+                            }
                         }
                     }
                 }
 
-                // Copy framebuffer and render with WGPU post-processing shader
+                // Copy framebuffer and render with WGPU post-processing shader + touch overlay (including modal pause menu)
                 if let Some(ref mut px) = pixels {
                     let frame = px.frame_mut();
                     let fb = active_core.framebuffer();

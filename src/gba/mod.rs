@@ -410,6 +410,14 @@ impl EmulatorCore for GbaCore {
             false
         }
     }
+
+    fn reset(&mut self) {
+        if let Some(ref mut lr) = self.libretro {
+            lr.reset();
+        } else {
+            self.reset_boot_state();
+        }
+    }
 }
 
 #[cfg(test)]

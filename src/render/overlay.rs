@@ -39,7 +39,8 @@ pub struct TouchOverlayUniforms {
     pub btn_qs_pos: [f32; 2],
 
     pub btn_ql_pos: [f32; 2],
-    pub _pad: [f32; 2],
+    pub menu_state: u32,
+    pub menu_pressed_item: u32,
 }
 
 impl Default for TouchOverlayUniforms {
@@ -63,7 +64,8 @@ impl Default for TouchOverlayUniforms {
             btn_ff_pos: [0.56, 0.07],
             btn_qs_pos: [0.34, 0.07],
             btn_ql_pos: [0.66, 0.07],
-            _pad: [0.0, 0.0],
+            menu_state: 0,
+            menu_pressed_item: 0,
         }
     }
 }
@@ -215,7 +217,11 @@ impl TouchOverlayRenderer {
                 touch_manager.btn_quick_load.center().0,
                 touch_manager.btn_quick_load.center().1,
             ],
-            _pad: [0.0, 0.0],
+            menu_state: if touch_manager.menu_state().is_visible() { 1 } else { 0 },
+            menu_pressed_item: touch_manager
+                .pressed_menu_item()
+                .map(|it| it.shader_index())
+                .unwrap_or(0),
         };
 
         if self.cached_uniforms != Some(uniforms) {
@@ -303,5 +309,10 @@ mod tests {
         assert!(OVERLAY_SHADER_SOURCE.contains("draw_fast_forward"));
         assert!(OVERLAY_SHADER_SOURCE.contains("draw_save_icon"));
         assert!(OVERLAY_SHADER_SOURCE.contains("draw_load_icon"));
+        assert!(OVERLAY_SHADER_SOURCE.contains("draw_pause_icon"));
+        assert!(OVERLAY_SHADER_SOURCE.contains("draw_play_icon"));
+        assert!(OVERLAY_SHADER_SOURCE.contains("draw_folder_icon"));
+        assert!(OVERLAY_SHADER_SOURCE.contains("draw_reset_icon"));
+        assert!(OVERLAY_SHADER_SOURCE.contains("render_modal_row"));
     }
 }

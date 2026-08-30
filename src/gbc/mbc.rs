@@ -111,6 +111,17 @@ impl Mbc {
         }
     }
 
+    /// Returns a slice of the cartridge ROM bytes.
+    pub fn get_rom(&self) -> &[u8] {
+        match self {
+            Mbc::RomOnly { rom } => rom.as_slice(),
+            Mbc::Mbc1 { rom, .. } => rom.as_slice(),
+            Mbc::Mbc2 { rom, .. } => rom.as_slice(),
+            Mbc::Mbc3 { rom, .. } => rom.as_slice(),
+            Mbc::Mbc5 { rom, .. } => rom.as_slice(),
+        }
+    }
+
     /// Extract a slice of cartridge battery RAM for saving to disk.
     pub fn get_ram(&self) -> Option<&[u8]> {
         match self {

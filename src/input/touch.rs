@@ -5,7 +5,10 @@
 //! dynamic floating center D-pad mode, and WGPU overlay state synchronization.
 
 use crate::core::Button;
+use crate::ui::menu::{MenuItem, MenuLayout, MenuState};
 use std::collections::HashMap;
+
+pub use crate::ui::menu::{MenuItem as TouchMenuItem, MenuState as TouchMenuState};
 
 use super::{InputSource, JoypadState};
 
@@ -380,13 +383,15 @@ impl TouchOverlayPreset {
     }
 }
 
-/// Action events triggered by virtual touch controls (e.g. menu, fast-forward).
+/// Action events triggered by virtual touch controls (e.g. menu, fast-forward, modal selection).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TouchAction {
     ToggleFastForward,
     OpenMenu,
+    CloseMenu,
     QuickSave,
     QuickLoad,
+    MenuSelect(MenuItem),
 }
 
 /// Pressed bitmask constants matching GB/GBA layout and UI HUD elements for the shader pipeline.
@@ -419,6 +424,11 @@ pub struct TouchInputManager {
     pub auto_hide_on_gamepad: bool,
     pub preset: TouchOverlayPreset,
     pub safe_insets: [f32; 4], // [top, bottom, left, right]
+
+    // In-game Modal Pause Menu State
+    pub menu_state: MenuState,
+    pub menu_layout: MenuLayout,
+    pub pressed_menu_item: Option<MenuItem>,
 
     // Virtual Controls Geometry
     pub dpad: VirtualDPad,
@@ -467,6 +477,10 @@ impl TouchInputManager {
             auto_hide_on_gamepad: false,
             preset,
             safe_insets: [0.0, 0.0, 0.0, 0.0],
+
+            menu_state: MenuState::Hidden,
+            menu_layout: MenuLayout::new(),
+            pressed_menu_item: None,
 
             // Default geometry placeholders (recomputed in apply_preset)
             dpad: VirtualDPad::new(0.14, 0.76, 0.11, 0.025),
@@ -642,6 +656,25 @@ impl TouchInputManager {
         self.btn_select.to_rect()
     }
 
+    /// Returns the active in-game pause menu state.
+    pub fn menu_state(&self) -> MenuState {
+        self.menu_state
+    }
+
+    /// Sets the active in-game pause menu state.
+    pub fn set_menu_state(&mut self, state: MenuState) {
+        self.menu_state = state;
+        if state == MenuState::Hidden {
+            self.pressed_menu_item = None;
+        }
+        self.recompute_state();
+    }
+
+    /// Returns currently touched menu item, if any.
+    pub fn pressed_menu_item(&self) -> Option<MenuItem> {
+        self.pressed_menu_item
+    }
+
     /// Ingests unified touch event with phase.
     pub fn handle_touch_event(
         &mut self,
@@ -657,6 +690,28 @@ impl TouchInputManager {
         }
         let norm_x = (x / screen_w).clamp(0.0, 1.0);
         let norm_y = (y / screen_h).clamp(0.0, 1.0);
+
+        // When in-game pause menu modal is visible, intercept all touch interactions
+        if self.menu_state != MenuState::Hidden {
+            match phase {
+                TouchPhase::Started | TouchPhase::Moved => {
+                    self.pressed_menu_item = self.menu_layout.hit_test(norm_x, norm_y);
+                }
+                TouchPhase::Ended => {
+                    if let Some(item) = self.menu_layout.hit_test(norm_x, norm_y) {
+                        self.pending_actions.push(TouchAction::MenuSelect(item));
+                    } else if self.menu_layout.is_outside_modal(norm_x, norm_y) {
+                        self.pending_actions.push(TouchAction::CloseMenu);
+                    }
+                    self.pressed_menu_item = None;
+                }
+                TouchPhase::Cancelled => {
+                    self.pressed_menu_item = None;
+                }
+            }
+            self.recompute_state();
+            return;
+        }
 
         match phase {
             TouchPhase::Started => {
@@ -731,7 +786,7 @@ impl TouchInputManager {
 
     /// Recomputes internal pressed bitmask for fast rendering and polling.
     fn recompute_state(&mut self) {
-        if !self.visible {
+        if !self.visible || self.menu_state != MenuState::Hidden {
             self.pressed_mask = 0;
             return;
         }
@@ -868,7 +923,7 @@ impl InputSource for TouchInputManager {
     fn poll(&mut self) -> JoypadState {
         self.recompute_state();
         let mut state = JoypadState::default();
-        if !self.visible {
+        if !self.visible || self.menu_state != MenuState::Hidden {
             return state;
         }
 
@@ -1133,5 +1188,48 @@ mod tests {
         overlay.handle_touch_down(4, ql_pos.0 * screen_w, ql_pos.1 * screen_h, screen_w, screen_h);
         let actions4 = overlay.poll_actions();
         assert_eq!(actions4, vec![TouchAction::QuickLoad]);
+    }
+
+    #[test]
+    fn test_touch_overlay_modal_menu_interactions() {
+        let mut overlay = TouchInputManager::new();
+        let screen_w = 1000.0;
+        let screen_h = 1000.0;
+
+        assert_eq!(overlay.menu_state(), MenuState::Hidden);
+        assert_eq!(overlay.pressed_menu_item(), None);
+
+        // Open menu
+        overlay.set_menu_state(MenuState::MainMenu);
+        assert_eq!(overlay.menu_state(), MenuState::MainMenu);
+
+        // Virtual gamepad inputs should be completely suppressed while menu is open
+        let a_pos = overlay.btn_a.center();
+        overlay.handle_touch_down(10, a_pos.0 * screen_w, a_pos.1 * screen_h, screen_w, screen_h);
+        assert_eq!(overlay.poll().to_bits(), 0);
+
+        // Touch on Resume menu item
+        let resume_rect = overlay.menu_layout.item_rects[0].1;
+        let (rx, ry) = resume_rect.center();
+        overlay.handle_touch_down(1, rx * screen_w, ry * screen_h, screen_w, screen_h);
+        assert_eq!(overlay.pressed_menu_item(), Some(MenuItem::Resume));
+
+        // Touch up on Resume dispatches MenuSelect(Resume)
+        overlay.handle_touch_event(1, rx * screen_w, ry * screen_h, TouchPhase::Ended, screen_w, screen_h);
+        let actions = overlay.poll_actions();
+        assert_eq!(actions, vec![TouchAction::MenuSelect(MenuItem::Resume)]);
+        assert_eq!(overlay.pressed_menu_item(), None);
+
+        // Touch on LoadRom menu item
+        let load_rect = overlay.menu_layout.item_rects[1].1;
+        let (lx, ly) = load_rect.center();
+        overlay.handle_touch_down(2, lx * screen_w, ly * screen_h, screen_w, screen_h);
+        assert_eq!(overlay.pressed_menu_item(), Some(MenuItem::LoadRom));
+        overlay.handle_touch_event(2, lx * screen_w, ly * screen_h, TouchPhase::Ended, screen_w, screen_h);
+        assert_eq!(overlay.poll_actions(), vec![TouchAction::MenuSelect(MenuItem::LoadRom)]);
+
+        // Tap outside modal dispatches CloseMenu
+        overlay.handle_touch_event(3, 0.05 * screen_w, 0.05 * screen_h, TouchPhase::Ended, screen_w, screen_h);
+        assert_eq!(overlay.poll_actions(), vec![TouchAction::CloseMenu]);
     }
 }

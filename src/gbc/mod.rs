@@ -274,6 +274,17 @@ impl EmulatorCore for GbcCore {
     fn load_state(&mut self, data: &[u8]) -> bool {
         self.load_state(data).is_ok()
     }
+
+    fn reset(&mut self) {
+        if self.is_rom_loaded {
+            let rom = self.mmu.mbc.get_rom().to_vec();
+            let ram = self.mmu.mbc.get_ram().map(|r| r.to_vec());
+            self.load_rom(&rom);
+            if let Some(sram) = ram {
+                self.load_save_data(&sram);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

@@ -53,4 +53,7 @@ pub trait EmulatorCore {
     fn load_state(&mut self, _data: &[u8]) -> bool {
         false
     }
+
+    /// Resets the emulation core to its initial state
+    fn reset(&mut self) {}
 }
