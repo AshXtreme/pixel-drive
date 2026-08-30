@@ -410,6 +410,119 @@ fn render_modal_row(
     return color;
 }
 
+// ============================================================================
+// Modern Vector SDF Typography Engine for High-Legibility Button Labels
+// ============================================================================
+
+fn get_glyph_16seg(c: u32) -> u32 {
+    if (c == 65u) { return 975u;   } // A
+    if (c == 66u) { return 3647u;  } // B
+    if (c == 67u) { return 243u;   } // C
+    if (c == 68u) { return 3135u;  } // D
+    if (c == 69u) { return 1011u;  } // E
+    if (c == 70u) { return 963u;   } // F
+    if (c == 71u) { return 763u;   } // G
+    if (c == 72u) { return 972u;   } // H
+    if (c == 73u) { return 3123u;  } // I
+    if (c == 75u) { return 41408u; } // K
+    if (c == 76u) { return 240u;   } // L
+    if (c == 77u) { return 12492u; } // M
+    if (c == 78u) { return 37068u; } // N
+    if (c == 79u) { return 255u;   } // O
+    if (c == 80u) { return 967u;   } // P
+    if (c == 82u) { return 33735u; } // R
+    if (c == 83u) { return 955u;   } // S
+    if (c == 84u) { return 3075u;  } // T
+    if (c == 85u) { return 252u;   } // U
+    if (c == 86u) { return 24768u; } // V
+    if (c == 87u) { return 49356u; } // W
+    if (c == 89u) { return 14336u; } // Y
+    if (c == 48u) { return 255u;   } // 0
+    if (c == 49u) { return 3072u;  } // 1
+    if (c == 50u) { return 887u;   } // 2
+    if (c == 51u) { return 831u;   } // 3
+    if (c == 52u) { return 908u;   } // 4
+    if (c == 53u) { return 955u;   } // 5
+    if (c == 47u) { return 24576u; } // /
+    if (c == 45u) { return 768u;   } // -
+    return 0u;
+}
+
+fn draw_vector_char(p: vec2<f32>, c: u32, sz: vec2<f32>, stroke_w: f32) -> f32 {
+    let mask = get_glyph_16seg(c);
+    if (mask == 0u) {
+        return 1e5;
+    }
+    let w = sz.x * 0.44;
+    let h = sz.y * 0.46;
+
+    let tl = vec2<f32>(-w, -h);
+    let tc = vec2<f32>(0.0, -h);
+    let tr = vec2<f32>(w, -h);
+    let ml = vec2<f32>(-w, 0.0);
+    let mc = vec2<f32>(0.0, 0.0);
+    let mr = vec2<f32>(w, 0.0);
+    let bl = vec2<f32>(-w, h);
+    let bc = vec2<f32>(0.0, h);
+    let br = vec2<f32>(w, h);
+
+    var d = 1e5;
+    if ((mask & 1u) != 0u)     { d = min(d, sd_segment(p, tl, tc)); }
+    if ((mask & 2u) != 0u)     { d = min(d, sd_segment(p, tc, tr)); }
+    if ((mask & 4u) != 0u)     { d = min(d, sd_segment(p, tr, mr)); }
+    if ((mask & 8u) != 0u)     { d = min(d, sd_segment(p, mr, br)); }
+    if ((mask & 16u) != 0u)    { d = min(d, sd_segment(p, br, bc)); }
+    if ((mask & 32u) != 0u)    { d = min(d, sd_segment(p, bc, bl)); }
+    if ((mask & 64u) != 0u)    { d = min(d, sd_segment(p, bl, ml)); }
+    if ((mask & 128u) != 0u)   { d = min(d, sd_segment(p, ml, tl)); }
+    if ((mask & 256u) != 0u)   { d = min(d, sd_segment(p, ml, mc)); }
+    if ((mask & 512u) != 0u)   { d = min(d, sd_segment(p, mc, mr)); }
+    if ((mask & 1024u) != 0u)  { d = min(d, sd_segment(p, tc, mc)); }
+    if ((mask & 2048u) != 0u)  { d = min(d, sd_segment(p, mc, bc)); }
+    if ((mask & 4096u) != 0u)  { d = min(d, sd_segment(p, tl, mc)); }
+    if ((mask & 8192u) != 0u)  { d = min(d, sd_segment(p, tr, mc)); }
+    if ((mask & 16384u) != 0u) { d = min(d, sd_segment(p, mc, bl)); }
+    if ((mask & 32768u) != 0u) { d = min(d, sd_segment(p, mc, br)); }
+
+    return d - stroke_w;
+}
+
+fn draw_vector_string(
+    p: vec2<f32>,
+    start_x: f32,
+    sz: vec2<f32>,
+    spacing: f32,
+    stroke_w: f32,
+    c0: u32, c1: u32, c2: u32, c3: u32, c4: u32, c5: u32,
+    c6: u32, c7: u32, c8: u32, c9: u32, c10: u32, len: u32
+) -> f32 {
+    let rel_x = p.x - start_x + spacing * 0.5;
+    if (rel_x < 0.0) {
+        return 1e5;
+    }
+    let idx = u32(floor(rel_x / spacing));
+    if (idx >= len) {
+        return 1e5;
+    }
+    let char_center_x = start_x + f32(idx) * spacing;
+    let local_p = vec2<f32>(p.x - char_center_x, p.y);
+
+    var code = 0u;
+    if (idx == 0u) { code = c0; }
+    else if (idx == 1u) { code = c1; }
+    else if (idx == 2u) { code = c2; }
+    else if (idx == 3u) { code = c3; }
+    else if (idx == 4u) { code = c4; }
+    else if (idx == 5u) { code = c5; }
+    else if (idx == 6u) { code = c6; }
+    else if (idx == 7u) { code = c7; }
+    else if (idx == 8u) { code = c8; }
+    else if (idx == 9u) { code = c9; }
+    else if (idx == 10u) { code = c10; }
+
+    return draw_vector_char(local_p, code, sz, stroke_w);
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let aspect = uniforms.aspect_ratio;
@@ -486,6 +599,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let row_half = vec2<f32>(0.24 * aspect, 0.041);
         let row_r = 0.016;
         let pressed_item = uniforms.menu_pressed_item;
+        let text_start_x = -row_half.x + 0.078;
+        let char_sz = vec2<f32>(0.013, 0.022);
+        let spacing = 0.0175;
+        let stroke_w = 0.0016;
 
         // Row 1: Resume Game (Item 1 / Muted Mint)
         let r1_c = vec2<f32>(0.50 * aspect, 0.246);
@@ -494,7 +611,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let r1_col = render_modal_row(r1_p, row_half, row_r, pressed_item == 1u, col_btn_bg, col_accent_resume, aa);
             let icon_d = draw_play_icon(r1_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
             let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
-            final_color = blend_over(blend_over(icon_col, r1_col), final_color);
+            let txt_d = draw_vector_string(r1_p, text_start_x, char_sz, spacing, stroke_w, 82u, 69u, 83u, 85u, 77u, 69u, 32u, 71u, 65u, 77u, 69u, 11u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r1_col)), final_color);
         }
 
         // Row 2: Load New ROM (Item 2 / Muted Slate Blue)
@@ -504,7 +623,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let r2_col = render_modal_row(r2_p, row_half, row_r, pressed_item == 2u, col_btn_bg, col_accent_rom, aa);
             let icon_d = draw_folder_icon(r2_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
             let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
-            final_color = blend_over(blend_over(icon_col, r2_col), final_color);
+            let txt_d = draw_vector_string(r2_p, text_start_x, char_sz, spacing, stroke_w, 76u, 79u, 65u, 68u, 32u, 82u, 79u, 77u, 0u, 0u, 0u, 8u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r2_col)), final_color);
         }
 
         // Row 3: Save / Load States (Item 3 / Muted Slate Lavender)
@@ -514,7 +635,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let r3_col = render_modal_row(r3_p, row_half, row_r, pressed_item == 3u, col_btn_bg, col_accent_state, aa);
             let icon_d = draw_save_icon(r3_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.020);
             let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
-            final_color = blend_over(blend_over(icon_col, r3_col), final_color);
+            let txt_d = draw_vector_string(r3_p, text_start_x, char_sz, spacing, stroke_w, 83u, 65u, 86u, 69u, 32u, 47u, 32u, 76u, 79u, 65u, 68u, 11u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r3_col)), final_color);
         }
 
         // Row 4: Reset Game (Item 4 / Muted Terracotta)
@@ -524,7 +647,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let r4_col = render_modal_row(r4_p, row_half, row_r, pressed_item == 4u, col_btn_bg, col_accent_reset, aa);
             let icon_d = draw_reset_icon(r4_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
             let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
-            final_color = blend_over(blend_over(icon_col, r4_col), final_color);
+            let txt_d = draw_vector_string(r4_p, text_start_x, char_sz, spacing, stroke_w, 82u, 69u, 83u, 69u, 84u, 32u, 71u, 65u, 77u, 69u, 0u, 10u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r4_col)), final_color);
         }
 
         // Row 5: Settings (Item 5 / Muted Steel Gray)
@@ -534,7 +659,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let r5_col = render_modal_row(r5_p, row_half, row_r, pressed_item == 5u, col_btn_bg, col_accent_settings, aa);
             let icon_d = draw_gear_icon(r5_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
             let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
-            final_color = blend_over(blend_over(icon_col, r5_col), final_color);
+            let txt_d = draw_vector_string(r5_p, text_start_x, char_sz, spacing, stroke_w, 83u, 69u, 84u, 84u, 73u, 78u, 71u, 83u, 0u, 0u, 0u, 8u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r5_col)), final_color);
         }
 
         // Row 6: Cheat Codes (Item 6 / Muted Mauve)
@@ -544,7 +671,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let r6_col = render_modal_row(r6_p, row_half, row_r, pressed_item == 6u, col_btn_bg, col_accent_cheats, aa);
             let icon_d = draw_cheats_icon(r6_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
             let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
-            final_color = blend_over(blend_over(icon_col, r6_col), final_color);
+            let txt_d = draw_vector_string(r6_p, text_start_x, char_sz, spacing, stroke_w, 67u, 72u, 69u, 65u, 84u, 83u, 0u, 0u, 0u, 0u, 0u, 6u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r6_col)), final_color);
         }
 
         return final_color;
@@ -580,10 +709,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // 3. Header: Save or Load Icon + Title Indicator
         let hdr_c = vec2<f32>(0.50 * aspect, 0.155);
         let hdr_p = p - hdr_c;
-        if (length(hdr_p) < 0.06) {
-            let icon_d = select(draw_load_icon(hdr_p, 0.024), draw_save_icon(hdr_p, 0.022), is_save_mode);
+        if (length(hdr_p) < 0.08) {
+            let icon_d = select(draw_load_icon(hdr_p - vec2<f32>(-0.085, 0.0), 0.022), draw_save_icon(hdr_p - vec2<f32>(-0.085, 0.0), 0.020), is_save_mode);
             let icon_col = vec4<f32>(header_accent, 0.95 * smoothstep(aa, -aa, icon_d));
-            final_color = blend_over(icon_col, final_color);
+
+            let hdr_txt_d = select(
+                draw_vector_string(hdr_p, -0.058, vec2<f32>(0.011, 0.018), 0.015, 0.0014, 76u, 79u, 65u, 68u, 32u, 83u, 84u, 65u, 84u, 69u, 0u, 10u),
+                draw_vector_string(hdr_p, -0.058, vec2<f32>(0.011, 0.018), 0.015, 0.0014, 83u, 65u, 86u, 69u, 32u, 83u, 84u, 65u, 84u, 69u, 0u, 10u),
+                is_save_mode
+            );
+            let hdr_txt_col = vec4<f32>(header_accent, 0.95 * smoothstep(aa, -aa, hdr_txt_d));
+            final_color = blend_over(blend_over(hdr_txt_col, icon_col), final_color);
         }
 
         // Header Divider Line
@@ -598,6 +734,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let row_r = 0.016;
         let pressed_item = uniforms.menu_pressed_item;
         let slot_mask = uniforms.slot_mask;
+        let text_start_x = -row_half.x + 0.078;
+        let char_sz = vec2<f32>(0.013, 0.022);
+        let spacing = 0.0175;
+        let stroke_w = 0.0016;
 
         // Render Slots 1..=5
         for (var i = 1u; i <= 5u; i = i + 1u) {
@@ -614,14 +754,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
                 let digit_d = draw_digit(row_p - vec2<f32>(-row_half.x + 0.035, 0.0), i, 0.022);
                 let digit_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, digit_d));
 
+                // Slot text "SLOT 1" .. "SLOT 5"
+                let slot_txt_d = draw_vector_string(row_p, text_start_x, char_sz, spacing, stroke_w, 83u, 76u, 79u, 84u, 32u, 48u + i, 0u, 0u, 0u, 0u, 0u, 6u);
+                let slot_txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, slot_txt_d));
+
                 // Status indicator / Action pill on right
                 let pill_half = vec2<f32>(0.042 * aspect, 0.022);
                 let pill_c = vec2<f32>(row_half.x - 0.052, 0.0);
                 let pill_d = sd_rounded_box(row_p - pill_c, pill_half, 0.010);
                 let pill_bg = vec4<f32>(row_accent, select(0.35, 0.85, is_occupied || is_save_mode) * smoothstep(aa, -aa, pill_d));
 
-                var combined_row = blend_over(blend_over(digit_col, row_col), final_color);
-                combined_row = blend_over(pill_bg, combined_row);
+                let status_txt_d = select(
+                    draw_vector_string(row_p - pill_c, -0.024, vec2<f32>(0.008, 0.014), 0.011, 0.0012, 69u, 77u, 80u, 84u, 89u, 0u, 0u, 0u, 0u, 0u, 0u, 5u),
+                    draw_vector_string(row_p - pill_c, -0.024, vec2<f32>(0.008, 0.014), 0.011, 0.0012, 83u, 65u, 86u, 69u, 68u, 0u, 0u, 0u, 0u, 0u, 0u, 5u),
+                    is_occupied
+                );
+                let status_txt_col = vec4<f32>(vec3<f32>(1.0), 0.95 * smoothstep(aa, -aa, status_txt_d));
+
+                var combined_row = blend_over(blend_over(slot_txt_col, blend_over(digit_col, row_col)), final_color);
+                combined_row = blend_over(status_txt_col, blend_over(pill_bg, combined_row));
                 final_color = combined_row;
             }
         }
@@ -636,9 +787,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let back_p = p - back_c;
         if (abs(back_p.y) < btn_half.y * 1.3 && abs(back_p.x) < btn_half.x * 1.1) {
             let back_col = render_modal_row(back_p, btn_half, btn_r, pressed_item == 6u, col_btn_bg, col_accent_settings, aa);
-            let arrow_d = draw_back_arrow(back_p, 0.024);
+            let arrow_d = draw_back_arrow(back_p - vec2<f32>(-btn_half.x + 0.028, 0.0), 0.024);
             let arrow_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, arrow_d));
-            final_color = blend_over(blend_over(arrow_col, back_col), final_color);
+            let txt_d = draw_vector_string(back_p, -btn_half.x + 0.048, vec2<f32>(0.011, 0.018), 0.015, 0.0014, 66u, 65u, 67u, 75u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 4u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(arrow_col, back_col)), final_color);
         }
 
         // Mode Toggle Button (Item 7)
@@ -646,9 +799,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let toggle_p = p - toggle_c;
         if (abs(toggle_p.y) < btn_half.y * 1.3 && abs(toggle_p.x) < btn_half.x * 1.1) {
             let toggle_col = render_modal_row(toggle_p, btn_half, btn_r, pressed_item == 7u, col_btn_bg, header_accent, aa);
-            let swap_d = draw_swap_icon(toggle_p, 0.024);
+            let swap_d = draw_swap_icon(toggle_p - vec2<f32>(-btn_half.x + 0.028, 0.0), 0.024);
             let swap_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, swap_d));
-            final_color = blend_over(blend_over(swap_col, toggle_col), final_color);
+            let txt_d = draw_vector_string(toggle_p, -btn_half.x + 0.048, vec2<f32>(0.011, 0.018), 0.015, 0.0014, 77u, 79u, 68u, 69u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 4u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(swap_col, toggle_col)), final_color);
         }
 
         return final_color;
