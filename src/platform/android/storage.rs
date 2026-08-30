@@ -88,6 +88,18 @@ impl AndroidStorage {
         self.states_dir.join(format!("{}.slot{}.state", clean_stem, slot))
     }
 
+    /// Derives slot state path: `<storage_dir>/states/<game_title>/slot_<slot>.state`.
+    pub fn get_slot_state_path(&self, game_title: &str, slot: u8) -> PathBuf {
+        let clean = SaveManager::sanitize_stem(game_title);
+        self.states_dir.join(&clean).join(format!("slot_{}.state", slot))
+    }
+
+    /// Derives slot metadata path: `<storage_dir>/states/<game_title>/slot_<slot>.meta`.
+    pub fn get_slot_meta_path(&self, game_title: &str, slot: u8) -> PathBuf {
+        let clean = SaveManager::sanitize_stem(game_title);
+        self.states_dir.join(&clean).join(format!("slot_{}.meta", slot))
+    }
+
     /// Atomically flushes buffer bytes to disk using a staging temporary file.
     pub fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
         if data.is_empty() {
@@ -128,6 +140,96 @@ impl AndroidStorage {
         Self::write_atomic(&save_path, sram_data)?;
         info!("Flushed SRAM save ({} bytes) -> {:?}", sram_data.len(), save_path);
         Ok(())
+    }
+
+    /// Saves snapshot data to a designated slot (1..=5) under scoped storage.
+    pub fn save_to_slot(&self, game_title: &str, slot: u8, data: &[u8]) -> std::io::Result<crate::save::SlotMetadata> {
+        let clamped_slot = slot.clamp(1, 5);
+        let state_path = self.get_slot_state_path(game_title, clamped_slot);
+        let meta_path = self.get_slot_meta_path(game_title, clamped_slot);
+
+        Self::write_atomic(&state_path, data)?;
+
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let meta = crate::save::SlotMetadata {
+            slot_index: clamped_slot,
+            timestamp: ts,
+            formatted_time: crate::save::format_unix_timestamp(ts),
+            is_empty: false,
+        };
+
+        if let Ok(meta_bytes) = bincode::serialize(&meta) {
+            let _ = Self::write_atomic(&meta_path, &meta_bytes);
+        }
+
+        info!(
+            "Saved Android state slot {} for '{}' ({} bytes, timestamp {})",
+            clamped_slot, game_title, data.len(), meta.formatted_time
+        );
+        Ok(meta)
+    }
+
+    /// Loads snapshot data from a designated slot (1..=5) under scoped storage.
+    pub fn load_from_slot(&self, game_title: &str, slot: u8) -> Result<Vec<u8>, std::io::Error> {
+        let clamped_slot = slot.clamp(1, 5);
+        let state_path = self.get_slot_state_path(game_title, clamped_slot);
+        if !state_path.exists() {
+            let legacy_path = self.get_state_path(game_title, clamped_slot as usize);
+            if legacy_path.exists() {
+                return fs::read(&legacy_path);
+            }
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Slot {} for '{}' not found", clamped_slot, game_title),
+            ));
+        }
+        fs::read(&state_path)
+    }
+
+    /// Queries metadata for all 5 slots of a given game under scoped storage.
+    pub fn get_slots_info(&self, game_title: &str) -> [crate::save::SlotMetadata; 5] {
+        let mut slots = [
+            crate::save::SlotMetadata::empty(1),
+            crate::save::SlotMetadata::empty(2),
+            crate::save::SlotMetadata::empty(3),
+            crate::save::SlotMetadata::empty(4),
+            crate::save::SlotMetadata::empty(5),
+        ];
+
+        for i in 1..=5 {
+            let state_path = self.get_slot_state_path(game_title, i);
+            let meta_path = self.get_slot_meta_path(game_title, i);
+            let legacy_path = self.get_state_path(game_title, i as usize);
+
+            if state_path.exists() || legacy_path.exists() {
+                if let Ok(meta_bytes) = fs::read(&meta_path) {
+                    if let Ok(meta) = bincode::deserialize::<crate::save::SlotMetadata>(&meta_bytes) {
+                        slots[(i - 1) as usize] = meta;
+                        continue;
+                    }
+                }
+                let target = if state_path.exists() { state_path } else { legacy_path };
+                let ts = target
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .and_then(|t| {
+                        t.duration_since(std::time::UNIX_EPOCH)
+                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                    })
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                slots[(i - 1) as usize] = crate::save::SlotMetadata {
+                    slot_index: i,
+                    timestamp: ts,
+                    formatted_time: crate::save::format_unix_timestamp(ts),
+                    is_empty: false,
+                };
+            }
+        }
+        slots
     }
 }
 

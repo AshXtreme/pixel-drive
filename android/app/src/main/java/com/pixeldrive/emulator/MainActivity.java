@@ -101,4 +101,20 @@ public class MainActivity extends NativeActivity {
             }
         });
     }
+
+    /**
+     * Shows a short Toast message on the UI thread.
+     */
+    public void showToast(final String message) {
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    android.widget.Toast.makeText(MainActivity.this, message, android.widget.Toast.LENGTH_SHORT).show();
+                } catch (Exception e) {
+                    Log.e(TAG, "Failed to display toast: " + e.getMessage());
+                }
+            }
+        });
+    }
 }

@@ -234,5 +234,9 @@ mod tests {
         assert!(SHADER_SOURCE.contains("apply_lcd_grid"));
         assert!(SHADER_SOURCE.contains("apply_color_correction"));
         assert!(SHADER_SOURCE.contains("s_diffuse"));
+
+        // Full WGSL parser and validator check via naga
+        pixels::wgpu::naga::front::wgsl::parse_str(SHADER_SOURCE)
+            .expect("Shader pipeline WGSL shader must parse and validate cleanly without errors");
     }
 }

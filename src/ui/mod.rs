@@ -1,5 +1,5 @@
 pub mod menu;
-pub use menu::{MenuAction, MenuItem, MenuLayout, MenuState};
+pub use menu::{MenuAction, MenuItem, MenuLayout, MenuState, SaveLoadItem, SaveLoadLayout, SlotMode};
 
 use crate::input::TouchOverlayPreset;
 use crate::render::FilterMode;

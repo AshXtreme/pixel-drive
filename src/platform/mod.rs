@@ -129,6 +129,18 @@ impl DesktopStorage {
             .unwrap_or(raw);
         SaveManager::sanitize_stem(stem)
     }
+
+    pub fn save_to_slot(&self, game_title: &str, slot: u8, data: &[u8]) -> std::io::Result<crate::save::SlotMetadata> {
+        SaveManager::save_to_slot(game_title, slot, data)
+    }
+
+    pub fn load_from_slot(&self, game_title: &str, slot: u8) -> Result<Vec<u8>, std::io::Error> {
+        SaveManager::load_from_slot(game_title, slot)
+    }
+
+    pub fn get_slots_info(&self, game_title: &str) -> [crate::save::SlotMetadata; 5] {
+        SaveManager::get_slots_info(game_title)
+    }
 }
 
 impl PlatformStorage for DesktopStorage {

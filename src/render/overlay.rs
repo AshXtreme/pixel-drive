@@ -41,6 +41,9 @@ pub struct TouchOverlayUniforms {
     pub btn_ql_pos: [f32; 2],
     pub menu_state: u32,
     pub menu_pressed_item: u32,
+
+    pub slot_mask: u32,
+    pub _pad: [u32; 3],
 }
 
 impl Default for TouchOverlayUniforms {
@@ -66,6 +69,8 @@ impl Default for TouchOverlayUniforms {
             btn_ql_pos: [0.66, 0.07],
             menu_state: 0,
             menu_pressed_item: 0,
+            slot_mask: 0,
+            _pad: [0, 0, 0],
         }
     }
 }
@@ -217,11 +222,20 @@ impl TouchOverlayRenderer {
                 touch_manager.btn_quick_load.center().0,
                 touch_manager.btn_quick_load.center().1,
             ],
-            menu_state: if touch_manager.menu_state().is_visible() { 1 } else { 0 },
-            menu_pressed_item: touch_manager
-                .pressed_menu_item()
-                .map(|it| it.shader_index())
-                .unwrap_or(0),
+            menu_state: touch_manager.menu_state().shader_index(),
+            menu_pressed_item: match touch_manager.menu_state() {
+                crate::ui::menu::MenuState::MainMenu => touch_manager
+                    .pressed_menu_item()
+                    .map(|it| it.shader_index())
+                    .unwrap_or(0),
+                crate::ui::menu::MenuState::SaveLoadSlotSelect { .. } => touch_manager
+                    .pressed_save_load_item()
+                    .map(|it| it.shader_index())
+                    .unwrap_or(0),
+                _ => 0,
+            },
+            slot_mask: touch_manager.slot_mask(),
+            _pad: [0, 0, 0],
         };
 
         if self.cached_uniforms != Some(uniforms) {
@@ -286,12 +300,12 @@ mod tests {
 
     #[test]
     fn test_touch_overlay_uniforms_layout_and_size() {
-        assert_eq!(std::mem::size_of::<TouchOverlayUniforms>(), 128);
+        assert_eq!(std::mem::size_of::<TouchOverlayUniforms>(), 144);
         assert_eq!(std::mem::size_of::<TouchOverlayUniforms>() % 16, 0);
 
         let uniforms = [TouchOverlayUniforms::default()];
         let bytes: &[u8] = bytemuck::cast_slice(&uniforms);
-        assert_eq!(bytes.len(), 128);
+        assert_eq!(bytes.len(), 144);
     }
 
     #[test]
@@ -308,11 +322,18 @@ mod tests {
         assert!(OVERLAY_SHADER_SOURCE.contains("draw_letter_b"));
         assert!(OVERLAY_SHADER_SOURCE.contains("draw_fast_forward"));
         assert!(OVERLAY_SHADER_SOURCE.contains("draw_save_icon"));
+        assert!(OVERLAY_SHADER_SOURCE.contains("draw_back_arrow"));
+        assert!(OVERLAY_SHADER_SOURCE.contains("draw_swap_icon"));
+        assert!(OVERLAY_SHADER_SOURCE.contains("draw_digit"));
         assert!(OVERLAY_SHADER_SOURCE.contains("draw_load_icon"));
         assert!(OVERLAY_SHADER_SOURCE.contains("draw_pause_icon"));
         assert!(OVERLAY_SHADER_SOURCE.contains("draw_play_icon"));
         assert!(OVERLAY_SHADER_SOURCE.contains("draw_folder_icon"));
         assert!(OVERLAY_SHADER_SOURCE.contains("draw_reset_icon"));
         assert!(OVERLAY_SHADER_SOURCE.contains("render_modal_row"));
+
+        // Full WGSL parser and validator check via naga
+        pixels::wgpu::naga::front::wgsl::parse_str(OVERLAY_SHADER_SOURCE)
+            .expect("Touch overlay WGSL shader must parse and validate cleanly without errors");
     }
 }

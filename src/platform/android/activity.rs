@@ -18,8 +18,7 @@ use crate::audio::AudioProducer;
 use crate::core::EmulatorCore;
 use crate::gba::{GbaCore, GbaHeader};
 use crate::gbc::GbcCore;
-use crate::input::{InputSource, JoypadState, TouchAction, TouchOverlay};
-use crate::ui::menu::{MenuItem, MenuState};
+use crate::input::{InputSource, JoypadState, TouchAction, TouchOverlay, TouchPhase};
 use crate::platform::android::audio::AndroidAudioPlayer;
 use crate::platform::android::haptics::AndroidHaptics;
 use crate::platform::android::storage::jni_bridge;
@@ -27,6 +26,7 @@ use crate::platform::android::storage::AndroidStorage;
 use crate::platform::PlatformStorage;
 use crate::render::{FilterMode, ShaderPipeline, TouchOverlayRenderer};
 use crate::save::SaveManager;
+use crate::ui::menu::{MenuItem, MenuState, SlotMode};
 
 /// Thread-safe queue storing pending Content URIs selected via Android SAF ROM picker.
 static PENDING_ROM_URI: Mutex<Option<String>> = Mutex::new(None);
@@ -184,6 +184,28 @@ fn launch_saf_picker(jvm_ptr: *mut std::ffi::c_void, activity_ptr: *mut std::ffi
                 warn!("Failed to invoke MainActivity.openRomPicker(): {:?}", err);
             } else {
                 info!("Successfully launched SAF ROM Document Picker");
+            }
+        }
+    }
+}
+
+/// Displays a transient Android UI Toast message via JNI call to `MainActivity.showToast()`.
+fn show_toast(jvm_ptr: *mut std::ffi::c_void, activity_ptr: *mut std::ffi::c_void, message: &str) {
+    if jvm_ptr.is_null() || activity_ptr.is_null() {
+        return;
+    }
+    if let Ok(vm) = unsafe { jni::JavaVM::from_raw(jvm_ptr.cast()) } {
+        if let Ok(mut env) = vm.attach_current_thread() {
+            let act_obj = unsafe { jni::objects::JObject::from_raw(activity_ptr as _) };
+            if let Ok(msg_jstring) = env.new_string(message) {
+                if let Err(err) = env.call_method(
+                    &act_obj,
+                    "showToast",
+                    "(Ljava/lang/String;)V",
+                    &[jni::objects::JValue::Object(&msg_jstring)],
+                ) {
+                    debug!("Failed to call MainActivity.showToast(): {:?}", err);
+                }
             }
         }
     }
@@ -573,10 +595,12 @@ fn run_android_app(app: AndroidApp) {
                         }
 
                         MainEvent::Resume { .. } => {
-                            info!("Android MainEvent: Resume — Resuming audio and emulation with clean buffer");
-                            is_paused = false;
-                            if let Some(ref mut player) = audio_player {
-                                player.resume_audio_stream();
+                            info!("Android MainEvent: Resume");
+                            if menu_state == MenuState::Hidden {
+                                is_paused = false;
+                                if let Some(ref mut player) = audio_player {
+                                    player.resume_audio_stream();
+                                }
                             }
                         }
 
@@ -641,13 +665,27 @@ fn run_android_app(app: AndroidApp) {
                             MotionAction::Up | MotionAction::PointerUp => {
                                 for i in 0..ptr_count {
                                     let pointer = motion.pointer_at_index(i);
-                                    touch_overlay.handle_touch_up(pointer.pointer_id() as u64);
+                                    touch_overlay.handle_touch_event(
+                                        pointer.pointer_id() as u64,
+                                        pointer.x(),
+                                        pointer.y(),
+                                        TouchPhase::Ended,
+                                        window_width.max(1) as f32,
+                                        window_height.max(1) as f32,
+                                    );
                                 }
                             }
                             MotionAction::Cancel => {
                                 for i in 0..ptr_count {
                                     let pointer = motion.pointer_at_index(i);
-                                    touch_overlay.handle_touch_cancel(pointer.pointer_id() as u64);
+                                    touch_overlay.handle_touch_event(
+                                        pointer.pointer_id() as u64,
+                                        pointer.x(),
+                                        pointer.y(),
+                                        TouchPhase::Cancelled,
+                                        window_width.max(1) as f32,
+                                        window_height.max(1) as f32,
+                                    );
                                 }
                             }
                             _ => {}
@@ -728,13 +766,92 @@ fn run_android_app(app: AndroidApp) {
                                     }
                                 }
                                 TouchAction::MenuSelect(MenuItem::SaveLoadStates) => {
-                                    info!("Menu option 'Save / Load States' selected (Phase 2 placeholder)");
+                                    info!("Menu option 'Save / Load States' selected: opening slot manager for '{}'", current_game_title);
+                                    let slots = storage.get_slots_info(&current_game_title);
+                                    let mut mask = 0u32;
+                                    for (idx, s) in slots.iter().enumerate() {
+                                        if !s.is_empty {
+                                            mask |= 1u32 << idx;
+                                        }
+                                    }
+                                    touch_overlay.set_slot_mask(mask);
+                                    menu_state = MenuState::SaveLoadSlotSelect { mode: SlotMode::Save };
+                                    touch_overlay.set_menu_state(menu_state);
+                                }
+                                TouchAction::ToggleSlotMode => {
+                                    if let MenuState::SaveLoadSlotSelect { mode } = menu_state {
+                                        let new_mode = mode.toggle();
+                                        menu_state = MenuState::SaveLoadSlotSelect { mode: new_mode };
+                                        touch_overlay.set_menu_state(menu_state);
+                                        info!("Toggled slot mode to {:?}", new_mode);
+                                    }
+                                }
+                                TouchAction::MenuBack => {
+                                    info!("Returning to Main Menu");
+                                    menu_state = MenuState::MainMenu;
+                                    touch_overlay.set_menu_state(MenuState::MainMenu);
+                                }
+                                TouchAction::SelectSlot { slot, mode } => {
+                                    match mode {
+                                        SlotMode::Save => {
+                                            info!("Saving state to slot {} for '{}'...", slot, current_game_title);
+                                            if let Some(state_data) = active_core.save_state() {
+                                                match storage.save_to_slot(&current_game_title, slot, &state_data) {
+                                                    Ok(meta) => {
+                                                        info!("Successfully saved state to Slot {} ({})", slot, meta.formatted_time);
+                                                        let slots = storage.get_slots_info(&current_game_title);
+                                                        let mut mask = 0u32;
+                                                        for (idx, s) in slots.iter().enumerate() {
+                                                            if !s.is_empty {
+                                                                mask |= 1u32 << idx;
+                                                            }
+                                                        }
+                                                        touch_overlay.set_slot_mask(mask);
+                                                        show_toast(jvm_ptr, activity_ptr, &format!("Saved State to Slot {}", slot));
+                                                    }
+                                                    Err(err) => {
+                                                        warn!("Failed to save state to slot {}: {}", slot, err);
+                                                        show_toast(jvm_ptr, activity_ptr, &format!("Error saving Slot {}: {}", slot, err));
+                                                    }
+                                                }
+                                            } else {
+                                                warn!("Active core returned None on save_state()");
+                                                show_toast(jvm_ptr, activity_ptr, "Failed to capture save state");
+                                            }
+                                        }
+                                        SlotMode::Load => {
+                                            info!("Loading state from slot {} for '{}'...", slot, current_game_title);
+                                            match storage.load_from_slot(&current_game_title, slot) {
+                                                Ok(state_data) => {
+                                                    if active_core.load_state(&state_data) {
+                                                        info!("Successfully loaded state from Slot {}", slot);
+                                                        menu_state = MenuState::Hidden;
+                                                        touch_overlay.set_menu_state(MenuState::Hidden);
+                                                        is_paused = false;
+                                                        if let Some(ref mut player) = audio_player {
+                                                            player.resume_audio_stream();
+                                                        }
+                                                        show_toast(jvm_ptr, activity_ptr, &format!("Loaded Slot {}", slot));
+                                                    } else {
+                                                        warn!("Failed to restore state snapshot from Slot {}", slot);
+                                                        show_toast(jvm_ptr, activity_ptr, &format!("Corrupt state in Slot {}", slot));
+                                                    }
+                                                }
+                                                Err(err) => {
+                                                    warn!("Slot {} is empty or unreadable: {}", slot, err);
+                                                    show_toast(jvm_ptr, activity_ptr, &format!("Slot {} is empty", slot));
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                                 TouchAction::MenuSelect(MenuItem::Settings) => {
                                     info!("Menu option 'Settings' selected (Phase 3 placeholder)");
+                                    show_toast(jvm_ptr, activity_ptr, "Settings (Coming in Phase 3)");
                                 }
                                 TouchAction::MenuSelect(MenuItem::Cheats) => {
                                     info!("Menu option 'Cheat Codes' selected (Phase 4 placeholder)");
+                                    show_toast(jvm_ptr, activity_ptr, "Cheat Codes (Coming in Phase 4)");
                                 }
                                 TouchAction::QuickSave => {
                                     info!("QuickSave triggered for '{}'", current_game_title);

@@ -5,10 +5,12 @@
 //! dynamic floating center D-pad mode, and WGPU overlay state synchronization.
 
 use crate::core::Button;
-use crate::ui::menu::{MenuItem, MenuLayout, MenuState};
 use std::collections::HashMap;
 
-pub use crate::ui::menu::{MenuItem as TouchMenuItem, MenuState as TouchMenuState};
+pub use crate::ui::menu::{
+    MenuItem, MenuItem as TouchMenuItem, MenuLayout, MenuState, MenuState as TouchMenuState,
+    SaveLoadItem, SaveLoadLayout, SlotMode,
+};
 
 use super::{InputSource, JoypadState};
 
@@ -392,6 +394,9 @@ pub enum TouchAction {
     QuickSave,
     QuickLoad,
     MenuSelect(MenuItem),
+    SelectSlot { slot: u8, mode: SlotMode },
+    ToggleSlotMode,
+    MenuBack,
 }
 
 /// Pressed bitmask constants matching GB/GBA layout and UI HUD elements for the shader pipeline.
@@ -428,7 +433,10 @@ pub struct TouchInputManager {
     // In-game Modal Pause Menu State
     pub menu_state: MenuState,
     pub menu_layout: MenuLayout,
+    pub save_load_layout: SaveLoadLayout,
     pub pressed_menu_item: Option<MenuItem>,
+    pub pressed_save_load_item: Option<SaveLoadItem>,
+    pub slot_mask: u32,
 
     // Virtual Controls Geometry
     pub dpad: VirtualDPad,
@@ -480,7 +488,10 @@ impl TouchInputManager {
 
             menu_state: MenuState::Hidden,
             menu_layout: MenuLayout::new(),
+            save_load_layout: SaveLoadLayout::new(),
             pressed_menu_item: None,
+            pressed_save_load_item: None,
+            slot_mask: 0,
 
             // Default geometry placeholders (recomputed in apply_preset)
             dpad: VirtualDPad::new(0.14, 0.76, 0.11, 0.025),
@@ -666,6 +677,7 @@ impl TouchInputManager {
         self.menu_state = state;
         if state == MenuState::Hidden {
             self.pressed_menu_item = None;
+            self.pressed_save_load_item = None;
         }
         self.recompute_state();
     }
@@ -673,6 +685,21 @@ impl TouchInputManager {
     /// Returns currently touched menu item, if any.
     pub fn pressed_menu_item(&self) -> Option<MenuItem> {
         self.pressed_menu_item
+    }
+
+    /// Returns currently touched save/load slot item, if any.
+    pub fn pressed_save_load_item(&self) -> Option<SaveLoadItem> {
+        self.pressed_save_load_item
+    }
+
+    /// Returns the active occupied slot bitmask for the shader uniform buffer.
+    pub fn slot_mask(&self) -> u32 {
+        self.slot_mask
+    }
+
+    /// Sets the active occupied slot bitmask.
+    pub fn set_slot_mask(&mut self, mask: u32) {
+        self.slot_mask = mask;
     }
 
     /// Ingests unified touch event with phase.
@@ -692,25 +719,83 @@ impl TouchInputManager {
         let norm_y = (y / screen_h).clamp(0.0, 1.0);
 
         // When in-game pause menu modal is visible, intercept all touch interactions
-        if self.menu_state != MenuState::Hidden {
-            match phase {
-                TouchPhase::Started | TouchPhase::Moved => {
-                    self.pressed_menu_item = self.menu_layout.hit_test(norm_x, norm_y);
-                }
-                TouchPhase::Ended => {
-                    if let Some(item) = self.menu_layout.hit_test(norm_x, norm_y) {
-                        self.pending_actions.push(TouchAction::MenuSelect(item));
-                    } else if self.menu_layout.is_outside_modal(norm_x, norm_y) {
-                        self.pending_actions.push(TouchAction::CloseMenu);
+        match self.menu_state {
+            MenuState::MainMenu => {
+                match phase {
+                    TouchPhase::Started => {
+                        self.pressed_menu_item = self.menu_layout.hit_test(norm_x, norm_y);
+                        let pt = TouchPoint::new(id, norm_x, norm_y, TouchPhase::Started);
+                        self.active_touches.insert(id, pt);
                     }
-                    self.pressed_menu_item = None;
+                    TouchPhase::Moved => {
+                        self.pressed_menu_item = self.menu_layout.hit_test(norm_x, norm_y);
+                        if let Some(pt) = self.active_touches.get_mut(&id) {
+                            pt.x = norm_x;
+                            pt.y = norm_y;
+                            pt.norm_x = norm_x;
+                            pt.norm_y = norm_y;
+                            pt.phase = TouchPhase::Moved;
+                        }
+                    }
+                    TouchPhase::Ended => {
+                        let hit = self.menu_layout.hit_test(norm_x, norm_y).or(self.pressed_menu_item);
+                        if let Some(item) = hit {
+                            self.pending_actions.push(TouchAction::MenuSelect(item));
+                        }
+                        self.pressed_menu_item = None;
+                        self.active_touches.remove(&id);
+                    }
+                    TouchPhase::Cancelled => {
+                        self.pressed_menu_item = None;
+                        self.active_touches.remove(&id);
+                    }
                 }
-                TouchPhase::Cancelled => {
-                    self.pressed_menu_item = None;
-                }
+                self.recompute_state();
+                return;
             }
-            self.recompute_state();
-            return;
+            MenuState::SaveLoadSlotSelect { mode } => {
+                match phase {
+                    TouchPhase::Started => {
+                        self.pressed_save_load_item = self.save_load_layout.hit_test(norm_x, norm_y);
+                        let pt = TouchPoint::new(id, norm_x, norm_y, TouchPhase::Started);
+                        self.active_touches.insert(id, pt);
+                    }
+                    TouchPhase::Moved => {
+                        self.pressed_save_load_item = self.save_load_layout.hit_test(norm_x, norm_y);
+                        if let Some(pt) = self.active_touches.get_mut(&id) {
+                            pt.x = norm_x;
+                            pt.y = norm_y;
+                            pt.norm_x = norm_x;
+                            pt.norm_y = norm_y;
+                            pt.phase = TouchPhase::Moved;
+                        }
+                    }
+                    TouchPhase::Ended => {
+                        let hit = self.save_load_layout.hit_test(norm_x, norm_y).or(self.pressed_save_load_item);
+                        match hit {
+                            Some(SaveLoadItem::Slot(slot)) => {
+                                self.pending_actions.push(TouchAction::SelectSlot { slot, mode });
+                            }
+                            Some(SaveLoadItem::Back) => {
+                                self.pending_actions.push(TouchAction::MenuBack);
+                            }
+                            Some(SaveLoadItem::ToggleMode) => {
+                                self.pending_actions.push(TouchAction::ToggleSlotMode);
+                            }
+                            None => {}
+                        }
+                        self.pressed_save_load_item = None;
+                        self.active_touches.remove(&id);
+                    }
+                    TouchPhase::Cancelled => {
+                        self.pressed_save_load_item = None;
+                        self.active_touches.remove(&id);
+                    }
+                }
+                self.recompute_state();
+                return;
+            }
+            MenuState::Hidden | MenuState::Settings | MenuState::Cheats => {}
         }
 
         match phase {
@@ -763,16 +848,28 @@ impl TouchInputManager {
 
     /// Ingests touch release / finger up event.
     pub fn handle_touch_up(&mut self, id: u64) {
-        self.active_touches.remove(&id);
-        self.dpad.handle_touch_up(id);
-        self.recompute_state();
+        if let Some(pt) = self.active_touches.get(&id) {
+            let norm_x = pt.norm_x;
+            let norm_y = pt.norm_y;
+            self.handle_touch_event(id, norm_x, norm_y, TouchPhase::Ended, 1.0, 1.0);
+        } else {
+            self.active_touches.remove(&id);
+            self.dpad.handle_touch_up(id);
+            self.recompute_state();
+        }
     }
 
     /// Ingests touch cancellation event.
     pub fn handle_touch_cancel(&mut self, id: u64) {
-        self.active_touches.remove(&id);
-        self.dpad.handle_touch_up(id);
-        self.recompute_state();
+        if let Some(pt) = self.active_touches.get(&id) {
+            let norm_x = pt.norm_x;
+            let norm_y = pt.norm_y;
+            self.handle_touch_event(id, norm_x, norm_y, TouchPhase::Cancelled, 1.0, 1.0);
+        } else {
+            self.active_touches.remove(&id);
+            self.dpad.handle_touch_up(id);
+            self.recompute_state();
+        }
     }
 
     /// Clears all active touch pointers.
@@ -1228,8 +1325,49 @@ mod tests {
         overlay.handle_touch_event(2, lx * screen_w, ly * screen_h, TouchPhase::Ended, screen_w, screen_h);
         assert_eq!(overlay.poll_actions(), vec![TouchAction::MenuSelect(MenuItem::LoadRom)]);
 
-        // Tap outside modal dispatches CloseMenu
+        // Tap outside modal does NOT close menu (stays open until Resume is tapped)
         overlay.handle_touch_event(3, 0.05 * screen_w, 0.05 * screen_h, TouchPhase::Ended, screen_w, screen_h);
-        assert_eq!(overlay.poll_actions(), vec![TouchAction::CloseMenu]);
+        assert_eq!(overlay.poll_actions(), vec![]);
+        assert_eq!(overlay.menu_state(), MenuState::MainMenu);
+    }
+
+    #[test]
+    fn test_touch_overlay_save_load_slot_modal_interactions() {
+        let mut overlay = TouchInputManager::new();
+        let screen_w = 1000.0;
+        let screen_h = 1000.0;
+
+        overlay.set_menu_state(MenuState::SaveLoadSlotSelect { mode: SlotMode::Save });
+        assert_eq!(
+            overlay.menu_state(),
+            MenuState::SaveLoadSlotSelect { mode: SlotMode::Save }
+        );
+        overlay.set_slot_mask(0b00101);
+        assert_eq!(overlay.slot_mask(), 0b00101);
+
+        // Touch on Slot 1
+        let (s1_x, s1_y) = overlay.save_load_layout.slot_rects[0].1.center();
+        overlay.handle_touch_down(1, s1_x * screen_w, s1_y * screen_h, screen_w, screen_h);
+        assert_eq!(overlay.pressed_save_load_item(), Some(SaveLoadItem::Slot(1)));
+
+        // Touch up on Slot 1
+        overlay.handle_touch_event(1, s1_x * screen_w, s1_y * screen_h, TouchPhase::Ended, screen_w, screen_h);
+        let actions = overlay.poll_actions();
+        assert_eq!(actions, vec![TouchAction::SelectSlot { slot: 1, mode: SlotMode::Save }]);
+        assert_eq!(overlay.pressed_save_load_item(), None);
+
+        // Touch on Mode Toggle button
+        let (tx, ty) = overlay.save_load_layout.toggle_mode_rect.center();
+        overlay.handle_touch_down(2, tx * screen_w, ty * screen_h, screen_w, screen_h);
+        assert_eq!(overlay.pressed_save_load_item(), Some(SaveLoadItem::ToggleMode));
+        overlay.handle_touch_event(2, tx * screen_w, ty * screen_h, TouchPhase::Ended, screen_w, screen_h);
+        assert_eq!(overlay.poll_actions(), vec![TouchAction::ToggleSlotMode]);
+
+        // Touch on Back button
+        let (bx, by) = overlay.save_load_layout.back_rect.center();
+        overlay.handle_touch_down(3, bx * screen_w, by * screen_h, screen_w, screen_h);
+        assert_eq!(overlay.pressed_save_load_item(), Some(SaveLoadItem::Back));
+        overlay.handle_touch_event(3, bx * screen_w, by * screen_h, TouchPhase::Ended, screen_w, screen_h);
+        assert_eq!(overlay.poll_actions(), vec![TouchAction::MenuBack]);
     }
 }

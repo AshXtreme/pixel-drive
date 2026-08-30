@@ -28,5 +28,5 @@ pub use platform::{DesktopHaptics, DesktopStorage, PlatformAudio, PlatformHaptic
 #[cfg(target_os = "android")]
 pub use platform::{AndroidAudioPlayer, AndroidHaptics, AndroidStorage};
 pub use render::{FilterMode, ShaderPipeline, TouchOverlayRenderer, TouchOverlayUniforms};
-pub use save::SaveManager;
+pub use save::{format_unix_timestamp, SaveManager, SlotMetadata};
 

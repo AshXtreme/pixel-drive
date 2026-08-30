@@ -46,6 +46,11 @@ struct TouchOverlayUniforms {
     btn_ql_pos: vec2<f32>,
     menu_state: u32,
     menu_pressed_item: u32,
+
+    slot_mask: u32,
+    pad0: u32,
+    pad1: u32,
+    pad2: u32,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: TouchOverlayUniforms;
@@ -321,6 +326,58 @@ fn draw_cheats_icon(p: vec2<f32>, size: f32) -> f32 {
     return min(body, min(dpad_m, min(btn_a, btn_b)));
 }
 
+// Procedural Left Arrow Icon (← Back)
+fn draw_back_arrow(p: vec2<f32>, sz: f32) -> f32 {
+    let stem = sd_segment(p, vec2<f32>(-sz * 0.45, 0.0), vec2<f32>(sz * 0.45, 0.0)) - 0.0022;
+    let upper = sd_segment(p, vec2<f32>(-sz * 0.45, 0.0), vec2<f32>(-sz * 0.15, sz * 0.35)) - 0.0022;
+    let lower = sd_segment(p, vec2<f32>(-sz * 0.45, 0.0), vec2<f32>(-sz * 0.15, -sz * 0.35)) - 0.0022;
+    return min(stem, min(upper, lower));
+}
+
+// Procedural Swap Mode Icon (⇄ Toggle)
+fn draw_swap_icon(p: vec2<f32>, sz: f32) -> f32 {
+    let s1 = sd_segment(p, vec2<f32>(-sz * 0.40, sz * 0.22), vec2<f32>(sz * 0.40, sz * 0.22)) - 0.002;
+    let a1 = sd_segment(p, vec2<f32>(sz * 0.40, sz * 0.22), vec2<f32>(sz * 0.15, sz * 0.42)) - 0.002;
+    let s2 = sd_segment(p, vec2<f32>(-sz * 0.40, -sz * 0.22), vec2<f32>(sz * 0.40, -sz * 0.22)) - 0.002;
+    let a2 = sd_segment(p, vec2<f32>(-sz * 0.40, -sz * 0.22), vec2<f32>(-sz * 0.15, -sz * 0.42)) - 0.002;
+    return min(min(s1, a1), min(s2, a2));
+}
+
+// Procedural Digits 1..=5 for Save State Slot Badges
+fn draw_digit(p: vec2<f32>, digit: u32, sz: f32) -> f32 {
+    let hw = sz * 0.30;
+    let hh = sz * 0.45;
+    let th = 0.0022;
+    if (digit == 1u) {
+        return sd_segment(p, vec2<f32>(0.0, -hh), vec2<f32>(0.0, hh)) - th;
+    } else if (digit == 2u) {
+        let t = sd_segment(p, vec2<f32>(-hw, -hh), vec2<f32>(hw, -hh)) - th;
+        let r = sd_segment(p, vec2<f32>(hw, -hh), vec2<f32>(hw, 0.0)) - th;
+        let m = sd_segment(p, vec2<f32>(-hw, 0.0), vec2<f32>(hw, 0.0)) - th;
+        let l = sd_segment(p, vec2<f32>(-hw, 0.0), vec2<f32>(-hw, hh)) - th;
+        let b = sd_segment(p, vec2<f32>(-hw, hh), vec2<f32>(hw, hh)) - th;
+        return min(min(t, r), min(min(m, l), b));
+    } else if (digit == 3u) {
+        let t = sd_segment(p, vec2<f32>(-hw, -hh), vec2<f32>(hw, -hh)) - th;
+        let m = sd_segment(p, vec2<f32>(-hw, 0.0), vec2<f32>(hw, 0.0)) - th;
+        let b = sd_segment(p, vec2<f32>(-hw, hh), vec2<f32>(hw, hh)) - th;
+        let r = sd_segment(p, vec2<f32>(hw, -hh), vec2<f32>(hw, hh)) - th;
+        return min(min(t, m), min(b, r));
+    } else if (digit == 4u) {
+        let l = sd_segment(p, vec2<f32>(-hw, -hh), vec2<f32>(-hw, 0.0)) - th;
+        let m = sd_segment(p, vec2<f32>(-hw, 0.0), vec2<f32>(hw, 0.0)) - th;
+        let r = sd_segment(p, vec2<f32>(hw, -hh), vec2<f32>(hw, hh)) - th;
+        return min(min(l, m), r);
+    } else {
+        let t = sd_segment(p, vec2<f32>(-hw, -hh), vec2<f32>(hw, -hh)) - th;
+        let l = sd_segment(p, vec2<f32>(-hw, -hh), vec2<f32>(-hw, 0.0)) - th;
+        let m = sd_segment(p, vec2<f32>(-hw, 0.0), vec2<f32>(hw, 0.0)) - th;
+        let r = sd_segment(p, vec2<f32>(hw, 0.0), vec2<f32>(hw, hh)) - th;
+        let b = sd_segment(p, vec2<f32>(-hw, hh), vec2<f32>(hw, hh)) - th;
+        return min(min(t, l), min(min(m, r), b));
+    }
+}
+
 fn render_modal_row(
     p: vec2<f32>,
     half_size: vec2<f32>,
@@ -331,29 +388,24 @@ fn render_modal_row(
     aa: f32,
 ) -> vec4<f32> {
     let d = sd_rounded_box(p, half_size, corner_r);
-    let rim_width = 0.0025;
+    let rim_width = 0.0018;
     let d_rim = abs(d + rim_width * 0.5) - rim_width * 0.5;
 
     let fill_alpha = smoothstep(aa, -aa, d);
     let rim_alpha = smoothstep(aa, -aa, d_rim);
-    let glow = exp(-max(d, 0.0) * (24.0 / corner_r));
 
     var color: vec4<f32>;
     if (pressed) {
-        let fill = vec4<f32>(mix(base_color, accent_color, 0.65), 0.95 * fill_alpha);
-        let rim = vec4<f32>(vec3<f32>(1.0, 1.0, 1.0), 0.98 * rim_alpha);
-        let glow_col = vec4<f32>(accent_color, 0.70 * glow);
+        let fill = vec4<f32>(vec3<f32>(0.25, 0.28, 0.34), 1.0 * fill_alpha);
+        let rim = vec4<f32>(vec3<f32>(0.85, 0.88, 0.94), 0.95 * rim_alpha);
         color = blend_over(rim, fill);
-        color = blend_over(color, glow_col);
     } else {
-        let fill = vec4<f32>(base_color, 0.88 * fill_alpha);
-        let rim = vec4<f32>(accent_color, 0.75 * rim_alpha);
-        let glow_col = vec4<f32>(accent_color, 0.20 * glow);
-        let left_bar = sd_rounded_box(p - vec2<f32>(-half_size.x + 0.008, 0.0), vec2<f32>(0.004, half_size.y * 0.70), 0.002);
-        let bar_col = vec4<f32>(accent_color, 0.90 * smoothstep(aa, -aa, left_bar));
+        let fill = vec4<f32>(base_color, 1.0 * fill_alpha);
+        let rim = vec4<f32>(accent_color, 0.70 * rim_alpha);
+        let left_bar = sd_rounded_box(p - vec2<f32>(-half_size.x + 0.006, 0.0), vec2<f32>(0.0025, half_size.y * 0.65), 0.0012);
+        let bar_col = vec4<f32>(accent_color, 0.95 * smoothstep(aa, -aa, left_bar));
         color = blend_over(rim, fill);
         color = blend_over(bar_col, color);
-        color = blend_over(color, glow_col);
     }
     return color;
 }
@@ -367,7 +419,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     var final_color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
 
-    // Color palettes
+    // Color palettes for virtual in-game controls
     let col_dark = vec3<f32>(0.06, 0.09, 0.14);
     let col_cyan_glow = vec3<f32>(0.12, 0.78, 0.96);
     let col_amber_glow = vec3<f32>(0.98, 0.58, 0.18);
@@ -375,16 +427,30 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let col_emerald_glow = vec3<f32>(0.18, 0.92, 0.55);
     let col_purple_glow = vec3<f32>(0.72, 0.35, 0.95);
 
+    // Clean neutral dark color palette (No harsh neon glows)
+    let col_btn_bg = vec3<f32>(0.16, 0.18, 0.22);
+    let col_card_bg = vec4<f32>(0.11, 0.12, 0.14, 1.0);
+    let col_card_rim = vec4<f32>(0.28, 0.31, 0.36, 0.95);
+    let col_glyph = vec4<f32>(vec3<f32>(0.92, 0.94, 0.97), 0.95);
+
+    // Muted semantic accents
+    let col_accent_resume = vec3<f32>(0.35, 0.65, 0.48);
+    let col_accent_rom = vec3<f32>(0.42, 0.55, 0.72);
+    let col_accent_state = vec3<f32>(0.55, 0.48, 0.72);
+    let col_accent_reset = vec3<f32>(0.72, 0.45, 0.42);
+    let col_accent_settings = vec3<f32>(0.45, 0.50, 0.58);
+    let col_accent_cheats = vec3<f32>(0.58, 0.48, 0.55);
+
     if (uniforms.menu_state == 1u) {
         // ====================================================================
-        // In-Game Modal Pause Menu Rendering
+        // In-Game Main Pause Menu Rendering (Opaque Dark UI)
         // ====================================================================
 
         // 1. Fullscreen Dark Dimming Backdrop
-        let backdrop = vec4<f32>(0.02, 0.03, 0.06, 0.82);
+        let backdrop = vec4<f32>(0.03, 0.04, 0.05, 0.95);
         final_color = backdrop;
 
-        // 2. Centered Glassmorphic Modal Card
+        // 2. Centered Solid Opaque Modal Card
         let modal_c = vec2<f32>(0.50 * aspect, 0.50);
         let modal_half = vec2<f32>(0.28 * aspect, 0.40);
         let modal_r = 0.024;
@@ -392,31 +458,28 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let card_d = sd_rounded_box(card_p, modal_half, modal_r);
 
         let card_fill_alpha = smoothstep(aa, -aa, card_d);
-        let card_rim_d = abs(card_d + 0.003) - 0.003;
+        let card_rim_d = abs(card_d + 0.002) - 0.002;
         let card_rim_alpha = smoothstep(aa, -aa, card_rim_d);
-        let card_glow = exp(-max(card_d, 0.0) * 15.0);
 
-        let card_bg = vec4<f32>(0.07, 0.09, 0.14, 0.96 * card_fill_alpha);
-        let card_rim = vec4<f32>(col_cyan_glow, 0.85 * card_rim_alpha);
-        let card_glow_col = vec4<f32>(col_cyan_glow, 0.25 * card_glow);
+        let card_bg = vec4<f32>(col_card_bg.rgb, col_card_bg.a * card_fill_alpha);
+        let card_rim = vec4<f32>(col_card_rim.rgb, col_card_rim.a * card_rim_alpha);
 
         final_color = blend_over(card_rim, blend_over(card_bg, final_color));
-        final_color = blend_over(card_glow_col, final_color);
 
         // 3. Header: Pause Icon and Title Bar
         let hdr_c = vec2<f32>(0.50 * aspect, 0.155);
         let hdr_p = p - hdr_c;
         if (length(hdr_p) < 0.06) {
             let pause_d = draw_pause_icon(hdr_p, 0.022);
-            let pause_col = vec4<f32>(vec3<f32>(1.0, 1.0, 1.0), 0.95 * smoothstep(aa, -aa, pause_d));
+            let pause_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, pause_d));
             final_color = blend_over(pause_col, final_color);
         }
 
         // Header Divider Line
         let div_c = vec2<f32>(0.50 * aspect, 0.188);
         let div_p = p - div_c;
-        let div_d = sd_segment(div_p, vec2<f32>(-modal_half.x * 0.82, 0.0), vec2<f32>(modal_half.x * 0.82, 0.0)) - 0.0012;
-        let div_col = vec4<f32>(col_cyan_glow, 0.50 * smoothstep(aa, -aa, div_d));
+        let div_d = sd_segment(div_p, vec2<f32>(-modal_half.x * 0.82, 0.0), vec2<f32>(modal_half.x * 0.82, 0.0)) - 0.0010;
+        let div_col = vec4<f32>(0.24, 0.27, 0.32, 0.90 * smoothstep(aa, -aa, div_d));
         final_color = blend_over(div_col, final_color);
 
         // 4. Interactive Menu Option Rows
@@ -424,69 +487,171 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let row_r = 0.016;
         let pressed_item = uniforms.menu_pressed_item;
 
-        // Row 1: Resume Game (Item 1 / Emerald)
+        // Row 1: Resume Game (Item 1 / Muted Mint)
         let r1_c = vec2<f32>(0.50 * aspect, 0.246);
         let r1_p = p - r1_c;
         if (abs(r1_p.y) < row_half.y * 1.3 && abs(r1_p.x) < row_half.x * 1.1) {
-            let r1_col = render_modal_row(r1_p, row_half, row_r, pressed_item == 1u, col_dark, col_emerald_glow, aa);
+            let r1_col = render_modal_row(r1_p, row_half, row_r, pressed_item == 1u, col_btn_bg, col_accent_resume, aa);
             let icon_d = draw_play_icon(r1_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
-            let icon_col = vec4<f32>(vec3<f32>(1.0), 0.95 * smoothstep(aa, -aa, icon_d));
+            let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
             final_color = blend_over(blend_over(icon_col, r1_col), final_color);
         }
 
-        // Row 2: Load New ROM (Item 2 / Cyan)
+        // Row 2: Load New ROM (Item 2 / Muted Slate Blue)
         let r2_c = vec2<f32>(0.50 * aspect, 0.342);
         let r2_p = p - r2_c;
         if (abs(r2_p.y) < row_half.y * 1.3 && abs(r2_p.x) < row_half.x * 1.1) {
-            let r2_col = render_modal_row(r2_p, row_half, row_r, pressed_item == 2u, col_dark, col_cyan_glow, aa);
+            let r2_col = render_modal_row(r2_p, row_half, row_r, pressed_item == 2u, col_btn_bg, col_accent_rom, aa);
             let icon_d = draw_folder_icon(r2_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
-            let icon_col = vec4<f32>(vec3<f32>(1.0), 0.95 * smoothstep(aa, -aa, icon_d));
+            let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
             final_color = blend_over(blend_over(icon_col, r2_col), final_color);
         }
 
-        // Row 3: Save / Load States (Item 3 / Purple)
+        // Row 3: Save / Load States (Item 3 / Muted Slate Lavender)
         let r3_c = vec2<f32>(0.50 * aspect, 0.438);
         let r3_p = p - r3_c;
         if (abs(r3_p.y) < row_half.y * 1.3 && abs(r3_p.x) < row_half.x * 1.1) {
-            let r3_col = render_modal_row(r3_p, row_half, row_r, pressed_item == 3u, col_dark, col_purple_glow, aa);
+            let r3_col = render_modal_row(r3_p, row_half, row_r, pressed_item == 3u, col_btn_bg, col_accent_state, aa);
             let icon_d = draw_save_icon(r3_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.020);
-            let icon_col = vec4<f32>(vec3<f32>(1.0), 0.95 * smoothstep(aa, -aa, icon_d));
+            let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
             final_color = blend_over(blend_over(icon_col, r3_col), final_color);
         }
 
-        // Row 4: Reset Game (Item 4 / Amber)
+        // Row 4: Reset Game (Item 4 / Muted Terracotta)
         let r4_c = vec2<f32>(0.50 * aspect, 0.534);
         let r4_p = p - r4_c;
         if (abs(r4_p.y) < row_half.y * 1.3 && abs(r4_p.x) < row_half.x * 1.1) {
-            let r4_col = render_modal_row(r4_p, row_half, row_r, pressed_item == 4u, col_dark, col_amber_glow, aa);
+            let r4_col = render_modal_row(r4_p, row_half, row_r, pressed_item == 4u, col_btn_bg, col_accent_reset, aa);
             let icon_d = draw_reset_icon(r4_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
-            let icon_col = vec4<f32>(vec3<f32>(1.0), 0.95 * smoothstep(aa, -aa, icon_d));
+            let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
             final_color = blend_over(blend_over(icon_col, r4_col), final_color);
         }
 
-        // Row 5: Settings (Item 5 / Steel Blue)
+        // Row 5: Settings (Item 5 / Muted Steel Gray)
         let r5_c = vec2<f32>(0.50 * aspect, 0.630);
         let r5_p = p - r5_c;
         if (abs(r5_p.y) < row_half.y * 1.3 && abs(r5_p.x) < row_half.x * 1.1) {
-            let col_steel = vec3<f32>(0.45, 0.65, 0.95);
-            let r5_col = render_modal_row(r5_p, row_half, row_r, pressed_item == 5u, col_dark, col_steel, aa);
+            let r5_col = render_modal_row(r5_p, row_half, row_r, pressed_item == 5u, col_btn_bg, col_accent_settings, aa);
             let icon_d = draw_gear_icon(r5_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
-            let icon_col = vec4<f32>(vec3<f32>(1.0), 0.95 * smoothstep(aa, -aa, icon_d));
+            let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
             final_color = blend_over(blend_over(icon_col, r5_col), final_color);
         }
 
-        // Row 6: Cheat Codes (Item 6 / Magenta)
+        // Row 6: Cheat Codes (Item 6 / Muted Mauve)
         let r6_c = vec2<f32>(0.50 * aspect, 0.726);
         let r6_p = p - r6_c;
         if (abs(r6_p.y) < row_half.y * 1.3 && abs(r6_p.x) < row_half.x * 1.1) {
-            let col_magenta = vec3<f32>(0.95, 0.35, 0.70);
-            let r6_col = render_modal_row(r6_p, row_half, row_r, pressed_item == 6u, col_dark, col_magenta, aa);
+            let r6_col = render_modal_row(r6_p, row_half, row_r, pressed_item == 6u, col_btn_bg, col_accent_cheats, aa);
             let icon_d = draw_cheats_icon(r6_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
-            let icon_col = vec4<f32>(vec3<f32>(1.0), 0.95 * smoothstep(aa, -aa, icon_d));
+            let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
             final_color = blend_over(blend_over(icon_col, r6_col), final_color);
         }
 
-        return vec4<f32>(final_color.rgb, final_color.a * max(uniforms.opacity, 0.85));
+        return final_color;
+    }
+
+    if (uniforms.menu_state == 2u || uniforms.menu_state == 3u) {
+        // ====================================================================
+        // Multi-Slot Save / Load State Manager Modal (Opaque Dark UI)
+        // ====================================================================
+        let is_save_mode = (uniforms.menu_state == 2u);
+        let header_accent = select(col_accent_rom, col_accent_resume, is_save_mode);
+
+        // 1. Fullscreen Dark Dimming Backdrop
+        let backdrop = vec4<f32>(0.03, 0.04, 0.05, 0.95);
+        final_color = backdrop;
+
+        // 2. Centered Solid Opaque Modal Card
+        let modal_c = vec2<f32>(0.50 * aspect, 0.50);
+        let modal_half = vec2<f32>(0.28 * aspect, 0.40);
+        let modal_r = 0.024;
+        let card_p = p - modal_c;
+        let card_d = sd_rounded_box(card_p, modal_half, modal_r);
+
+        let card_fill_alpha = smoothstep(aa, -aa, card_d);
+        let card_rim_d = abs(card_d + 0.002) - 0.002;
+        let card_rim_alpha = smoothstep(aa, -aa, card_rim_d);
+
+        let card_bg = vec4<f32>(col_card_bg.rgb, col_card_bg.a * card_fill_alpha);
+        let card_rim = vec4<f32>(col_card_rim.rgb, col_card_rim.a * card_rim_alpha);
+
+        final_color = blend_over(card_rim, blend_over(card_bg, final_color));
+
+        // 3. Header: Save or Load Icon + Title Indicator
+        let hdr_c = vec2<f32>(0.50 * aspect, 0.155);
+        let hdr_p = p - hdr_c;
+        if (length(hdr_p) < 0.06) {
+            let icon_d = select(draw_load_icon(hdr_p, 0.024), draw_save_icon(hdr_p, 0.022), is_save_mode);
+            let icon_col = vec4<f32>(header_accent, 0.95 * smoothstep(aa, -aa, icon_d));
+            final_color = blend_over(icon_col, final_color);
+        }
+
+        // Header Divider Line
+        let div_c = vec2<f32>(0.50 * aspect, 0.188);
+        let div_p = p - div_c;
+        let div_d = sd_segment(div_p, vec2<f32>(-modal_half.x * 0.82, 0.0), vec2<f32>(modal_half.x * 0.82, 0.0)) - 0.0010;
+        let div_col = vec4<f32>(0.24, 0.27, 0.32, 0.90 * smoothstep(aa, -aa, div_d));
+        final_color = blend_over(div_col, final_color);
+
+        // 4. 5 Interactive Slot Rows
+        let row_half = vec2<f32>(0.24 * aspect, 0.041);
+        let row_r = 0.016;
+        let pressed_item = uniforms.menu_pressed_item;
+        let slot_mask = uniforms.slot_mask;
+
+        // Render Slots 1..=5
+        for (var i = 1u; i <= 5u; i = i + 1u) {
+            let row_y = 0.246 + f32(i - 1u) * 0.096;
+            let row_c = vec2<f32>(0.50 * aspect, row_y);
+            let row_p = p - row_c;
+
+            if (abs(row_p.y) < row_half.y * 1.3 && abs(row_p.x) < row_half.x * 1.1) {
+                let is_occupied = (slot_mask & (1u << (i - 1u))) != 0u;
+                let row_accent = select(vec3<f32>(0.25, 0.28, 0.33), header_accent, is_occupied || is_save_mode);
+                let row_col = render_modal_row(row_p, row_half, row_r, pressed_item == i, col_btn_bg, row_accent, aa);
+
+                // Slot digit badge on left
+                let digit_d = draw_digit(row_p - vec2<f32>(-row_half.x + 0.035, 0.0), i, 0.022);
+                let digit_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, digit_d));
+
+                // Status indicator / Action pill on right
+                let pill_half = vec2<f32>(0.042 * aspect, 0.022);
+                let pill_c = vec2<f32>(row_half.x - 0.052, 0.0);
+                let pill_d = sd_rounded_box(row_p - pill_c, pill_half, 0.010);
+                let pill_bg = vec4<f32>(row_accent, select(0.35, 0.85, is_occupied || is_save_mode) * smoothstep(aa, -aa, pill_d));
+
+                var combined_row = blend_over(blend_over(digit_col, row_col), final_color);
+                combined_row = blend_over(pill_bg, combined_row);
+                final_color = combined_row;
+            }
+        }
+
+        // 5. Bottom Action Bar: [ ← Back ] and [ ⇄ Toggle Mode ]
+        let btm_y = 0.7575;
+        let btn_half = vec2<f32>(0.1125 * aspect, 0.0325);
+        let btn_r = 0.014;
+
+        // Back Button (Item 6)
+        let back_c = vec2<f32>(0.3725 * aspect, btm_y);
+        let back_p = p - back_c;
+        if (abs(back_p.y) < btn_half.y * 1.3 && abs(back_p.x) < btn_half.x * 1.1) {
+            let back_col = render_modal_row(back_p, btn_half, btn_r, pressed_item == 6u, col_btn_bg, col_accent_settings, aa);
+            let arrow_d = draw_back_arrow(back_p, 0.024);
+            let arrow_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, arrow_d));
+            final_color = blend_over(blend_over(arrow_col, back_col), final_color);
+        }
+
+        // Mode Toggle Button (Item 7)
+        let toggle_c = vec2<f32>(0.6275 * aspect, btm_y);
+        let toggle_p = p - toggle_c;
+        if (abs(toggle_p.y) < btn_half.y * 1.3 && abs(toggle_p.x) < btn_half.x * 1.1) {
+            let toggle_col = render_modal_row(toggle_p, btn_half, btn_r, pressed_item == 7u, col_btn_bg, header_accent, aa);
+            let swap_d = draw_swap_icon(toggle_p, 0.024);
+            let swap_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, swap_d));
+            final_color = blend_over(blend_over(swap_col, toggle_col), final_color);
+        }
+
+        return final_color;
     }
 
     let pressed_mask = uniforms.pressed_mask;
