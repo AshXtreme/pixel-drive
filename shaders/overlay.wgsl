@@ -48,9 +48,9 @@ struct TouchOverlayUniforms {
     menu_pressed_item: u32,
 
     slot_mask: u32,
+    theme_index: u32,
+    settings_values: u32,
     pad0: u32,
-    pad1: u32,
-    pad2: u32,
 };
 
 @group(0) @binding(0) var<uniform> uniforms: TouchOverlayUniforms;
@@ -343,6 +343,60 @@ fn draw_swap_icon(p: vec2<f32>, sz: f32) -> f32 {
     return min(min(s1, a1), min(s2, a2));
 }
 
+// Procedural Opacity Icon (◐ Half Circle)
+fn draw_opacity_icon(p: vec2<f32>, sz: f32) -> f32 {
+    let r = sz * 0.38;
+    let circle = abs(length(p) - r) - 0.0018;
+    let right_half = max(length(p) - r, -p.x);
+    return min(circle, right_half);
+}
+
+// Procedural Scale Icon (⤢ Corner Diagonal Resize)
+fn draw_scale_icon(p: vec2<f32>, sz: f32) -> f32 {
+    let hw = sz * 0.34;
+    let th = 0.0018;
+    let b1 = sd_segment(p, vec2<f32>(-hw, -hw), vec2<f32>(hw, hw)) - th;
+    let a1 = sd_segment(p, vec2<f32>(hw, hw), vec2<f32>(hw, 0.0)) - th;
+    let a2 = sd_segment(p, vec2<f32>(hw, hw), vec2<f32>(0.0, hw)) - th;
+    let a3 = sd_segment(p, vec2<f32>(-hw, -hw), vec2<f32>(-hw, 0.0)) - th;
+    let a4 = sd_segment(p, vec2<f32>(-hw, -hw), vec2<f32>(0.0, -hw)) - th;
+    return min(b1, min(min(a1, a2), min(a3, a4)));
+}
+
+// Procedural Theme Icon (🎨 Color Palette)
+fn draw_theme_icon(p: vec2<f32>, sz: f32) -> f32 {
+    let r = sz * 0.38;
+    let rim = abs(length(p) - r) - 0.0018;
+    let d1 = sd_circle(p - vec2<f32>(-sz * 0.14, -sz * 0.10), sz * 0.06);
+    let d2 = sd_circle(p - vec2<f32>(sz * 0.14, -sz * 0.10), sz * 0.06);
+    let d3 = sd_circle(p - vec2<f32>(0.0, sz * 0.14), sz * 0.06);
+    return min(rim, min(min(d1, d2), d3));
+}
+
+// Procedural Fast-Forward Icon (⏩ Double Arrow)
+fn draw_ff_icon(p: vec2<f32>, sz: f32) -> f32 {
+    let t1 = draw_play_icon(p - vec2<f32>(-sz * 0.16, 0.0), sz * 0.80);
+    let t2 = draw_play_icon(p - vec2<f32>(sz * 0.16, 0.0), sz * 0.80);
+    return min(t1, t2);
+}
+
+// Procedural Checkmark Icon (✔ Save)
+fn draw_check_icon(p: vec2<f32>, sz: f32) -> f32 {
+    let th = 0.0022;
+    let s1 = sd_segment(p, vec2<f32>(-sz * 0.35, 0.0), vec2<f32>(-sz * 0.05, sz * 0.30)) - th;
+    let s2 = sd_segment(p, vec2<f32>(-sz * 0.05, sz * 0.30), vec2<f32>(sz * 0.35, -sz * 0.30)) - th;
+    return min(s1, s2);
+}
+
+// Procedural Cross Icon (✖ Cancel)
+fn draw_cross_icon(p: vec2<f32>, sz: f32) -> f32 {
+    let th = 0.0022;
+    let hw = sz * 0.28;
+    let s1 = sd_segment(p, vec2<f32>(-hw, -hw), vec2<f32>(hw, hw)) - th;
+    let s2 = sd_segment(p, vec2<f32>(-hw, hw), vec2<f32>(hw, -hw)) - th;
+    return min(s1, s2);
+}
+
 // Procedural Digits 1..=5 for Save State Slot Badges
 fn draw_digit(p: vec2<f32>, digit: u32, sz: f32) -> f32 {
     let hw = sz * 0.30;
@@ -533,18 +587,44 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var final_color = vec4<f32>(0.0, 0.0, 0.0, 0.0);
 
     // Color palettes for virtual in-game controls
-    let col_dark = vec3<f32>(0.06, 0.09, 0.14);
-    let col_cyan_glow = vec3<f32>(0.12, 0.78, 0.96);
-    let col_amber_glow = vec3<f32>(0.98, 0.58, 0.18);
-    let col_crimson_glow = vec3<f32>(0.96, 0.22, 0.38);
-    let col_emerald_glow = vec3<f32>(0.18, 0.92, 0.55);
-    let col_purple_glow = vec3<f32>(0.72, 0.35, 0.95);
+    var col_dark = vec3<f32>(0.06, 0.09, 0.14);
+    var col_cyan_glow = vec3<f32>(0.12, 0.78, 0.96);
+    var col_amber_glow = vec3<f32>(0.98, 0.58, 0.18);
+    var col_crimson_glow = vec3<f32>(0.96, 0.22, 0.38);
+    var col_emerald_glow = vec3<f32>(0.18, 0.92, 0.55);
+    var col_purple_glow = vec3<f32>(0.72, 0.35, 0.95);
 
     // Clean neutral dark color palette (No harsh neon glows)
-    let col_btn_bg = vec3<f32>(0.16, 0.18, 0.22);
-    let col_card_bg = vec4<f32>(0.11, 0.12, 0.14, 1.0);
-    let col_card_rim = vec4<f32>(0.28, 0.31, 0.36, 0.95);
-    let col_glyph = vec4<f32>(vec3<f32>(0.92, 0.94, 0.97), 0.95);
+    var col_btn_bg = vec3<f32>(0.16, 0.18, 0.22);
+    var col_card_bg = vec4<f32>(0.11, 0.12, 0.14, 1.0);
+    var col_card_rim = vec4<f32>(0.28, 0.31, 0.36, 0.95);
+    var col_glyph = vec4<f32>(vec3<f32>(0.92, 0.94, 0.97), 0.95);
+
+    if (uniforms.theme_index == 1u) {
+        // Theme 1: AMOLED Pure Black
+        col_dark = vec3<f32>(0.0, 0.0, 0.0);
+        col_cyan_glow = vec3<f32>(0.92, 0.92, 0.92);
+        col_amber_glow = vec3<f32>(0.90, 0.90, 0.90);
+        col_crimson_glow = vec3<f32>(0.90, 0.90, 0.90);
+        col_emerald_glow = vec3<f32>(0.90, 0.90, 0.90);
+        col_purple_glow = vec3<f32>(0.90, 0.90, 0.90);
+        col_btn_bg = vec3<f32>(0.07, 0.07, 0.07);
+        col_card_bg = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        col_card_rim = vec4<f32>(0.42, 0.42, 0.42, 1.0);
+        col_glyph = vec4<f32>(1.0, 1.0, 1.0, 1.0);
+    } else if (uniforms.theme_index == 2u) {
+        // Theme 2: Classic Game Boy Gray / DMG
+        col_dark = vec3<f32>(0.19, 0.22, 0.19);
+        col_cyan_glow = vec3<f32>(0.58, 0.14, 0.28);
+        col_amber_glow = vec3<f32>(0.58, 0.14, 0.28);
+        col_crimson_glow = vec3<f32>(0.58, 0.14, 0.28);
+        col_emerald_glow = vec3<f32>(0.28, 0.48, 0.28);
+        col_purple_glow = vec3<f32>(0.45, 0.15, 0.35);
+        col_btn_bg = vec3<f32>(0.28, 0.32, 0.28);
+        col_card_bg = vec4<f32>(0.21, 0.24, 0.21, 1.0);
+        col_card_rim = vec4<f32>(0.42, 0.48, 0.40, 0.95);
+        col_glyph = vec4<f32>(0.88, 0.92, 0.85, 1.0);
+    }
 
     // Muted semantic accents
     let col_accent_resume = vec3<f32>(0.35, 0.65, 0.48);
@@ -807,6 +887,205 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
 
         return final_color;
+    }
+
+    if (uniforms.menu_state == 4u) {
+        // ====================================================================
+        // In-Game Settings Menu Modal (Opaque Dark UI)
+        // ====================================================================
+
+        // 1. Fullscreen Dark Dimming Backdrop
+        let backdrop = vec4<f32>(0.03, 0.04, 0.05, 0.95);
+        final_color = backdrop;
+
+        // 2. Centered Solid Opaque Modal Card
+        let modal_c = vec2<f32>(0.50 * aspect, 0.50);
+        let modal_half = vec2<f32>(0.28 * aspect, 0.40);
+        let modal_r = 0.024;
+        let card_p = p - modal_c;
+        let card_d = sd_rounded_box(card_p, modal_half, modal_r);
+
+        let card_fill_alpha = smoothstep(aa, -aa, card_d);
+        let card_rim_d = abs(card_d + 0.002) - 0.002;
+        let card_rim_alpha = smoothstep(aa, -aa, card_rim_d);
+
+        let card_bg = vec4<f32>(col_card_bg.rgb, col_card_bg.a * card_fill_alpha);
+        let card_rim = vec4<f32>(col_card_rim.rgb, col_card_rim.a * card_rim_alpha);
+
+        final_color = blend_over(card_rim, blend_over(card_bg, final_color));
+
+        // 3. Header: Gear Icon and Settings Title
+        let hdr_c = vec2<f32>(0.50 * aspect, 0.155);
+        let hdr_p = p - hdr_c;
+        if (length(hdr_p) < 0.06) {
+            let gear_d = draw_gear_icon(hdr_p, 0.024);
+            let gear_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, gear_d));
+            final_color = blend_over(gear_col, final_color);
+        }
+
+        // Header Divider Line
+        let div_c = vec2<f32>(0.50 * aspect, 0.188);
+        let div_p = p - div_c;
+        let div_d = sd_segment(div_p, vec2<f32>(-modal_half.x * 0.82, 0.0), vec2<f32>(modal_half.x * 0.82, 0.0)) - 0.0010;
+        let div_col = vec4<f32>(0.24, 0.27, 0.32, 0.90 * smoothstep(aa, -aa, div_d));
+        final_color = blend_over(div_col, final_color);
+
+        // 4. Interactive Settings Option Rows
+        let row_half = vec2<f32>(0.24 * aspect, 0.041);
+        let row_r = 0.016;
+        let pressed_item = uniforms.menu_pressed_item;
+        let text_start_x = -row_half.x + 0.078;
+        let char_sz = vec2<f32>(0.013, 0.022);
+        let spacing = 0.0175;
+        let stroke_w = 0.0016;
+
+        // Row 1: Customize Touch Controls (Item 1 / Slate Accent)
+        let r1_c = vec2<f32>(0.50 * aspect, 0.246);
+        let r1_p = p - r1_c;
+        if (abs(r1_p.y) < row_half.y * 1.3 && abs(r1_p.x) < row_half.x * 1.1) {
+            let r1_col = render_modal_row(r1_p, row_half, row_r, pressed_item == 1u, col_btn_bg, col_accent_rom, aa);
+            let icon_d = draw_scale_icon(r1_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
+            let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
+            let txt_d = draw_vector_string(r1_p, text_start_x, char_sz, spacing, stroke_w, 67u, 85u, 83u, 84u, 79u, 77u, 73u, 90u, 69u, 0u, 0u, 9u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r1_col)), final_color);
+        }
+
+        // Row 2: Button Opacity (Item 2 / Steel Accent)
+        let r2_c = vec2<f32>(0.50 * aspect, 0.342);
+        let r2_p = p - r2_c;
+        if (abs(r2_p.y) < row_half.y * 1.3 && abs(r2_p.x) < row_half.x * 1.1) {
+            let r2_col = render_modal_row(r2_p, row_half, row_r, pressed_item == 2u, col_btn_bg, col_accent_settings, aa);
+            let icon_d = draw_opacity_icon(r2_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
+            let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
+            let txt_d = draw_vector_string(r2_p, text_start_x, char_sz, spacing, stroke_w, 79u, 80u, 65u, 67u, 73u, 84u, 89u, 0u, 0u, 0u, 0u, 7u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r2_col)), final_color);
+        }
+
+        // Row 3: Overall Scale (Item 3 / Lavender Accent)
+        let r3_c = vec2<f32>(0.50 * aspect, 0.438);
+        let r3_p = p - r3_c;
+        if (abs(r3_p.y) < row_half.y * 1.3 && abs(r3_p.x) < row_half.x * 1.1) {
+            let r3_col = render_modal_row(r3_p, row_half, row_r, pressed_item == 3u, col_btn_bg, col_accent_state, aa);
+            let icon_d = draw_scale_icon(r3_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
+            let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
+            let txt_d = draw_vector_string(r3_p, text_start_x, char_sz, spacing, stroke_w, 83u, 67u, 65u, 76u, 69u, 0u, 0u, 0u, 0u, 0u, 0u, 5u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r3_col)), final_color);
+        }
+
+        // Row 4: UI Theme Selection (Item 4 / Mint Accent)
+        let r4_c = vec2<f32>(0.50 * aspect, 0.534);
+        let r4_p = p - r4_c;
+        if (abs(r4_p.y) < row_half.y * 1.3 && abs(r4_p.x) < row_half.x * 1.1) {
+            let r4_col = render_modal_row(r4_p, row_half, row_r, pressed_item == 4u, col_btn_bg, col_accent_resume, aa);
+            let icon_d = draw_theme_icon(r4_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
+            let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
+            let txt_d = draw_vector_string(r4_p, text_start_x, char_sz, spacing, stroke_w, 84u, 72u, 69u, 77u, 69u, 0u, 0u, 0u, 0u, 0u, 0u, 5u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r4_col)), final_color);
+        }
+
+        // Row 5: Fast-Forward Speed (Item 5 / Terracotta Accent)
+        let r5_c = vec2<f32>(0.50 * aspect, 0.630);
+        let r5_p = p - r5_c;
+        if (abs(r5_p.y) < row_half.y * 1.3 && abs(r5_p.x) < row_half.x * 1.1) {
+            let r5_col = render_modal_row(r5_p, row_half, row_r, pressed_item == 5u, col_btn_bg, col_accent_reset, aa);
+            let icon_d = draw_ff_icon(r5_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
+            let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
+            let txt_d = draw_vector_string(r5_p, text_start_x, char_sz, spacing, stroke_w, 70u, 65u, 83u, 84u, 32u, 70u, 87u, 68u, 0u, 0u, 0u, 8u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r5_col)), final_color);
+        }
+
+        // Row 6: Back to Main Menu (Item 6 / Steel Accent)
+        let r6_c = vec2<f32>(0.50 * aspect, 0.726);
+        let r6_p = p - r6_c;
+        if (abs(r6_p.y) < row_half.y * 1.3 && abs(r6_p.x) < row_half.x * 1.1) {
+            let r6_col = render_modal_row(r6_p, row_half, row_r, pressed_item == 6u, col_btn_bg, col_accent_settings, aa);
+            let icon_d = draw_back_arrow(r6_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
+            let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
+            let txt_d = draw_vector_string(r6_p, text_start_x, char_sz, spacing, stroke_w, 66u, 65u, 67u, 75u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 4u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r6_col)), final_color);
+        }
+
+        return final_color;
+    }
+
+    if (uniforms.menu_state == 5u) {
+        // ====================================================================
+        // Interactive On-Screen Layout Editor Toolbar & Guide Bounding Boxes
+        // ====================================================================
+        let pressed_item = uniforms.menu_pressed_item;
+
+        // 1. Top Floating Action Toolbar
+        let bar_c = vec2<f32>(0.50 * aspect, 0.0725);
+        let bar_half = vec2<f32>(0.40 * aspect, 0.0375);
+        let bar_r = 0.016;
+        let bar_p = p - bar_c;
+        let bar_d = sd_rounded_box(bar_p, bar_half, bar_r);
+
+        let bar_fill_alpha = smoothstep(aa, -aa, bar_d);
+        let bar_rim_d = abs(bar_d + 0.002) - 0.002;
+        let bar_rim_alpha = smoothstep(aa, -aa, bar_rim_d);
+
+        let bar_bg = vec4<f32>(col_card_bg.rgb, 0.92 * bar_fill_alpha);
+        let bar_rim = vec4<f32>(col_card_rim.rgb, 0.95 * bar_rim_alpha);
+        final_color = blend_over(bar_rim, blend_over(bar_bg, final_color));
+
+        // Toolbar Buttons (Save, Reset, Cancel)
+        let tb_btn_half = vec2<f32>(0.11 * aspect, 0.0325);
+        let tb_btn_r = 0.012;
+
+        // Button 1: [ Save ] (Item 1)
+        let b1_c = vec2<f32>(0.25 * aspect, 0.0725);
+        let b1_p = p - b1_c;
+        if (abs(b1_p.y) < tb_btn_half.y * 1.3 && abs(b1_p.x) < tb_btn_half.x * 1.1) {
+            let b1_col = render_modal_row(b1_p, tb_btn_half, tb_btn_r, pressed_item == 1u, col_btn_bg, col_accent_resume, aa);
+            let icon_d = draw_check_icon(b1_p - vec2<f32>(-tb_btn_half.x + 0.026, 0.0), 0.022);
+            let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
+            let txt_d = draw_vector_string(b1_p, -tb_btn_half.x + 0.046, vec2<f32>(0.011, 0.018), 0.015, 0.0014, 83u, 65u, 86u, 69u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 4u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, b1_col)), final_color);
+        }
+
+        // Button 2: [ Reset Defaults ] (Item 2)
+        let b2_c = vec2<f32>(0.50 * aspect, 0.0725);
+        let b2_p = p - b2_c;
+        if (abs(b2_p.y) < tb_btn_half.y * 1.3 && abs(b2_p.x) < tb_btn_half.x * 1.1) {
+            let b2_col = render_modal_row(b2_p, tb_btn_half, tb_btn_r, pressed_item == 2u, col_btn_bg, col_accent_rom, aa);
+            let icon_d = draw_reset_icon(b2_p - vec2<f32>(-tb_btn_half.x + 0.026, 0.0), 0.022);
+            let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
+            let txt_d = draw_vector_string(b2_p, -tb_btn_half.x + 0.046, vec2<f32>(0.011, 0.018), 0.015, 0.0014, 82u, 69u, 83u, 69u, 84u, 0u, 0u, 0u, 0u, 0u, 0u, 5u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, b2_col)), final_color);
+        }
+
+        // Button 3: [ Cancel ] (Item 3)
+        let b3_c = vec2<f32>(0.75 * aspect, 0.0725);
+        let b3_p = p - b3_c;
+        if (abs(b3_p.y) < tb_btn_half.y * 1.3 && abs(b3_p.x) < tb_btn_half.x * 1.1) {
+            let b3_col = render_modal_row(b3_p, tb_btn_half, tb_btn_r, pressed_item == 3u, col_btn_bg, col_accent_reset, aa);
+            let icon_d = draw_cross_icon(b3_p - vec2<f32>(-tb_btn_half.x + 0.026, 0.0), 0.022);
+            let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
+            let txt_d = draw_vector_string(b3_p, -tb_btn_half.x + 0.046, vec2<f32>(0.011, 0.018), 0.015, 0.0014, 67u, 65u, 78u, 67u, 69u, 76u, 0u, 0u, 0u, 0u, 0u, 6u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, b3_col)), final_color);
+        }
+
+        // 2. Draggable Control Group Guide Bounding Rings
+        let dpad_c = vec2<f32>(uniforms.dpad_center.x * aspect, uniforms.dpad_center.y);
+        let dpad_box = abs(sd_circle(p - dpad_c, uniforms.dpad_radius * 1.15)) - 0.0015;
+        let dpad_guide = vec4<f32>(col_cyan_glow, 0.40 * smoothstep(aa, -aa, dpad_box));
+        final_color = blend_over(dpad_guide, final_color);
+
+        let ab_mid = vec2<f32>((uniforms.btn_a_pos.x + uniforms.btn_b_pos.x) * 0.5 * aspect, (uniforms.btn_a_pos.y + uniforms.btn_b_pos.y) * 0.5);
+        let ab_half = vec2<f32>(abs(uniforms.btn_a_pos.x - uniforms.btn_b_pos.x) * 0.6 * aspect + uniforms.btn_radius * 1.2, abs(uniforms.btn_a_pos.y - uniforms.btn_b_pos.y) * 0.6 + uniforms.btn_radius * 1.2);
+        let ab_box = abs(sd_rounded_box(p - ab_mid, ab_half, 0.02)) - 0.0015;
+        let ab_guide = vec4<f32>(col_crimson_glow, 0.40 * smoothstep(aa, -aa, ab_box));
+        final_color = blend_over(ab_guide, final_color);
     }
 
     let pressed_mask = uniforms.pressed_mask;

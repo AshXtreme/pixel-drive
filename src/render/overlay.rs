@@ -43,7 +43,9 @@ pub struct TouchOverlayUniforms {
     pub menu_pressed_item: u32,
 
     pub slot_mask: u32,
-    pub _pad: [u32; 3],
+    pub theme_index: u32,
+    pub settings_values: u32,
+    pub _pad: u32,
 }
 
 impl Default for TouchOverlayUniforms {
@@ -70,7 +72,9 @@ impl Default for TouchOverlayUniforms {
             menu_state: 0,
             menu_pressed_item: 0,
             slot_mask: 0,
-            _pad: [0, 0, 0],
+            theme_index: 0,
+            settings_values: 0,
+            _pad: 0,
         }
     }
 }
@@ -232,10 +236,32 @@ impl TouchOverlayRenderer {
                     .pressed_save_load_item()
                     .map(|it| it.shader_index())
                     .unwrap_or(0),
+                crate::ui::menu::MenuState::Settings => touch_manager
+                    .pressed_settings_item()
+                    .map(|it| it.shader_index())
+                    .unwrap_or(0),
+                crate::ui::menu::MenuState::LayoutEditor => touch_manager
+                    .pressed_editor_toolbar_item()
+                    .map(|it| it.shader_index())
+                    .unwrap_or(0),
                 _ => 0,
             },
             slot_mask: touch_manager.slot_mask(),
-            _pad: [0, 0, 0],
+            theme_index: touch_manager.theme_index as u32,
+            settings_values: {
+                let op_idx = if touch_manager.opacity < 0.30 { 1u32 }
+                    else if touch_manager.opacity < 0.50 { 2u32 }
+                    else if touch_manager.opacity < 0.70 { 3u32 }
+                    else if touch_manager.opacity < 0.90 { 4u32 }
+                    else { 5u32 };
+                let sc_idx = if touch_manager.scale < 0.85 { 1u32 }
+                    else if touch_manager.scale < 1.10 { 2u32 }
+                    else if touch_manager.scale < 1.35 { 3u32 }
+                    else { 4u32 };
+                let th_idx = (touch_manager.theme_index as u32) & 0x03;
+                op_idx | (sc_idx << 4) | (th_idx << 8)
+            },
+            _pad: 0,
         };
 
         if self.cached_uniforms != Some(uniforms) {

@@ -26,7 +26,8 @@ use crate::platform::android::storage::AndroidStorage;
 use crate::platform::PlatformStorage;
 use crate::render::{FilterMode, ShaderPipeline, TouchOverlayRenderer};
 use crate::save::SaveManager;
-use crate::ui::menu::{MenuItem, MenuState, SlotMode};
+use crate::ui::layout_config::TouchLayoutConfig;
+use crate::ui::menu::{LayoutEditorToolbarItem, MenuItem, MenuState, SettingsItem, SlotMode};
 
 /// Thread-safe queue storing pending Content URIs selected via Android SAF ROM picker.
 static PENDING_ROM_URI: Mutex<Option<String>> = Mutex::new(None);
@@ -412,8 +413,13 @@ fn run_android_app(app: AndroidApp) {
     let mut window_width: u32 = 0;
     let mut window_height: u32 = 0;
 
-    // 6. Input management and virtual touch overlay
+    // 6. Input management, configuration, and virtual touch overlay
     let mut touch_overlay = TouchOverlay::new();
+    let config_dir = storage.base_dir().join("config");
+    let config_path = config_dir.join("touch_layout.json");
+    let mut layout_config = TouchLayoutConfig::load_from_file(&config_path);
+    layout_config.apply_to_overlay(&mut touch_overlay);
+    touch_overlay.theme_index = layout_config.theme_index;
     let mut prev_joypad_state = JoypadState::default();
 
     // 7. Lifecycle and state flags
@@ -846,8 +852,69 @@ fn run_android_app(app: AndroidApp) {
                                     }
                                 }
                                 TouchAction::MenuSelect(MenuItem::Settings) => {
-                                    info!("Menu option 'Settings' selected (Phase 3 placeholder)");
-                                    show_toast(jvm_ptr, activity_ptr, "Settings (Coming in Phase 3)");
+                                    info!("Opening in-game Settings modal");
+                                    menu_state = MenuState::Settings;
+                                    touch_overlay.set_menu_state(MenuState::Settings);
+                                }
+                                TouchAction::SettingsSelect(item) => {
+                                    match item {
+                                        SettingsItem::CustomizeControls => {
+                                            info!("Entering interactive Touch Layout Editor");
+                                            menu_state = MenuState::LayoutEditor;
+                                            touch_overlay.set_menu_state(MenuState::LayoutEditor);
+                                            show_toast(jvm_ptr, activity_ptr, "Drag buttons to reposition. Tap Save when done.");
+                                        }
+                                        SettingsItem::Opacity => {
+                                            layout_config.cycle_opacity();
+                                            touch_overlay.opacity = layout_config.opacity;
+                                            let _ = layout_config.save_to_file(&config_path);
+                                            show_toast(jvm_ptr, activity_ptr, &format!("Button Opacity: {}", layout_config.opacity_label()));
+                                        }
+                                        SettingsItem::Scale => {
+                                            layout_config.cycle_scale();
+                                            layout_config.apply_to_overlay(&mut touch_overlay);
+                                            let _ = layout_config.save_to_file(&config_path);
+                                            show_toast(jvm_ptr, activity_ptr, &format!("Button Scale: {}", layout_config.scale_label()));
+                                        }
+                                        SettingsItem::Theme => {
+                                            layout_config.cycle_theme();
+                                            touch_overlay.theme_index = layout_config.theme_index;
+                                            let _ = layout_config.save_to_file(&config_path);
+                                            show_toast(jvm_ptr, activity_ptr, &format!("UI Theme: {}", layout_config.theme().label()));
+                                        }
+                                        SettingsItem::FastForwardSpeed => {
+                                            layout_config.cycle_fast_forward();
+                                            let _ = layout_config.save_to_file(&config_path);
+                                            show_toast(jvm_ptr, activity_ptr, &format!("Fast-Forward Speed: {}", layout_config.fast_forward().label()));
+                                        }
+                                        SettingsItem::Back => {
+                                            let _ = layout_config.save_to_file(&config_path);
+                                            menu_state = MenuState::MainMenu;
+                                            touch_overlay.set_menu_state(MenuState::MainMenu);
+                                        }
+                                    }
+                                }
+                                TouchAction::LayoutEditorAction(action) => {
+                                    match action {
+                                        LayoutEditorToolbarItem::Save => {
+                                            layout_config = TouchLayoutConfig::from_overlay(&touch_overlay, layout_config.theme_index, layout_config.fast_forward_speed);
+                                            let _ = layout_config.save_to_file(&config_path);
+                                            menu_state = MenuState::Settings;
+                                            touch_overlay.set_menu_state(MenuState::Settings);
+                                            show_toast(jvm_ptr, activity_ptr, "Touch Controls Layout Saved");
+                                        }
+                                        LayoutEditorToolbarItem::ResetDefaults => {
+                                            let def = TouchLayoutConfig::default();
+                                            def.apply_to_overlay(&mut touch_overlay);
+                                            show_toast(jvm_ptr, activity_ptr, "Layout Reset to Defaults");
+                                        }
+                                        LayoutEditorToolbarItem::Cancel => {
+                                            layout_config.apply_to_overlay(&mut touch_overlay);
+                                            menu_state = MenuState::Settings;
+                                            touch_overlay.set_menu_state(MenuState::Settings);
+                                            show_toast(jvm_ptr, activity_ptr, "Layout Changes Discarded");
+                                        }
+                                    }
                                 }
                                 TouchAction::MenuSelect(MenuItem::Cheats) => {
                                     info!("Menu option 'Cheat Codes' selected (Phase 4 placeholder)");
@@ -917,7 +984,7 @@ fn run_android_app(app: AndroidApp) {
 
                 // Step core emulation and audio generation ONLY when unpaused
                 if !is_paused {
-                    let steps = if fast_forward { 2 } else { 1 };
+                    let steps = if fast_forward { layout_config.fast_forward().steps_per_frame() } else { 1 };
                     for _ in 0..steps {
                         active_core.step_frame();
 

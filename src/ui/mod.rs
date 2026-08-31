@@ -1,5 +1,7 @@
 pub mod menu;
+pub mod layout_config;
 pub use menu::{MenuAction, MenuItem, MenuLayout, MenuState, SaveLoadItem, SaveLoadLayout, SlotMode};
+pub use layout_config::{FastForwardSpeed, TouchLayoutConfig, UiTheme};
 
 use crate::input::TouchOverlayPreset;
 use crate::render::FilterMode;

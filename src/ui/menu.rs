@@ -37,6 +37,7 @@ pub enum MenuState {
     MainMenu,
     SaveLoadSlotSelect { mode: SlotMode },
     Settings,
+    LayoutEditor,
     Cheats,
 }
 
@@ -54,7 +55,8 @@ impl MenuState {
             MenuState::SaveLoadSlotSelect { mode: SlotMode::Save } => 2,
             MenuState::SaveLoadSlotSelect { mode: SlotMode::Load } => 3,
             MenuState::Settings => 4,
-            MenuState::Cheats => 5,
+            MenuState::LayoutEditor => 5,
+            MenuState::Cheats => 6,
         }
     }
 }
@@ -98,7 +100,6 @@ impl MenuItem {
     /// Subtitle or phase status indicator.
     pub fn subtitle(&self) -> Option<&'static str> {
         match self {
-            MenuItem::Settings => Some("Phase 3"),
             MenuItem::Cheats => Some("Phase 4"),
             _ => None,
         }
@@ -123,6 +124,59 @@ impl SaveLoadItem {
     }
 }
 
+/// Selectable interactive items within the Settings screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SettingsItem {
+    CustomizeControls,
+    Opacity,
+    Scale,
+    Theme,
+    FastForwardSpeed,
+    Back,
+}
+
+impl SettingsItem {
+    pub fn shader_index(&self) -> u32 {
+        match self {
+            SettingsItem::CustomizeControls => 1,
+            SettingsItem::Opacity => 2,
+            SettingsItem::Scale => 3,
+            SettingsItem::Theme => 4,
+            SettingsItem::FastForwardSpeed => 5,
+            SettingsItem::Back => 6,
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            SettingsItem::CustomizeControls => "Customize Controls",
+            SettingsItem::Opacity => "Button Opacity",
+            SettingsItem::Scale => "Overall Scale",
+            SettingsItem::Theme => "UI Theme",
+            SettingsItem::FastForwardSpeed => "Fast-Forward Speed",
+            SettingsItem::Back => "Back",
+        }
+    }
+}
+
+/// Selectable toolbar buttons in the Layout Editor screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LayoutEditorToolbarItem {
+    Save,
+    ResetDefaults,
+    Cancel,
+}
+
+impl LayoutEditorToolbarItem {
+    pub fn shader_index(&self) -> u32 {
+        match self {
+            LayoutEditorToolbarItem::Save => 1,
+            LayoutEditorToolbarItem::ResetDefaults => 2,
+            LayoutEditorToolbarItem::Cancel => 3,
+        }
+    }
+}
+
 /// Actions dispatched by menu interaction to the main runtime loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuAction {
@@ -136,6 +190,14 @@ pub enum MenuAction {
     SelectSlot { slot: u8, mode: SlotMode },
     ToggleSlotMode,
     BackToMainMenu,
+    OpenLayoutEditor,
+    CycleOpacity,
+    CycleScale,
+    CycleTheme,
+    CycleFastForward,
+    SaveLayout,
+    ResetLayout,
+    CancelLayout,
 }
 
 /// Normalized layout geometry for the Main Menu modal.
@@ -191,6 +253,103 @@ impl MenuLayout {
     /// Checks if a normalized point (px, py) is strictly outside the modal card.
     pub fn is_outside_modal(&self, px: f32, py: f32) -> bool {
         !self.modal_rect.contains(px, py)
+    }
+}
+
+/// Normalized layout geometry for the Settings Menu modal.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SettingsLayout {
+    pub modal_rect: TouchRect,
+    pub item_rects: [(SettingsItem, TouchRect); 6],
+}
+
+impl Default for SettingsLayout {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SettingsLayout {
+    pub fn new() -> Self {
+        let modal_x = 0.22;
+        let modal_y = 0.10;
+        let modal_w = 0.56;
+        let modal_h = 0.80;
+
+        let btn_x = 0.26;
+        let btn_w = 0.48;
+        let btn_h = 0.082;
+        let start_y = 0.205;
+        let gap_y = 0.096;
+
+        Self {
+            modal_rect: TouchRect::new(modal_x, modal_y, modal_w, modal_h),
+            item_rects: [
+                (SettingsItem::CustomizeControls, TouchRect::new(btn_x, start_y, btn_w, btn_h)),
+                (SettingsItem::Opacity, TouchRect::new(btn_x, start_y + gap_y, btn_w, btn_h)),
+                (SettingsItem::Scale, TouchRect::new(btn_x, start_y + gap_y * 2.0, btn_w, btn_h)),
+                (SettingsItem::Theme, TouchRect::new(btn_x, start_y + gap_y * 3.0, btn_w, btn_h)),
+                (SettingsItem::FastForwardSpeed, TouchRect::new(btn_x, start_y + gap_y * 4.0, btn_w, btn_h)),
+                (SettingsItem::Back, TouchRect::new(btn_x, start_y + gap_y * 5.0, btn_w, btn_h)),
+            ],
+        }
+    }
+
+    pub fn hit_test(&self, px: f32, py: f32) -> Option<SettingsItem> {
+        for (item, rect) in &self.item_rects {
+            if rect.contains(px, py) {
+                return Some(*item);
+            }
+        }
+        None
+    }
+
+    pub fn is_outside_modal(&self, px: f32, py: f32) -> bool {
+        !self.modal_rect.contains(px, py)
+    }
+}
+
+/// Normalized layout geometry for the Layout Editor top toolbar.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LayoutEditorLayout {
+    pub toolbar_rect: TouchRect,
+    pub save_rect: TouchRect,
+    pub reset_rect: TouchRect,
+    pub cancel_rect: TouchRect,
+}
+
+impl Default for LayoutEditorLayout {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LayoutEditorLayout {
+    pub fn new() -> Self {
+        let bar_y = 0.035;
+        let bar_h = 0.075;
+        let btn_w = 0.22;
+        let btn_h = 0.065;
+
+        Self {
+            toolbar_rect: TouchRect::new(0.10, bar_y, 0.80, bar_h),
+            save_rect: TouchRect::new(0.14, bar_y + 0.005, btn_w, btn_h),
+            reset_rect: TouchRect::new(0.39, bar_y + 0.005, btn_w, btn_h),
+            cancel_rect: TouchRect::new(0.64, bar_y + 0.005, btn_w, btn_h),
+        }
+    }
+
+    pub fn hit_test(&self, px: f32, py: f32) -> Option<LayoutEditorToolbarItem> {
+        if self.save_rect.contains(px, py) {
+            return Some(LayoutEditorToolbarItem::Save);
+        }
+        if self.reset_rect.contains(px, py) {
+            return Some(LayoutEditorToolbarItem::ResetDefaults);
+        }
+        if self.cancel_rect.contains(px, py) {
+            return Some(LayoutEditorToolbarItem::Cancel);
+        }
+        None
     }
 }
 
@@ -331,5 +490,39 @@ mod tests {
         let mode = SlotMode::Save;
         assert_eq!(mode.toggle(), SlotMode::Load);
         assert_eq!(mode.toggle().toggle(), SlotMode::Save);
+    }
+
+    #[test]
+    fn test_settings_layout_hit_testing() {
+        let layout = SettingsLayout::new();
+
+        // Hit Customize Controls
+        let (c_x, c_y) = layout.item_rects[0].1.center();
+        assert_eq!(layout.hit_test(c_x, c_y), Some(SettingsItem::CustomizeControls));
+
+        // Hit Theme
+        let (t_x, t_y) = layout.item_rects[3].1.center();
+        assert_eq!(layout.hit_test(t_x, t_y), Some(SettingsItem::Theme));
+
+        // Hit Back
+        let (b_x, b_y) = layout.item_rects[5].1.center();
+        assert_eq!(layout.hit_test(b_x, b_y), Some(SettingsItem::Back));
+    }
+
+    #[test]
+    fn test_layout_editor_hit_testing() {
+        let layout = LayoutEditorLayout::new();
+
+        // Hit Save
+        let (s_x, s_y) = layout.save_rect.center();
+        assert_eq!(layout.hit_test(s_x, s_y), Some(LayoutEditorToolbarItem::Save));
+
+        // Hit Reset
+        let (r_x, r_y) = layout.reset_rect.center();
+        assert_eq!(layout.hit_test(r_x, r_y), Some(LayoutEditorToolbarItem::ResetDefaults));
+
+        // Hit Cancel
+        let (c_x, c_y) = layout.cancel_rect.center();
+        assert_eq!(layout.hit_test(c_x, c_y), Some(LayoutEditorToolbarItem::Cancel));
     }
 }

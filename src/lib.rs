@@ -29,4 +29,8 @@ pub use platform::{DesktopHaptics, DesktopStorage, PlatformAudio, PlatformHaptic
 pub use platform::{AndroidAudioPlayer, AndroidHaptics, AndroidStorage};
 pub use render::{FilterMode, ShaderPipeline, TouchOverlayRenderer, TouchOverlayUniforms};
 pub use save::{format_unix_timestamp, SaveManager, SlotMetadata};
+pub use ui::{
+    FastForwardSpeed, MenuAction, MenuItem, MenuLayout, MenuState, SaveLoadItem, SaveLoadLayout,
+    SlotMode, TouchLayoutConfig, UiTheme,
+};
 

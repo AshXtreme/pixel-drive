@@ -8,11 +8,22 @@ use crate::core::Button;
 use std::collections::HashMap;
 
 pub use crate::ui::menu::{
-    MenuItem, MenuItem as TouchMenuItem, MenuLayout, MenuState, MenuState as TouchMenuState,
-    SaveLoadItem, SaveLoadLayout, SlotMode,
+    LayoutEditorLayout, LayoutEditorToolbarItem, MenuItem, MenuItem as TouchMenuItem,
+    MenuLayout, MenuState, MenuState as TouchMenuState, SaveLoadItem, SaveLoadLayout,
+    SettingsItem, SettingsLayout, SlotMode,
 };
 
 use super::{InputSource, JoypadState};
+
+/// Draggable control group in the on-screen layout editor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ControlGroup {
+    Dpad,
+    ActionCluster,
+    LShoulder,
+    RShoulder,
+    StartSelect,
+}
 
 /// Phase of a touch event pointer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -397,6 +408,8 @@ pub enum TouchAction {
     SelectSlot { slot: u8, mode: SlotMode },
     ToggleSlotMode,
     MenuBack,
+    SettingsSelect(SettingsItem),
+    LayoutEditorAction(LayoutEditorToolbarItem),
 }
 
 /// Pressed bitmask constants matching GB/GBA layout and UI HUD elements for the shader pipeline.
@@ -429,14 +442,23 @@ pub struct TouchInputManager {
     pub auto_hide_on_gamepad: bool,
     pub preset: TouchOverlayPreset,
     pub safe_insets: [f32; 4], // [top, bottom, left, right]
+    pub theme_index: u8,
 
     // In-game Modal Pause Menu State
     pub menu_state: MenuState,
     pub menu_layout: MenuLayout,
     pub save_load_layout: SaveLoadLayout,
+    pub settings_layout: SettingsLayout,
+    pub layout_editor_layout: LayoutEditorLayout,
     pub pressed_menu_item: Option<MenuItem>,
     pub pressed_save_load_item: Option<SaveLoadItem>,
+    pub pressed_settings_item: Option<SettingsItem>,
+    pub pressed_editor_toolbar_item: Option<LayoutEditorToolbarItem>,
     pub slot_mask: u32,
+
+    // Layout Editor Interactive Drag State
+    pub active_drag_group: Option<(ControlGroup, u64, (f32, f32))>,
+    pub drag_start_touch: Option<(f32, f32)>,
 
     // Virtual Controls Geometry
     pub dpad: VirtualDPad,
@@ -485,13 +507,21 @@ impl TouchInputManager {
             auto_hide_on_gamepad: false,
             preset,
             safe_insets: [0.0, 0.0, 0.0, 0.0],
+            theme_index: 0,
 
             menu_state: MenuState::Hidden,
             menu_layout: MenuLayout::new(),
             save_load_layout: SaveLoadLayout::new(),
+            settings_layout: SettingsLayout::new(),
+            layout_editor_layout: LayoutEditorLayout::new(),
             pressed_menu_item: None,
             pressed_save_load_item: None,
+            pressed_settings_item: None,
+            pressed_editor_toolbar_item: None,
             slot_mask: 0,
+
+            active_drag_group: None,
+            drag_start_touch: None,
 
             // Default geometry placeholders (recomputed in apply_preset)
             dpad: VirtualDPad::new(0.14, 0.76, 0.11, 0.025),
@@ -678,6 +708,10 @@ impl TouchInputManager {
         if state == MenuState::Hidden {
             self.pressed_menu_item = None;
             self.pressed_save_load_item = None;
+            self.pressed_settings_item = None;
+            self.pressed_editor_toolbar_item = None;
+            self.active_drag_group = None;
+            self.drag_start_touch = None;
         }
         self.recompute_state();
     }
@@ -690,6 +724,140 @@ impl TouchInputManager {
     /// Returns currently touched save/load slot item, if any.
     pub fn pressed_save_load_item(&self) -> Option<SaveLoadItem> {
         self.pressed_save_load_item
+    }
+
+    /// Returns currently touched settings item, if any.
+    pub fn pressed_settings_item(&self) -> Option<SettingsItem> {
+        self.pressed_settings_item
+    }
+
+    /// Returns currently touched editor toolbar item, if any.
+    pub fn pressed_editor_toolbar_item(&self) -> Option<LayoutEditorToolbarItem> {
+        self.pressed_editor_toolbar_item
+    }
+
+    /// Translates a control group during interactive layout editing.
+    pub fn translate_control_group(&mut self, group: ControlGroup, dx: f32, dy: f32, origin: (f32, f32)) {
+        match group {
+            ControlGroup::Dpad => {
+                let new_center = (
+                    (origin.0 + dx).clamp(0.08, 0.92),
+                    (origin.1 + dy).clamp(0.08, 0.92),
+                );
+                self.dpad.center = new_center;
+            }
+            ControlGroup::ActionCluster => {
+                let delta_ab = (
+                    self.btn_b.center().0 - self.btn_a.center().0,
+                    self.btn_b.center().1 - self.btn_a.center().1,
+                );
+                let new_a = (
+                    (origin.0 + dx).clamp(0.12, 0.92),
+                    (origin.1 + dy).clamp(0.12, 0.92),
+                );
+                let new_b = (
+                    (new_a.0 + delta_ab.0).clamp(0.05, 0.95),
+                    (new_a.1 + delta_ab.1).clamp(0.05, 0.95),
+                );
+                self.set_btn_a_pos(new_a);
+                self.set_btn_b_pos(new_b);
+                self.update_chord_ab();
+            }
+            ControlGroup::LShoulder => {
+                let new_l = (
+                    (origin.0 + dx).clamp(0.08, 0.92),
+                    (origin.1 + dy).clamp(0.05, 0.95),
+                );
+                self.set_btn_l_pos(new_l);
+            }
+            ControlGroup::RShoulder => {
+                let new_r = (
+                    (origin.0 + dx).clamp(0.08, 0.92),
+                    (origin.1 + dy).clamp(0.05, 0.95),
+                );
+                self.set_btn_r_pos(new_r);
+            }
+            ControlGroup::StartSelect => {
+                let delta_select = (
+                    self.btn_select.center().0 - self.btn_start.center().0,
+                    self.btn_select.center().1 - self.btn_start.center().1,
+                );
+                let new_start = (
+                    (origin.0 + dx).clamp(0.10, 0.90),
+                    (origin.1 + dy).clamp(0.05, 0.95),
+                );
+                let new_select = (
+                    (new_start.0 + delta_select.0).clamp(0.05, 0.95),
+                    (new_start.1 + delta_select.1).clamp(0.05, 0.95),
+                );
+                self.set_btn_start_pos(new_start);
+                self.set_btn_select_pos(new_select);
+            }
+        }
+    }
+
+    pub fn set_btn_a_pos(&mut self, pos: (f32, f32)) {
+        let r = self.btn_a.radius();
+        self.btn_a = VirtualButton::new_circle(VirtualButtonId::A, pos.0, pos.1, r);
+    }
+
+    pub fn set_btn_b_pos(&mut self, pos: (f32, f32)) {
+        let r = self.btn_b.radius();
+        self.btn_b = VirtualButton::new_circle(VirtualButtonId::B, pos.0, pos.1, r);
+    }
+
+    pub fn set_btn_l_pos(&mut self, pos: (f32, f32)) {
+        let s = self.scale;
+        self.btn_l = VirtualButton::new_pill(
+            VirtualButtonId::L,
+            pos.0 - 0.08 * s,
+            pos.1 - 0.035 * s,
+            0.16 * s,
+            0.07 * s,
+            0.035 * s,
+        );
+    }
+
+    pub fn set_btn_r_pos(&mut self, pos: (f32, f32)) {
+        let s = self.scale;
+        self.btn_r = VirtualButton::new_pill(
+            VirtualButtonId::R,
+            pos.0 - 0.08 * s,
+            pos.1 - 0.035 * s,
+            0.16 * s,
+            0.07 * s,
+            0.035 * s,
+        );
+    }
+
+    pub fn set_btn_start_pos(&mut self, pos: (f32, f32)) {
+        let s = self.scale;
+        self.btn_start = VirtualButton::new_pill(
+            VirtualButtonId::Start,
+            pos.0 - 0.06 * s,
+            pos.1 - 0.025 * s,
+            0.12 * s,
+            0.05 * s,
+            0.025 * s,
+        );
+    }
+
+    pub fn set_btn_select_pos(&mut self, pos: (f32, f32)) {
+        let s = self.scale;
+        self.btn_select = VirtualButton::new_pill(
+            VirtualButtonId::Select,
+            pos.0 - 0.06 * s,
+            pos.1 - 0.025 * s,
+            0.12 * s,
+            0.05 * s,
+            0.025 * s,
+        );
+    }
+
+    pub fn update_chord_ab(&mut self) {
+        let a = self.btn_a.center();
+        let b = self.btn_b.center();
+        self.chord_ab = ChordHitbox::new(a, b, 0.040 * self.scale);
     }
 
     /// Returns the active occupied slot bitmask for the shader uniform buffer.
@@ -795,7 +963,122 @@ impl TouchInputManager {
                 self.recompute_state();
                 return;
             }
-            MenuState::Hidden | MenuState::Settings | MenuState::Cheats => {}
+            MenuState::Settings => {
+                match phase {
+                    TouchPhase::Started => {
+                        self.pressed_settings_item = self.settings_layout.hit_test(norm_x, norm_y);
+                        let pt = TouchPoint::new(id, norm_x, norm_y, TouchPhase::Started);
+                        self.active_touches.insert(id, pt);
+                    }
+                    TouchPhase::Moved => {
+                        self.pressed_settings_item = self.settings_layout.hit_test(norm_x, norm_y);
+                        if let Some(pt) = self.active_touches.get_mut(&id) {
+                            pt.x = norm_x;
+                            pt.y = norm_y;
+                            pt.norm_x = norm_x;
+                            pt.norm_y = norm_y;
+                            pt.phase = TouchPhase::Moved;
+                        }
+                    }
+                    TouchPhase::Ended => {
+                        let hit = self.settings_layout.hit_test(norm_x, norm_y).or(self.pressed_settings_item);
+                        if let Some(item) = hit {
+                            self.pending_actions.push(TouchAction::SettingsSelect(item));
+                        }
+                        self.pressed_settings_item = None;
+                        self.active_touches.remove(&id);
+                    }
+                    TouchPhase::Cancelled => {
+                        self.pressed_settings_item = None;
+                        self.active_touches.remove(&id);
+                    }
+                }
+                self.recompute_state();
+                return;
+            }
+            MenuState::LayoutEditor => {
+                match phase {
+                    TouchPhase::Started => {
+                        // Check top toolbar first
+                        if let Some(toolbar_item) = self.layout_editor_layout.hit_test(norm_x, norm_y) {
+                            self.pressed_editor_toolbar_item = Some(toolbar_item);
+                        } else {
+                            // Hit test draggable control groups
+                            if self.dpad.to_rect().contains(norm_x, norm_y) {
+                                self.active_drag_group = Some((ControlGroup::Dpad, id, self.dpad.center));
+                                self.drag_start_touch = Some((norm_x, norm_y));
+                            } else if self.btn_a.contains(norm_x, norm_y)
+                                || self.btn_b.contains(norm_x, norm_y)
+                                || self.chord_ab.contains(norm_x, norm_y)
+                            {
+                                self.active_drag_group =
+                                    Some((ControlGroup::ActionCluster, id, self.btn_a.center()));
+                                self.drag_start_touch = Some((norm_x, norm_y));
+                            } else if self.btn_l.contains(norm_x, norm_y) {
+                                self.active_drag_group =
+                                    Some((ControlGroup::LShoulder, id, self.btn_l.center()));
+                                self.drag_start_touch = Some((norm_x, norm_y));
+                            } else if self.btn_r.contains(norm_x, norm_y) {
+                                self.active_drag_group =
+                                    Some((ControlGroup::RShoulder, id, self.btn_r.center()));
+                                self.drag_start_touch = Some((norm_x, norm_y));
+                            } else if self.btn_start.contains(norm_x, norm_y)
+                                || self.btn_select.contains(norm_x, norm_y)
+                            {
+                                self.active_drag_group =
+                                    Some((ControlGroup::StartSelect, id, self.btn_start.center()));
+                                self.drag_start_touch = Some((norm_x, norm_y));
+                            }
+                        }
+                        let pt = TouchPoint::new(id, norm_x, norm_y, TouchPhase::Started);
+                        self.active_touches.insert(id, pt);
+                    }
+                    TouchPhase::Moved => {
+                        if let Some((group, drag_id, origin)) = self.active_drag_group {
+                            if drag_id == id {
+                                if let Some(start) = self.drag_start_touch {
+                                    let dx = norm_x - start.0;
+                                    let dy = norm_y - start.1;
+                                    self.translate_control_group(group, dx, dy, origin);
+                                }
+                            }
+                        }
+                        if let Some(pt) = self.active_touches.get_mut(&id) {
+                            pt.x = norm_x;
+                            pt.y = norm_y;
+                            pt.norm_x = norm_x;
+                            pt.norm_y = norm_y;
+                            pt.phase = TouchPhase::Moved;
+                        }
+                    }
+                    TouchPhase::Ended => {
+                        let hit_toolbar = self
+                            .layout_editor_layout
+                            .hit_test(norm_x, norm_y)
+                            .or(self.pressed_editor_toolbar_item);
+                        if let Some(toolbar_item) = hit_toolbar {
+                            self.pending_actions.push(TouchAction::LayoutEditorAction(toolbar_item));
+                        }
+                        if let Some((_, drag_id, _)) = self.active_drag_group {
+                            if drag_id == id {
+                                self.active_drag_group = None;
+                                self.drag_start_touch = None;
+                            }
+                        }
+                        self.pressed_editor_toolbar_item = None;
+                        self.active_touches.remove(&id);
+                    }
+                    TouchPhase::Cancelled => {
+                        self.active_drag_group = None;
+                        self.drag_start_touch = None;
+                        self.pressed_editor_toolbar_item = None;
+                        self.active_touches.remove(&id);
+                    }
+                }
+                self.recompute_state();
+                return;
+            }
+            MenuState::Hidden | MenuState::Cheats => {}
         }
 
         match phase {
