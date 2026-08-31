@@ -8,9 +8,9 @@ use crate::core::Button;
 use std::collections::HashMap;
 
 pub use crate::ui::menu::{
-    LayoutEditorLayout, LayoutEditorToolbarItem, MenuItem, MenuItem as TouchMenuItem,
-    MenuLayout, MenuState, MenuState as TouchMenuState, SaveLoadItem, SaveLoadLayout,
-    SettingsItem, SettingsLayout, SlotMode,
+    FastForwardItem, FastForwardLayout, LayoutEditorLayout, LayoutEditorToolbarItem, MenuItem,
+    MenuItem as TouchMenuItem, MenuLayout, MenuState, MenuState as TouchMenuState, SaveLoadItem,
+    SaveLoadLayout, SettingsItem, SettingsLayout, SlotMode,
 };
 
 use super::{InputSource, JoypadState};
@@ -397,7 +397,7 @@ impl TouchOverlayPreset {
 }
 
 /// Action events triggered by virtual touch controls (e.g. menu, fast-forward, modal selection).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TouchAction {
     ToggleFastForward,
     OpenMenu,
@@ -410,6 +410,9 @@ pub enum TouchAction {
     MenuBack,
     SettingsSelect(SettingsItem),
     LayoutEditorAction(LayoutEditorToolbarItem),
+    FastForwardSelect(FastForwardItem),
+    SetOpacity(f32),
+    SetScale(f32),
 }
 
 /// Pressed bitmask constants matching GB/GBA layout and UI HUD elements for the shader pipeline.
@@ -443,16 +446,19 @@ pub struct TouchInputManager {
     pub preset: TouchOverlayPreset,
     pub safe_insets: [f32; 4], // [top, bottom, left, right]
     pub theme_index: u8,
+    pub fast_forward_speed: u8,
 
     // In-game Modal Pause Menu State
     pub menu_state: MenuState,
     pub menu_layout: MenuLayout,
     pub save_load_layout: SaveLoadLayout,
     pub settings_layout: SettingsLayout,
+    pub fast_forward_layout: FastForwardLayout,
     pub layout_editor_layout: LayoutEditorLayout,
     pub pressed_menu_item: Option<MenuItem>,
     pub pressed_save_load_item: Option<SaveLoadItem>,
     pub pressed_settings_item: Option<SettingsItem>,
+    pub pressed_fast_forward_item: Option<FastForwardItem>,
     pub pressed_editor_toolbar_item: Option<LayoutEditorToolbarItem>,
     pub slot_mask: u32,
 
@@ -508,15 +514,18 @@ impl TouchInputManager {
             preset,
             safe_insets: [0.0, 0.0, 0.0, 0.0],
             theme_index: 0,
+            fast_forward_speed: 0,
 
             menu_state: MenuState::Hidden,
             menu_layout: MenuLayout::new(),
             save_load_layout: SaveLoadLayout::new(),
             settings_layout: SettingsLayout::new(),
+            fast_forward_layout: FastForwardLayout::new(),
             layout_editor_layout: LayoutEditorLayout::new(),
             pressed_menu_item: None,
             pressed_save_load_item: None,
             pressed_settings_item: None,
+            pressed_fast_forward_item: None,
             pressed_editor_toolbar_item: None,
             slot_mask: 0,
 
@@ -709,6 +718,7 @@ impl TouchInputManager {
             self.pressed_menu_item = None;
             self.pressed_save_load_item = None;
             self.pressed_settings_item = None;
+            self.pressed_fast_forward_item = None;
             self.pressed_editor_toolbar_item = None;
             self.active_drag_group = None;
             self.drag_start_touch = None;
@@ -729,6 +739,11 @@ impl TouchInputManager {
     /// Returns currently touched settings item, if any.
     pub fn pressed_settings_item(&self) -> Option<SettingsItem> {
         self.pressed_settings_item
+    }
+
+    /// Returns currently touched fast-forward speed item, if any.
+    pub fn pressed_fast_forward_item(&self) -> Option<FastForwardItem> {
+        self.pressed_fast_forward_item
     }
 
     /// Returns currently touched editor toolbar item, if any.
@@ -807,57 +822,55 @@ impl TouchInputManager {
     }
 
     pub fn set_btn_l_pos(&mut self, pos: (f32, f32)) {
-        let s = self.scale;
         self.btn_l = VirtualButton::new_pill(
             VirtualButtonId::L,
-            pos.0 - 0.08 * s,
-            pos.1 - 0.035 * s,
-            0.16 * s,
-            0.07 * s,
-            0.035 * s,
+            pos.0 - 0.08 * self.scale,
+            pos.1 - 0.035 * self.scale,
+            0.16 * self.scale,
+            0.07 * self.scale,
+            0.035 * self.scale,
         );
     }
 
     pub fn set_btn_r_pos(&mut self, pos: (f32, f32)) {
-        let s = self.scale;
         self.btn_r = VirtualButton::new_pill(
             VirtualButtonId::R,
-            pos.0 - 0.08 * s,
-            pos.1 - 0.035 * s,
-            0.16 * s,
-            0.07 * s,
-            0.035 * s,
+            pos.0 - 0.08 * self.scale,
+            pos.1 - 0.035 * self.scale,
+            0.16 * self.scale,
+            0.07 * self.scale,
+            0.035 * self.scale,
         );
     }
 
     pub fn set_btn_start_pos(&mut self, pos: (f32, f32)) {
-        let s = self.scale;
         self.btn_start = VirtualButton::new_pill(
             VirtualButtonId::Start,
-            pos.0 - 0.06 * s,
-            pos.1 - 0.025 * s,
-            0.12 * s,
-            0.05 * s,
-            0.025 * s,
+            pos.0 - 0.06 * self.scale,
+            pos.1 - 0.025 * self.scale,
+            0.12 * self.scale,
+            0.05 * self.scale,
+            0.025 * self.scale,
         );
     }
 
     pub fn set_btn_select_pos(&mut self, pos: (f32, f32)) {
-        let s = self.scale;
         self.btn_select = VirtualButton::new_pill(
             VirtualButtonId::Select,
-            pos.0 - 0.06 * s,
-            pos.1 - 0.025 * s,
-            0.12 * s,
-            0.05 * s,
-            0.025 * s,
+            pos.0 - 0.06 * self.scale,
+            pos.1 - 0.025 * self.scale,
+            0.12 * self.scale,
+            0.05 * self.scale,
+            0.025 * self.scale,
         );
     }
 
     pub fn update_chord_ab(&mut self) {
-        let a = self.btn_a.center();
-        let b = self.btn_b.center();
-        self.chord_ab = ChordHitbox::new(a, b, 0.040 * self.scale);
+        self.chord_ab = ChordHitbox::new(
+            self.btn_a.center(),
+            self.btn_b.center(),
+            0.040 * self.scale,
+        );
     }
 
     /// Returns the active occupied slot bitmask for the shader uniform buffer.
@@ -870,7 +883,7 @@ impl TouchInputManager {
         self.slot_mask = mask;
     }
 
-    /// Ingests unified touch event with phase.
+    /// Primary input ingestion: Maps platform touch pointer events to virtual controls.
     pub fn handle_touch_event(
         &mut self,
         id: u64,
@@ -886,7 +899,6 @@ impl TouchInputManager {
         let norm_x = (x / screen_w).clamp(0.0, 1.0);
         let norm_y = (y / screen_h).clamp(0.0, 1.0);
 
-        // When in-game pause menu modal is visible, intercept all touch interactions
         match self.menu_state {
             MenuState::MainMenu => {
                 match phase {
@@ -940,17 +952,18 @@ impl TouchInputManager {
                     }
                     TouchPhase::Ended => {
                         let hit = self.save_load_layout.hit_test(norm_x, norm_y).or(self.pressed_save_load_item);
-                        match hit {
-                            Some(SaveLoadItem::Slot(slot)) => {
-                                self.pending_actions.push(TouchAction::SelectSlot { slot, mode });
+                        if let Some(item) = hit {
+                            match item {
+                                SaveLoadItem::Slot(slot) => {
+                                    self.pending_actions.push(TouchAction::SelectSlot { slot, mode });
+                                }
+                                SaveLoadItem::Back => {
+                                    self.pending_actions.push(TouchAction::MenuBack);
+                                }
+                                SaveLoadItem::ToggleMode => {
+                                    self.pending_actions.push(TouchAction::ToggleSlotMode);
+                                }
                             }
-                            Some(SaveLoadItem::Back) => {
-                                self.pending_actions.push(TouchAction::MenuBack);
-                            }
-                            Some(SaveLoadItem::ToggleMode) => {
-                                self.pending_actions.push(TouchAction::ToggleSlotMode);
-                            }
-                            None => {}
                         }
                         self.pressed_save_load_item = None;
                         self.active_touches.remove(&id);
@@ -966,12 +979,32 @@ impl TouchInputManager {
             MenuState::Settings => {
                 match phase {
                     TouchPhase::Started => {
-                        self.pressed_settings_item = self.settings_layout.hit_test(norm_x, norm_y);
+                        if self.settings_layout.is_opacity_slider(norm_x, norm_y) {
+                            let val = SettingsLayout::calculate_opacity(norm_x);
+                            self.opacity = val;
+                            self.pending_actions.push(TouchAction::SetOpacity(val));
+                        } else if self.settings_layout.is_scale_slider(norm_x, norm_y) {
+                            let val = SettingsLayout::calculate_scale(norm_x);
+                            self.scale = val;
+                            self.pending_actions.push(TouchAction::SetScale(val));
+                        } else {
+                            self.pressed_settings_item = self.settings_layout.hit_test(norm_x, norm_y);
+                        }
                         let pt = TouchPoint::new(id, norm_x, norm_y, TouchPhase::Started);
                         self.active_touches.insert(id, pt);
                     }
                     TouchPhase::Moved => {
-                        self.pressed_settings_item = self.settings_layout.hit_test(norm_x, norm_y);
+                        if self.settings_layout.is_opacity_slider(norm_x, norm_y) {
+                            let val = SettingsLayout::calculate_opacity(norm_x);
+                            self.opacity = val;
+                            self.pending_actions.push(TouchAction::SetOpacity(val));
+                        } else if self.settings_layout.is_scale_slider(norm_x, norm_y) {
+                            let val = SettingsLayout::calculate_scale(norm_x);
+                            self.scale = val;
+                            self.pending_actions.push(TouchAction::SetScale(val));
+                        } else {
+                            self.pressed_settings_item = self.settings_layout.hit_test(norm_x, norm_y);
+                        }
                         if let Some(pt) = self.active_touches.get_mut(&id) {
                             pt.x = norm_x;
                             pt.y = norm_y;
@@ -981,9 +1014,13 @@ impl TouchInputManager {
                         }
                     }
                     TouchPhase::Ended => {
-                        let hit = self.settings_layout.hit_test(norm_x, norm_y).or(self.pressed_settings_item);
-                        if let Some(item) = hit {
-                            self.pending_actions.push(TouchAction::SettingsSelect(item));
+                        if !self.settings_layout.is_opacity_slider(norm_x, norm_y)
+                            && !self.settings_layout.is_scale_slider(norm_x, norm_y)
+                        {
+                            let hit = self.settings_layout.hit_test(norm_x, norm_y).or(self.pressed_settings_item);
+                            if let Some(item) = hit {
+                                self.pending_actions.push(TouchAction::SettingsSelect(item));
+                            }
                         }
                         self.pressed_settings_item = None;
                         self.active_touches.remove(&id);
@@ -996,10 +1033,43 @@ impl TouchInputManager {
                 self.recompute_state();
                 return;
             }
+            MenuState::FastForwardSelect => {
+                match phase {
+                    TouchPhase::Started => {
+                        self.pressed_fast_forward_item = self.fast_forward_layout.hit_test(norm_x, norm_y);
+                        let pt = TouchPoint::new(id, norm_x, norm_y, TouchPhase::Started);
+                        self.active_touches.insert(id, pt);
+                    }
+                    TouchPhase::Moved => {
+                        self.pressed_fast_forward_item = self.fast_forward_layout.hit_test(norm_x, norm_y);
+                        if let Some(pt) = self.active_touches.get_mut(&id) {
+                            pt.x = norm_x;
+                            pt.y = norm_y;
+                            pt.norm_x = norm_x;
+                            pt.norm_y = norm_y;
+                            pt.phase = TouchPhase::Moved;
+                        }
+                    }
+                    TouchPhase::Ended => {
+                        let hit = self.fast_forward_layout.hit_test(norm_x, norm_y).or(self.pressed_fast_forward_item);
+                        if let Some(item) = hit {
+                            self.pending_actions.push(TouchAction::FastForwardSelect(item));
+                        }
+                        self.pressed_fast_forward_item = None;
+                        self.active_touches.remove(&id);
+                    }
+                    TouchPhase::Cancelled => {
+                        self.pressed_fast_forward_item = None;
+                        self.active_touches.remove(&id);
+                    }
+                }
+                self.recompute_state();
+                return;
+            }
             MenuState::LayoutEditor => {
                 match phase {
                     TouchPhase::Started => {
-                        // Check top toolbar first
+                        // Check bottom toolbar first
                         if let Some(toolbar_item) = self.layout_editor_layout.hit_test(norm_x, norm_y) {
                             self.pressed_editor_toolbar_item = Some(toolbar_item);
                         } else {

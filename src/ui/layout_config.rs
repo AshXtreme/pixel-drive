@@ -54,6 +54,7 @@ impl UiTheme {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[repr(u8)]
 pub enum FastForwardSpeed {
+    Normal = 1,
     #[default]
     Speed2x = 2,
     Speed4x = 4,
@@ -64,6 +65,7 @@ pub enum FastForwardSpeed {
 impl FastForwardSpeed {
     pub fn from_u8(val: u8) -> Self {
         match val {
+            1 => FastForwardSpeed::Normal,
             4 => FastForwardSpeed::Speed4x,
             8 => FastForwardSpeed::Speed8x,
             0 => FastForwardSpeed::Uncapped,
@@ -75,17 +77,40 @@ impl FastForwardSpeed {
         *self as u8
     }
 
+    pub fn to_index(&self) -> u8 {
+        match self {
+            FastForwardSpeed::Normal => 0,
+            FastForwardSpeed::Speed2x => 1,
+            FastForwardSpeed::Speed4x => 2,
+            FastForwardSpeed::Speed8x => 3,
+            FastForwardSpeed::Uncapped => 4,
+        }
+    }
+
+    pub fn from_index(idx: u8) -> Self {
+        match idx {
+            0 => FastForwardSpeed::Normal,
+            1 => FastForwardSpeed::Speed2x,
+            2 => FastForwardSpeed::Speed4x,
+            3 => FastForwardSpeed::Speed8x,
+            4 => FastForwardSpeed::Uncapped,
+            _ => FastForwardSpeed::Speed2x,
+        }
+    }
+
     pub fn cycle(&self) -> Self {
         match self {
+            FastForwardSpeed::Normal => FastForwardSpeed::Speed2x,
             FastForwardSpeed::Speed2x => FastForwardSpeed::Speed4x,
             FastForwardSpeed::Speed4x => FastForwardSpeed::Speed8x,
             FastForwardSpeed::Speed8x => FastForwardSpeed::Uncapped,
-            FastForwardSpeed::Uncapped => FastForwardSpeed::Speed2x,
+            FastForwardSpeed::Uncapped => FastForwardSpeed::Normal,
         }
     }
 
     pub fn steps_per_frame(&self) -> usize {
         match self {
+            FastForwardSpeed::Normal => 1,
             FastForwardSpeed::Speed2x => 2,
             FastForwardSpeed::Speed4x => 4,
             FastForwardSpeed::Speed8x => 8,
@@ -95,6 +120,7 @@ impl FastForwardSpeed {
 
     pub fn label(&self) -> &'static str {
         match self {
+            FastForwardSpeed::Normal => "1X (NORMAL)",
             FastForwardSpeed::Speed2x => "2X SPEED",
             FastForwardSpeed::Speed4x => "4X SPEED",
             FastForwardSpeed::Speed8x => "8X SPEED",
@@ -414,7 +440,10 @@ mod tests {
         assert_eq!(config.theme(), UiTheme::DarkSlate);
 
         // Fast-Forward cycling
-        config.fast_forward_speed = 2;
+        config.fast_forward_speed = 1;
+        config.cycle_fast_forward();
+        assert_eq!(config.fast_forward(), FastForwardSpeed::Speed2x);
+        assert_eq!(config.fast_forward().steps_per_frame(), 2);
         config.cycle_fast_forward();
         assert_eq!(config.fast_forward(), FastForwardSpeed::Speed4x);
         assert_eq!(config.fast_forward().steps_per_frame(), 4);
@@ -425,7 +454,8 @@ mod tests {
         assert_eq!(config.fast_forward(), FastForwardSpeed::Uncapped);
         assert_eq!(config.fast_forward().steps_per_frame(), 10);
         config.cycle_fast_forward();
-        assert_eq!(config.fast_forward(), FastForwardSpeed::Speed2x);
+        assert_eq!(config.fast_forward(), FastForwardSpeed::Normal);
+        assert_eq!(config.fast_forward().steps_per_frame(), 1);
     }
 
     #[test]

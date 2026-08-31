@@ -432,6 +432,39 @@ fn draw_digit(p: vec2<f32>, digit: u32, sz: f32) -> f32 {
     }
 }
 
+fn draw_slider_track_and_thumb(
+    p: vec2<f32>,
+    slider_c: vec2<f32>,
+    slider_half: vec2<f32>,
+    pct: f32,
+    accent_col: vec3<f32>,
+    track_base_col: vec3<f32>,
+    aa: f32
+) -> vec4<f32> {
+    let sp = p - slider_c;
+    // 1. Inactive Track Background (Matched with theme palette)
+    let track_h = 0.0035;
+    let track_d = sd_rounded_box(sp, vec2<f32>(slider_half.x, track_h), track_h);
+    let track_bg = vec4<f32>(track_base_col, 0.95 * smoothstep(aa, -aa, track_d));
+
+    // 2. Active Filled Track
+    let fill_w = slider_half.x * pct;
+    let fill_c = vec2<f32>(-slider_half.x + fill_w, 0.0);
+    let fill_d = sd_rounded_box(sp - fill_c, vec2<f32>(fill_w, track_h), track_h);
+    let fill_col = vec4<f32>(accent_col, 0.95 * smoothstep(aa, -aa, fill_d));
+
+    // 3. Slider Thumb Knob
+    let thumb_x = -slider_half.x + slider_half.x * 2.0 * pct;
+    let thumb_p = sp - vec2<f32>(thumb_x, 0.0);
+    let thumb_d = sd_circle(thumb_p, 0.0135);
+    let thumb_rim_d = abs(thumb_d + 0.0018) - 0.0018;
+    let thumb_fill = vec4<f32>(0.92, 0.95, 0.98, 1.0 * smoothstep(aa, -aa, thumb_d));
+    let thumb_rim = vec4<f32>(accent_col, 0.95 * smoothstep(aa, -aa, thumb_rim_d));
+    let thumb_col = blend_over(thumb_rim, thumb_fill);
+
+    return blend_over(thumb_col, blend_over(fill_col, track_bg));
+}
+
 fn render_modal_row(
     p: vec2<f32>,
     half_size: vec2<f32>,
@@ -478,25 +511,33 @@ fn get_glyph_16seg(c: u32) -> u32 {
     if (c == 71u) { return 763u;   } // G
     if (c == 72u) { return 972u;   } // H
     if (c == 73u) { return 3123u;  } // I
+    if (c == 74u) { return 124u;   } // J
     if (c == 75u) { return 41408u; } // K
     if (c == 76u) { return 240u;   } // L
     if (c == 77u) { return 12492u; } // M
     if (c == 78u) { return 37068u; } // N
     if (c == 79u) { return 255u;   } // O
     if (c == 80u) { return 967u;   } // P
+    if (c == 81u) { return 33023u; } // Q
     if (c == 82u) { return 33735u; } // R
     if (c == 83u) { return 955u;   } // S
     if (c == 84u) { return 3075u;  } // T
     if (c == 85u) { return 252u;   } // U
     if (c == 86u) { return 24768u; } // V
     if (c == 87u) { return 49356u; } // W
+    if (c == 88u) { return 61440u; } // X
     if (c == 89u) { return 14336u; } // Y
+    if (c == 90u) { return 24627u; } // Z
     if (c == 48u) { return 255u;   } // 0
     if (c == 49u) { return 3072u;  } // 1
     if (c == 50u) { return 887u;   } // 2
     if (c == 51u) { return 831u;   } // 3
     if (c == 52u) { return 908u;   } // 4
     if (c == 53u) { return 955u;   } // 5
+    if (c == 54u) { return 1019u;  } // 6
+    if (c == 55u) { return 24579u; } // 7
+    if (c == 56u) { return 1023u;  } // 8
+    if (c == 57u) { return 959u;   } // 9
     if (c == 47u) { return 24576u; } // /
     if (c == 45u) { return 768u;   } // -
     return 0u;
@@ -889,6 +930,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return final_color;
     }
 
+    let op_pct_val = f32(uniforms.settings_values & 255u) / 100.0;
+    let sc_pct_val = clamp((f32((uniforms.settings_values >> 8u) & 255u) - 60.0) / 90.0, 0.0, 1.0);
+    let cur_ff_idx = (uniforms.settings_values >> 20u) & 7u;
+
     if (uniforms.menu_state == 4u) {
         // ====================================================================
         // In-Game Settings Menu Modal (Opaque Dark UI)
@@ -939,7 +984,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let spacing = 0.0175;
         let stroke_w = 0.0016;
 
-        // Row 1: Customize Touch Controls (Item 1 / Slate Accent)
+        // Row 1: Customize Controls (Item 1 / Slate Accent)
         let r1_c = vec2<f32>(0.50 * aspect, 0.246);
         let r1_p = p - r1_c;
         if (abs(r1_p.y) < row_half.y * 1.3 && abs(r1_p.x) < row_half.x * 1.1) {
@@ -951,7 +996,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r1_col)), final_color);
         }
 
-        // Row 2: Button Opacity (Item 2 / Steel Accent)
+        // Row 2: Button Opacity Slider (Item 2 / Steel Accent)
         let r2_c = vec2<f32>(0.50 * aspect, 0.342);
         let r2_p = p - r2_c;
         if (abs(r2_p.y) < row_half.y * 1.3 && abs(r2_p.x) < row_half.x * 1.1) {
@@ -960,10 +1005,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
             let txt_d = draw_vector_string(r2_p, text_start_x, char_sz, spacing, stroke_w, 79u, 80u, 65u, 67u, 73u, 84u, 89u, 0u, 0u, 0u, 0u, 7u);
             let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
-            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r2_col)), final_color);
+            let slider_col = draw_slider_track_and_thumb(r2_p, vec2<f32>(row_half.x * 0.46, 0.0), vec2<f32>(row_half.x * 0.36, 0.005), op_pct_val, col_accent_settings, col_btn_bg * 0.70, aa);
+            final_color = blend_over(blend_over(slider_col, blend_over(txt_col, blend_over(icon_col, r2_col))), final_color);
         }
 
-        // Row 3: Overall Scale (Item 3 / Lavender Accent)
+        // Row 3: Overall Scale Slider (Item 3 / Lavender Accent)
         let r3_c = vec2<f32>(0.50 * aspect, 0.438);
         let r3_p = p - r3_c;
         if (abs(r3_p.y) < row_half.y * 1.3 && abs(r3_p.x) < row_half.x * 1.1) {
@@ -972,7 +1018,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
             let txt_d = draw_vector_string(r3_p, text_start_x, char_sz, spacing, stroke_w, 83u, 67u, 65u, 76u, 69u, 0u, 0u, 0u, 0u, 0u, 0u, 5u);
             let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
-            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r3_col)), final_color);
+            let slider_col = draw_slider_track_and_thumb(r3_p, vec2<f32>(row_half.x * 0.46, 0.0), vec2<f32>(row_half.x * 0.36, 0.005), sc_pct_val, col_accent_state, col_btn_bg * 0.70, aa);
+            final_color = blend_over(blend_over(slider_col, blend_over(txt_col, blend_over(icon_col, r3_col))), final_color);
         }
 
         // Row 4: UI Theme Selection (Item 4 / Mint Accent)
@@ -1014,15 +1061,149 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return final_color;
     }
 
+    if (uniforms.menu_state == 6u) {
+        // ====================================================================
+        // Fast-Forward Speed Selection Submenu Modal
+        // ====================================================================
+        let backdrop = vec4<f32>(0.03, 0.04, 0.05, 0.95);
+        final_color = backdrop;
+
+        let modal_c = vec2<f32>(0.50 * aspect, 0.50);
+        let modal_half = vec2<f32>(0.28 * aspect, 0.40);
+        let modal_r = 0.024;
+        let card_p = p - modal_c;
+        let card_d = sd_rounded_box(card_p, modal_half, modal_r);
+
+        let card_fill_alpha = smoothstep(aa, -aa, card_d);
+        let card_rim_d = abs(card_d + 0.002) - 0.002;
+        let card_rim_alpha = smoothstep(aa, -aa, card_rim_d);
+
+        let card_bg = vec4<f32>(col_card_bg.rgb, col_card_bg.a * card_fill_alpha);
+        let card_rim = vec4<f32>(col_card_rim.rgb, col_card_rim.a * card_rim_alpha);
+        final_color = blend_over(card_rim, blend_over(card_bg, final_color));
+
+        // Header: Fast Forward Icon and Title
+        let hdr_c = vec2<f32>(0.50 * aspect, 0.155);
+        let hdr_p = p - hdr_c;
+        if (length(hdr_p) < 0.06) {
+            let ff_d = draw_ff_icon(hdr_p, 0.024);
+            let ff_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, ff_d));
+            final_color = blend_over(ff_col, final_color);
+        }
+
+        let div_c = vec2<f32>(0.50 * aspect, 0.188);
+        let div_p = p - div_c;
+        let div_d = sd_segment(div_p, vec2<f32>(-modal_half.x * 0.82, 0.0), vec2<f32>(modal_half.x * 0.82, 0.0)) - 0.0010;
+        let div_col = vec4<f32>(0.24, 0.27, 0.32, 0.90 * smoothstep(aa, -aa, div_d));
+        final_color = blend_over(div_col, final_color);
+
+        let row_half = vec2<f32>(0.24 * aspect, 0.041);
+        let row_r = 0.016;
+        let pressed_item = uniforms.menu_pressed_item;
+        let text_start_x = -row_half.x + 0.078;
+        let char_sz = vec2<f32>(0.013, 0.022);
+        let spacing = 0.0175;
+        let stroke_w = 0.0016;
+
+        // Row 1: 1X Normal Speed (Item 1)
+        let r1_c = vec2<f32>(0.50 * aspect, 0.246);
+        let r1_p = p - r1_c;
+        if (abs(r1_p.y) < row_half.y * 1.3 && abs(r1_p.x) < row_half.x * 1.1) {
+            let r1_col = render_modal_row(r1_p, row_half, row_r, pressed_item == 1u, col_btn_bg, col_accent_cheats, aa);
+            let txt_d = draw_vector_string(r1_p, text_start_x, char_sz, spacing, stroke_w, 49u, 88u, 32u, 78u, 79u, 82u, 77u, 65u, 76u, 0u, 0u, 9u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            var chk_col = vec4<f32>(0.0);
+            if (cur_ff_idx == 0u) {
+                let chk_d = draw_check_icon(r1_p - vec2<f32>(row_half.x - 0.040, 0.0), 0.022);
+                chk_col = vec4<f32>(col_accent_resume, smoothstep(aa, -aa, chk_d));
+            }
+            final_color = blend_over(blend_over(chk_col, blend_over(txt_col, r1_col)), final_color);
+        }
+
+        // Row 2: 2X Speed (Item 2)
+        let r2_c = vec2<f32>(0.50 * aspect, 0.342);
+        let r2_p = p - r2_c;
+        if (abs(r2_p.y) < row_half.y * 1.3 && abs(r2_p.x) < row_half.x * 1.1) {
+            let r2_col = render_modal_row(r2_p, row_half, row_r, pressed_item == 2u, col_btn_bg, col_accent_resume, aa);
+            let txt_d = draw_vector_string(r2_p, text_start_x, char_sz, spacing, stroke_w, 50u, 88u, 32u, 83u, 80u, 69u, 69u, 68u, 0u, 0u, 0u, 8u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            var chk_col = vec4<f32>(0.0);
+            if (cur_ff_idx == 1u) {
+                let chk_d = draw_check_icon(r2_p - vec2<f32>(row_half.x - 0.040, 0.0), 0.022);
+                chk_col = vec4<f32>(col_accent_resume, smoothstep(aa, -aa, chk_d));
+            }
+            final_color = blend_over(blend_over(chk_col, blend_over(txt_col, r2_col)), final_color);
+        }
+
+        // Row 3: 4X Speed (Item 3)
+        let r3_c = vec2<f32>(0.50 * aspect, 0.438);
+        let r3_p = p - r3_c;
+        if (abs(r3_p.y) < row_half.y * 1.3 && abs(r3_p.x) < row_half.x * 1.1) {
+            let r3_col = render_modal_row(r3_p, row_half, row_r, pressed_item == 3u, col_btn_bg, col_accent_rom, aa);
+            let txt_d = draw_vector_string(r3_p, text_start_x, char_sz, spacing, stroke_w, 52u, 88u, 32u, 83u, 80u, 69u, 69u, 68u, 0u, 0u, 0u, 8u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            var chk_col = vec4<f32>(0.0);
+            if (cur_ff_idx == 2u) {
+                let chk_d = draw_check_icon(r3_p - vec2<f32>(row_half.x - 0.040, 0.0), 0.022);
+                chk_col = vec4<f32>(col_accent_rom, smoothstep(aa, -aa, chk_d));
+            }
+            final_color = blend_over(blend_over(chk_col, blend_over(txt_col, r3_col)), final_color);
+        }
+
+        // Row 4: 8X Speed (Item 4)
+        let r4_c = vec2<f32>(0.50 * aspect, 0.534);
+        let r4_p = p - r4_c;
+        if (abs(r4_p.y) < row_half.y * 1.3 && abs(r4_p.x) < row_half.x * 1.1) {
+            let r4_col = render_modal_row(r4_p, row_half, row_r, pressed_item == 4u, col_btn_bg, col_accent_state, aa);
+            let txt_d = draw_vector_string(r4_p, text_start_x, char_sz, spacing, stroke_w, 56u, 88u, 32u, 83u, 80u, 69u, 69u, 68u, 0u, 0u, 0u, 8u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            var chk_col = vec4<f32>(0.0);
+            if (cur_ff_idx == 3u) {
+                let chk_d = draw_check_icon(r4_p - vec2<f32>(row_half.x - 0.040, 0.0), 0.022);
+                chk_col = vec4<f32>(col_accent_state, smoothstep(aa, -aa, chk_d));
+            }
+            final_color = blend_over(blend_over(chk_col, blend_over(txt_col, r4_col)), final_color);
+        }
+
+        // Row 5: MAX Speed (Item 5)
+        let r5_c = vec2<f32>(0.50 * aspect, 0.630);
+        let r5_p = p - r5_c;
+        if (abs(r5_p.y) < row_half.y * 1.3 && abs(r5_p.x) < row_half.x * 1.1) {
+            let r5_col = render_modal_row(r5_p, row_half, row_r, pressed_item == 5u, col_btn_bg, col_accent_reset, aa);
+            let txt_d = draw_vector_string(r5_p, text_start_x, char_sz, spacing, stroke_w, 77u, 65u, 88u, 32u, 83u, 80u, 69u, 69u, 68u, 0u, 0u, 9u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            var chk_col = vec4<f32>(0.0);
+            if (cur_ff_idx == 4u) {
+                let chk_d = draw_check_icon(r5_p - vec2<f32>(row_half.x - 0.040, 0.0), 0.022);
+                chk_col = vec4<f32>(col_accent_reset, smoothstep(aa, -aa, chk_d));
+            }
+            final_color = blend_over(blend_over(chk_col, blend_over(txt_col, r5_col)), final_color);
+        }
+
+        // Row 6: Back (Item 6)
+        let r6_c = vec2<f32>(0.50 * aspect, 0.726);
+        let r6_p = p - r6_c;
+        if (abs(r6_p.y) < row_half.y * 1.3 && abs(r6_p.x) < row_half.x * 1.1) {
+            let r6_col = render_modal_row(r6_p, row_half, row_r, pressed_item == 6u, col_btn_bg, col_accent_settings, aa);
+            let icon_d = draw_back_arrow(r6_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
+            let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
+            let txt_d = draw_vector_string(r6_p, text_start_x, char_sz, spacing, stroke_w, 66u, 65u, 67u, 75u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 4u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r6_col)), final_color);
+        }
+
+        return final_color;
+    }
+
     if (uniforms.menu_state == 5u) {
         // ====================================================================
         // Interactive On-Screen Layout Editor Toolbar & Guide Bounding Boxes
         // ====================================================================
         let pressed_item = uniforms.menu_pressed_item;
 
-        // 1. Top Floating Action Toolbar
-        let bar_c = vec2<f32>(0.50 * aspect, 0.0725);
-        let bar_half = vec2<f32>(0.40 * aspect, 0.0375);
+        // 1. Bottom Floating Action Toolbar (Clean Non-Overlapping Dock)
+        let bar_c = vec2<f32>(0.50 * aspect, 0.88);
+        let bar_half = vec2<f32>(0.40 * aspect, 0.040);
         let bar_r = 0.016;
         let bar_p = p - bar_c;
         let bar_d = sd_rounded_box(bar_p, bar_half, bar_r);
@@ -1031,7 +1212,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let bar_rim_d = abs(bar_d + 0.002) - 0.002;
         let bar_rim_alpha = smoothstep(aa, -aa, bar_rim_d);
 
-        let bar_bg = vec4<f32>(col_card_bg.rgb, 0.92 * bar_fill_alpha);
+        let bar_bg = vec4<f32>(col_card_bg.rgb, 0.94 * bar_fill_alpha);
         let bar_rim = vec4<f32>(col_card_rim.rgb, 0.95 * bar_rim_alpha);
         final_color = blend_over(bar_rim, blend_over(bar_bg, final_color));
 
@@ -1040,7 +1221,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let tb_btn_r = 0.012;
 
         // Button 1: [ Save ] (Item 1)
-        let b1_c = vec2<f32>(0.25 * aspect, 0.0725);
+        let b1_c = vec2<f32>(0.24 * aspect, 0.88);
         let b1_p = p - b1_c;
         if (abs(b1_p.y) < tb_btn_half.y * 1.3 && abs(b1_p.x) < tb_btn_half.x * 1.1) {
             let b1_col = render_modal_row(b1_p, tb_btn_half, tb_btn_r, pressed_item == 1u, col_btn_bg, col_accent_resume, aa);
@@ -1052,7 +1233,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
 
         // Button 2: [ Reset Defaults ] (Item 2)
-        let b2_c = vec2<f32>(0.50 * aspect, 0.0725);
+        let b2_c = vec2<f32>(0.50 * aspect, 0.88);
         let b2_p = p - b2_c;
         if (abs(b2_p.y) < tb_btn_half.y * 1.3 && abs(b2_p.x) < tb_btn_half.x * 1.1) {
             let b2_col = render_modal_row(b2_p, tb_btn_half, tb_btn_r, pressed_item == 2u, col_btn_bg, col_accent_rom, aa);
@@ -1064,7 +1245,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
 
         // Button 3: [ Cancel ] (Item 3)
-        let b3_c = vec2<f32>(0.75 * aspect, 0.0725);
+        let b3_c = vec2<f32>(0.76 * aspect, 0.88);
         let b3_p = p - b3_c;
         if (abs(b3_p.y) < tb_btn_half.y * 1.3 && abs(b3_p.x) < tb_btn_half.x * 1.1) {
             let b3_col = render_modal_row(b3_p, tb_btn_half, tb_btn_r, pressed_item == 3u, col_btn_bg, col_accent_reset, aa);
@@ -1274,51 +1455,53 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // ========================================================================
     // 6. HUD Quick Actions: Quick Save, Menu, Fast-Forward, Quick Load (Top Center)
     // ========================================================================
-    let qs_c = vec2<f32>(uniforms.btn_qs_pos.x * aspect, uniforms.btn_qs_pos.y);
-    let menu_c = vec2<f32>(uniforms.btn_menu_pos.x * aspect, uniforms.btn_menu_pos.y);
-    let ff_c = vec2<f32>(uniforms.btn_ff_pos.x * aspect, uniforms.btn_ff_pos.y);
-    let ql_c = vec2<f32>(uniforms.btn_ql_pos.x * aspect, uniforms.btn_ql_pos.y);
-    let hud_r = btn_r * 0.55;
+    if (uniforms.menu_state == 0u) {
+        let qs_c = vec2<f32>(uniforms.btn_qs_pos.x * aspect, uniforms.btn_qs_pos.y);
+        let menu_c = vec2<f32>(uniforms.btn_menu_pos.x * aspect, uniforms.btn_menu_pos.y);
+        let ff_c = vec2<f32>(uniforms.btn_ff_pos.x * aspect, uniforms.btn_ff_pos.y);
+        let ql_c = vec2<f32>(uniforms.btn_ql_pos.x * aspect, uniforms.btn_ql_pos.y);
+        let hud_r = btn_r * 0.55;
 
-    let qs_pressed = (pressed_mask & BTN_QUICK_SAVE) != 0u;
-    let menu_pressed = (pressed_mask & BTN_MENU) != 0u;
-    let ff_pressed = (pressed_mask & BTN_FAST_FORWARD) != 0u;
-    let ql_pressed = (pressed_mask & BTN_QUICK_LOAD) != 0u;
+        let qs_pressed = (pressed_mask & BTN_QUICK_SAVE) != 0u;
+        let menu_pressed = (pressed_mask & BTN_MENU) != 0u;
+        let ff_pressed = (pressed_mask & BTN_FAST_FORWARD) != 0u;
+        let ql_pressed = (pressed_mask & BTN_QUICK_LOAD) != 0u;
 
-    // Quick Save Button (Save Icon / Emerald Glow)
-    let qs_p = p - qs_c;
-    if (length(qs_p) < hud_r * 1.5) {
-        let qs_col = render_round_button(qs_p, hud_r, qs_pressed, col_dark, col_emerald_glow, aa);
-        let save_d = draw_save_icon(qs_p, hud_r);
-        let glyph_col = vec4<f32>(vec3<f32>(1.0), 0.90 * smoothstep(aa, -aa, save_d));
-        final_color = blend_over(blend_over(glyph_col, qs_col), final_color);
-    }
+        // Quick Save Button (Save Icon / Emerald Glow)
+        let qs_p = p - qs_c;
+        if (length(qs_p) < hud_r * 1.5) {
+            let qs_col = render_round_button(qs_p, hud_r, qs_pressed, col_dark, col_emerald_glow, aa);
+            let save_d = draw_save_icon(qs_p, hud_r);
+            let glyph_col = vec4<f32>(vec3<f32>(1.0), 0.90 * smoothstep(aa, -aa, save_d));
+            final_color = blend_over(blend_over(glyph_col, qs_col), final_color);
+        }
 
-    // Menu Button (3 Bars Icon)
-    let menu_p = p - menu_c;
-    if (length(menu_p) < hud_r * 1.5) {
-        let menu_col = render_round_button(menu_p, hud_r, menu_pressed, col_dark, col_cyan_glow, aa);
-        let bars_d = draw_menu_bars(menu_p, hud_r);
-        let glyph_col = vec4<f32>(vec3<f32>(1.0), 0.90 * smoothstep(aa, -aa, bars_d));
-        final_color = blend_over(blend_over(glyph_col, menu_col), final_color);
-    }
+        // Menu Button (3 Bars Icon)
+        let menu_p = p - menu_c;
+        if (length(menu_p) < hud_r * 1.5) {
+            let menu_col = render_round_button(menu_p, hud_r, menu_pressed, col_dark, col_cyan_glow, aa);
+            let bars_d = draw_menu_bars(menu_p, hud_r);
+            let glyph_col = vec4<f32>(vec3<f32>(1.0), 0.90 * smoothstep(aa, -aa, bars_d));
+            final_color = blend_over(blend_over(glyph_col, menu_col), final_color);
+        }
 
-    // Fast-Forward Button (Double Chevron Icon)
-    let ff_p = p - ff_c;
-    if (length(ff_p) < hud_r * 1.5) {
-        let ff_col = render_round_button(ff_p, hud_r, ff_pressed, col_dark, col_amber_glow, aa);
-        let ff_d = draw_fast_forward(ff_p, hud_r);
-        let glyph_col = vec4<f32>(vec3<f32>(1.0), 0.90 * smoothstep(aa, -aa, ff_d));
-        final_color = blend_over(blend_over(glyph_col, ff_col), final_color);
-    }
+        // Fast-Forward Button (Double Chevron Icon)
+        let ff_p = p - ff_c;
+        if (length(ff_p) < hud_r * 1.5) {
+            let ff_col = render_round_button(ff_p, hud_r, ff_pressed, col_dark, col_amber_glow, aa);
+            let ff_d = draw_fast_forward(ff_p, hud_r);
+            let glyph_col = vec4<f32>(vec3<f32>(1.0), 0.90 * smoothstep(aa, -aa, ff_d));
+            final_color = blend_over(blend_over(glyph_col, ff_col), final_color);
+        }
 
-    // Quick Load Button (Load Icon / Purple Glow)
-    let ql_p = p - ql_c;
-    if (length(ql_p) < hud_r * 1.5) {
-        let ql_col = render_round_button(ql_p, hud_r, ql_pressed, col_dark, col_purple_glow, aa);
-        let load_d = draw_load_icon(ql_p, hud_r);
-        let glyph_col = vec4<f32>(vec3<f32>(1.0), 0.90 * smoothstep(aa, -aa, load_d));
-        final_color = blend_over(blend_over(glyph_col, ql_col), final_color);
+        // Quick Load Button (Load Icon / Purple Glow)
+        let ql_p = p - ql_c;
+        if (length(ql_p) < hud_r * 1.5) {
+            let ql_col = render_round_button(ql_p, hud_r, ql_pressed, col_dark, col_purple_glow, aa);
+            let load_d = draw_load_icon(ql_p, hud_r);
+            let glyph_col = vec4<f32>(vec3<f32>(1.0), 0.90 * smoothstep(aa, -aa, load_d));
+            final_color = blend_over(blend_over(glyph_col, ql_col), final_color);
+        }
     }
 
     // Apply global opacity uniform

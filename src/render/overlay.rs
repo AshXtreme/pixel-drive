@@ -240,6 +240,10 @@ impl TouchOverlayRenderer {
                     .pressed_settings_item()
                     .map(|it| it.shader_index())
                     .unwrap_or(0),
+                crate::ui::menu::MenuState::FastForwardSelect => touch_manager
+                    .pressed_fast_forward_item()
+                    .map(|it| it.shader_index())
+                    .unwrap_or(0),
                 crate::ui::menu::MenuState::LayoutEditor => touch_manager
                     .pressed_editor_toolbar_item()
                     .map(|it| it.shader_index())
@@ -249,17 +253,11 @@ impl TouchOverlayRenderer {
             slot_mask: touch_manager.slot_mask(),
             theme_index: touch_manager.theme_index as u32,
             settings_values: {
-                let op_idx = if touch_manager.opacity < 0.30 { 1u32 }
-                    else if touch_manager.opacity < 0.50 { 2u32 }
-                    else if touch_manager.opacity < 0.70 { 3u32 }
-                    else if touch_manager.opacity < 0.90 { 4u32 }
-                    else { 5u32 };
-                let sc_idx = if touch_manager.scale < 0.85 { 1u32 }
-                    else if touch_manager.scale < 1.10 { 2u32 }
-                    else if touch_manager.scale < 1.35 { 3u32 }
-                    else { 4u32 };
-                let th_idx = (touch_manager.theme_index as u32) & 0x03;
-                op_idx | (sc_idx << 4) | (th_idx << 8)
+                let op_pct = (touch_manager.opacity.clamp(0.0, 1.0) * 100.0).round() as u32;
+                let sc_pct = (touch_manager.scale.clamp(0.5, 2.0) * 100.0).round() as u32;
+                let th_idx = (touch_manager.theme_index as u32) & 0x07;
+                let ff_idx = (touch_manager.fast_forward_speed as u32) & 0x07;
+                op_pct | (sc_pct << 8) | (th_idx << 16) | (ff_idx << 20)
             },
             _pad: 0,
         };

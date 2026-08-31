@@ -1,6 +1,10 @@
 pub mod menu;
 pub mod layout_config;
-pub use menu::{MenuAction, MenuItem, MenuLayout, MenuState, SaveLoadItem, SaveLoadLayout, SlotMode};
+pub use menu::{
+    FastForwardItem, FastForwardLayout, LayoutEditorLayout, LayoutEditorToolbarItem, MenuAction,
+    MenuItem, MenuLayout, MenuState, SaveLoadItem, SaveLoadLayout, SettingsItem, SettingsLayout,
+    SlotMode,
+};
 pub use layout_config::{FastForwardSpeed, TouchLayoutConfig, UiTheme};
 
 use crate::input::TouchOverlayPreset;

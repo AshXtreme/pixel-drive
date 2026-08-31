@@ -26,8 +26,8 @@ use crate::platform::android::storage::AndroidStorage;
 use crate::platform::PlatformStorage;
 use crate::render::{FilterMode, ShaderPipeline, TouchOverlayRenderer};
 use crate::save::SaveManager;
-use crate::ui::layout_config::TouchLayoutConfig;
-use crate::ui::menu::{LayoutEditorToolbarItem, MenuItem, MenuState, SettingsItem, SlotMode};
+use crate::ui::layout_config::{FastForwardSpeed, TouchLayoutConfig};
+use crate::ui::menu::{FastForwardItem, LayoutEditorToolbarItem, MenuItem, MenuState, SettingsItem, SlotMode};
 
 /// Thread-safe queue storing pending Content URIs selected via Android SAF ROM picker.
 static PENDING_ROM_URI: Mutex<Option<String>> = Mutex::new(None);
@@ -420,6 +420,7 @@ fn run_android_app(app: AndroidApp) {
     let mut layout_config = TouchLayoutConfig::load_from_file(&config_path);
     layout_config.apply_to_overlay(&mut touch_overlay);
     touch_overlay.theme_index = layout_config.theme_index;
+    touch_overlay.fast_forward_speed = layout_config.fast_forward().to_index();
     let mut prev_joypad_state = JoypadState::default();
 
     // 7. Lifecycle and state flags
@@ -868,13 +869,11 @@ fn run_android_app(app: AndroidApp) {
                                             layout_config.cycle_opacity();
                                             touch_overlay.opacity = layout_config.opacity;
                                             let _ = layout_config.save_to_file(&config_path);
-                                            show_toast(jvm_ptr, activity_ptr, &format!("Button Opacity: {}", layout_config.opacity_label()));
                                         }
                                         SettingsItem::Scale => {
                                             layout_config.cycle_scale();
                                             layout_config.apply_to_overlay(&mut touch_overlay);
                                             let _ = layout_config.save_to_file(&config_path);
-                                            show_toast(jvm_ptr, activity_ptr, &format!("Button Scale: {}", layout_config.scale_label()));
                                         }
                                         SettingsItem::Theme => {
                                             layout_config.cycle_theme();
@@ -883,14 +882,72 @@ fn run_android_app(app: AndroidApp) {
                                             show_toast(jvm_ptr, activity_ptr, &format!("UI Theme: {}", layout_config.theme().label()));
                                         }
                                         SettingsItem::FastForwardSpeed => {
-                                            layout_config.cycle_fast_forward();
-                                            let _ = layout_config.save_to_file(&config_path);
-                                            show_toast(jvm_ptr, activity_ptr, &format!("Fast-Forward Speed: {}", layout_config.fast_forward().label()));
+                                            info!("Opening Fast-Forward speed selection submenu");
+                                            menu_state = MenuState::FastForwardSelect;
+                                            touch_overlay.set_menu_state(MenuState::FastForwardSelect);
                                         }
                                         SettingsItem::Back => {
                                             let _ = layout_config.save_to_file(&config_path);
                                             menu_state = MenuState::MainMenu;
                                             touch_overlay.set_menu_state(MenuState::MainMenu);
+                                        }
+                                    }
+                                }
+                                TouchAction::SetOpacity(val) => {
+                                    layout_config.opacity = val;
+                                    touch_overlay.opacity = val;
+                                    let _ = layout_config.save_to_file(&config_path);
+                                }
+                                TouchAction::SetScale(val) => {
+                                    layout_config.scale = val;
+                                    layout_config.apply_to_overlay(&mut touch_overlay);
+                                    let _ = layout_config.save_to_file(&config_path);
+                                }
+                                TouchAction::FastForwardSelect(item) => {
+                                    match item {
+                                        FastForwardItem::Normal => {
+                                            layout_config.fast_forward_speed = 1;
+                                            touch_overlay.fast_forward_speed = 0;
+                                            let _ = layout_config.save_to_file(&config_path);
+                                            menu_state = MenuState::Settings;
+                                            touch_overlay.set_menu_state(MenuState::Settings);
+                                            show_toast(jvm_ptr, activity_ptr, "Fast-Forward: 1X (Normal Speed)");
+                                        }
+                                        FastForwardItem::Speed2x => {
+                                            layout_config.fast_forward_speed = 2;
+                                            touch_overlay.fast_forward_speed = 1;
+                                            let _ = layout_config.save_to_file(&config_path);
+                                            menu_state = MenuState::Settings;
+                                            touch_overlay.set_menu_state(MenuState::Settings);
+                                            show_toast(jvm_ptr, activity_ptr, "Fast-Forward: 2X Speed");
+                                        }
+                                        FastForwardItem::Speed4x => {
+                                            layout_config.fast_forward_speed = 4;
+                                            touch_overlay.fast_forward_speed = 2;
+                                            let _ = layout_config.save_to_file(&config_path);
+                                            menu_state = MenuState::Settings;
+                                            touch_overlay.set_menu_state(MenuState::Settings);
+                                            show_toast(jvm_ptr, activity_ptr, "Fast-Forward: 4X Speed");
+                                        }
+                                        FastForwardItem::Speed8x => {
+                                            layout_config.fast_forward_speed = 8;
+                                            touch_overlay.fast_forward_speed = 3;
+                                            let _ = layout_config.save_to_file(&config_path);
+                                            menu_state = MenuState::Settings;
+                                            touch_overlay.set_menu_state(MenuState::Settings);
+                                            show_toast(jvm_ptr, activity_ptr, "Fast-Forward: 8X Speed");
+                                        }
+                                        FastForwardItem::Uncapped => {
+                                            layout_config.fast_forward_speed = 0;
+                                            touch_overlay.fast_forward_speed = 4;
+                                            let _ = layout_config.save_to_file(&config_path);
+                                            menu_state = MenuState::Settings;
+                                            touch_overlay.set_menu_state(MenuState::Settings);
+                                            show_toast(jvm_ptr, activity_ptr, "Fast-Forward: MAX Speed (Uncapped)");
+                                        }
+                                        FastForwardItem::Back => {
+                                            menu_state = MenuState::Settings;
+                                            touch_overlay.set_menu_state(MenuState::Settings);
                                         }
                                     }
                                 }
@@ -971,7 +1028,8 @@ fn run_android_app(app: AndroidApp) {
             }
 
             // Sub-millisecond fractional frame pacing (59.7275 Hz normal / 119.455 Hz fast-forward / 60 Hz paused menu)
-            let target_frame_nanos = if fast_forward && !is_paused { 8_371_353 } else { 16_742_706 };
+            let is_accelerated = fast_forward && !is_paused && layout_config.fast_forward() != FastForwardSpeed::Normal;
+            let target_frame_nanos = if is_accelerated { 8_371_353 } else { 16_742_706 };
             let target_frame_duration = Duration::from_nanos(target_frame_nanos);
             let elapsed = now.duration_since(last_frame_time);
 

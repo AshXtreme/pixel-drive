@@ -38,6 +38,7 @@ pub enum MenuState {
     SaveLoadSlotSelect { mode: SlotMode },
     Settings,
     LayoutEditor,
+    FastForwardSelect,
     Cheats,
 }
 
@@ -56,7 +57,8 @@ impl MenuState {
             MenuState::SaveLoadSlotSelect { mode: SlotMode::Load } => 3,
             MenuState::Settings => 4,
             MenuState::LayoutEditor => 5,
-            MenuState::Cheats => 6,
+            MenuState::FastForwardSelect => 6,
+            MenuState::Cheats => 7,
         }
     }
 }
@@ -159,6 +161,30 @@ impl SettingsItem {
     }
 }
 
+/// Selectable items within the Fast-Forward Speed Selection modal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FastForwardItem {
+    Normal,
+    Speed2x,
+    Speed4x,
+    Speed8x,
+    Uncapped,
+    Back,
+}
+
+impl FastForwardItem {
+    pub fn shader_index(&self) -> u32 {
+        match self {
+            FastForwardItem::Normal => 1,
+            FastForwardItem::Speed2x => 2,
+            FastForwardItem::Speed4x => 3,
+            FastForwardItem::Speed8x => 4,
+            FastForwardItem::Uncapped => 5,
+            FastForwardItem::Back => 6,
+        }
+    }
+}
+
 /// Selectable toolbar buttons in the Layout Editor screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LayoutEditorToolbarItem {
@@ -178,7 +204,7 @@ impl LayoutEditorToolbarItem {
 }
 
 /// Actions dispatched by menu interaction to the main runtime loop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MenuAction {
     Resume,
     LoadRom,
@@ -191,10 +217,11 @@ pub enum MenuAction {
     ToggleSlotMode,
     BackToMainMenu,
     OpenLayoutEditor,
-    CycleOpacity,
-    CycleScale,
+    OpenFastForwardSelect,
+    SelectFastForward(u8),
+    SetOpacity(f32),
+    SetScale(f32),
     CycleTheme,
-    CycleFastForward,
     SaveLayout,
     ResetLayout,
     CancelLayout,
@@ -270,6 +297,9 @@ impl Default for SettingsLayout {
 }
 
 impl SettingsLayout {
+    pub const SLIDER_X: f32 = 0.44;
+    pub const SLIDER_WIDTH: f32 = 0.28;
+
     pub fn new() -> Self {
         let modal_x = 0.22;
         let modal_y = 0.10;
@@ -304,6 +334,83 @@ impl SettingsLayout {
         None
     }
 
+    /// Checks if a point touches the Opacity slider track.
+    pub fn is_opacity_slider(&self, px: f32, py: f32) -> bool {
+        let op_rect = self.item_rects[1].1;
+        py >= op_rect.y && py <= (op_rect.y + op_rect.height) && px >= Self::SLIDER_X
+    }
+
+    /// Converts normalized touch X to opacity value (0.15 to 1.00).
+    pub fn calculate_opacity(px: f32) -> f32 {
+        let t = ((px - Self::SLIDER_X) / Self::SLIDER_WIDTH).clamp(0.0, 1.0);
+        0.15 + t * 0.85
+    }
+
+    /// Checks if a point touches the Scale slider track.
+    pub fn is_scale_slider(&self, px: f32, py: f32) -> bool {
+        let sc_rect = self.item_rects[2].1;
+        py >= sc_rect.y && py <= (sc_rect.y + sc_rect.height) && px >= Self::SLIDER_X
+    }
+
+    /// Converts normalized touch X to scale value (0.60 to 1.50).
+    pub fn calculate_scale(px: f32) -> f32 {
+        let t = ((px - Self::SLIDER_X) / Self::SLIDER_WIDTH).clamp(0.0, 1.0);
+        0.60 + t * 0.90
+    }
+
+    pub fn is_outside_modal(&self, px: f32, py: f32) -> bool {
+        !self.modal_rect.contains(px, py)
+    }
+}
+
+/// Normalized layout geometry for the Fast-Forward Speed Selection modal.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FastForwardLayout {
+    pub modal_rect: TouchRect,
+    pub item_rects: [(FastForwardItem, TouchRect); 6],
+}
+
+impl Default for FastForwardLayout {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FastForwardLayout {
+    pub fn new() -> Self {
+        let modal_x = 0.22;
+        let modal_y = 0.10;
+        let modal_w = 0.56;
+        let modal_h = 0.80;
+
+        let btn_x = 0.26;
+        let btn_w = 0.48;
+        let btn_h = 0.082;
+        let start_y = 0.205;
+        let gap_y = 0.096;
+
+        Self {
+            modal_rect: TouchRect::new(modal_x, modal_y, modal_w, modal_h),
+            item_rects: [
+                (FastForwardItem::Normal, TouchRect::new(btn_x, start_y, btn_w, btn_h)),
+                (FastForwardItem::Speed2x, TouchRect::new(btn_x, start_y + gap_y, btn_w, btn_h)),
+                (FastForwardItem::Speed4x, TouchRect::new(btn_x, start_y + gap_y * 2.0, btn_w, btn_h)),
+                (FastForwardItem::Speed8x, TouchRect::new(btn_x, start_y + gap_y * 3.0, btn_w, btn_h)),
+                (FastForwardItem::Uncapped, TouchRect::new(btn_x, start_y + gap_y * 4.0, btn_w, btn_h)),
+                (FastForwardItem::Back, TouchRect::new(btn_x, start_y + gap_y * 5.0, btn_w, btn_h)),
+            ],
+        }
+    }
+
+    pub fn hit_test(&self, px: f32, py: f32) -> Option<FastForwardItem> {
+        for (item, rect) in &self.item_rects {
+            if rect.contains(px, py) {
+                return Some(*item);
+            }
+        }
+        None
+    }
+
     pub fn is_outside_modal(&self, px: f32, py: f32) -> bool {
         !self.modal_rect.contains(px, py)
     }
@@ -326,16 +433,16 @@ impl Default for LayoutEditorLayout {
 
 impl LayoutEditorLayout {
     pub fn new() -> Self {
-        let bar_y = 0.035;
-        let bar_h = 0.075;
+        let bar_y = 0.86;
+        let bar_h = 0.085;
         let btn_w = 0.22;
         let btn_h = 0.065;
 
         Self {
             toolbar_rect: TouchRect::new(0.10, bar_y, 0.80, bar_h),
-            save_rect: TouchRect::new(0.14, bar_y + 0.005, btn_w, btn_h),
-            reset_rect: TouchRect::new(0.39, bar_y + 0.005, btn_w, btn_h),
-            cancel_rect: TouchRect::new(0.64, bar_y + 0.005, btn_w, btn_h),
+            save_rect: TouchRect::new(0.14, bar_y + 0.010, btn_w, btn_h),
+            reset_rect: TouchRect::new(0.39, bar_y + 0.010, btn_w, btn_h),
+            cancel_rect: TouchRect::new(0.64, bar_y + 0.010, btn_w, btn_h),
         }
     }
 
@@ -524,5 +631,59 @@ mod tests {
         // Hit Cancel
         let (c_x, c_y) = layout.cancel_rect.center();
         assert_eq!(layout.hit_test(c_x, c_y), Some(LayoutEditorToolbarItem::Cancel));
+    }
+
+    #[test]
+    fn test_fast_forward_layout_hit_testing() {
+        let layout = FastForwardLayout::new();
+
+        // Hit Normal 1X
+        let (x1, y1) = layout.item_rects[0].1.center();
+        assert_eq!(layout.hit_test(x1, y1), Some(FastForwardItem::Normal));
+
+        // Hit 2X
+        let (x2, y2) = layout.item_rects[1].1.center();
+        assert_eq!(layout.hit_test(x2, y2), Some(FastForwardItem::Speed2x));
+
+        // Hit 4X
+        let (x4, y4) = layout.item_rects[2].1.center();
+        assert_eq!(layout.hit_test(x4, y4), Some(FastForwardItem::Speed4x));
+
+        // Hit 8X
+        let (x8, y8) = layout.item_rects[3].1.center();
+        assert_eq!(layout.hit_test(x8, y8), Some(FastForwardItem::Speed8x));
+
+        // Hit Uncapped Max
+        let (xm, ym) = layout.item_rects[4].1.center();
+        assert_eq!(layout.hit_test(xm, ym), Some(FastForwardItem::Uncapped));
+
+        // Hit Back
+        let (xb, yb) = layout.item_rects[5].1.center();
+        assert_eq!(layout.hit_test(xb, yb), Some(FastForwardItem::Back));
+    }
+
+    #[test]
+    fn test_settings_slider_calculations() {
+        let layout = SettingsLayout::new();
+        let op_y = layout.item_rects[1].1.center().1;
+
+        assert!(layout.is_opacity_slider(0.50, op_y));
+        assert!(!layout.is_opacity_slider(0.30, op_y));
+
+        let op_min = SettingsLayout::calculate_opacity(0.44);
+        assert!((op_min - 0.15).abs() < 1e-4);
+
+        let op_max = SettingsLayout::calculate_opacity(0.72);
+        assert!((op_max - 1.00).abs() < 1e-4);
+
+        let sc_y = layout.item_rects[2].1.center().1;
+        assert!(layout.is_scale_slider(0.50, sc_y));
+        assert!(!layout.is_scale_slider(0.30, sc_y));
+
+        let sc_min = SettingsLayout::calculate_scale(0.44);
+        assert!((sc_min - 0.60).abs() < 1e-4);
+
+        let sc_max = SettingsLayout::calculate_scale(0.72);
+        assert!((sc_max - 1.50).abs() < 1e-4);
     }
 }
