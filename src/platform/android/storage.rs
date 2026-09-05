@@ -14,6 +14,7 @@ use crate::save::SaveManager;
 /// Default directory names under Android scoped storage.
 pub const ANDROID_SAVES_SUBDIR: &str = "saves";
 pub const ANDROID_STATES_SUBDIR: &str = "states";
+pub const ANDROID_CHEATS_SUBDIR: &str = "cheats";
 
 /// Request code used when launching the SAF document picker intent.
 pub const SAF_ROM_PICKER_REQUEST_CODE: i32 = 0x524F; // "RO"
@@ -24,6 +25,7 @@ pub struct AndroidStorage {
     base_dir: PathBuf,
     saves_dir: PathBuf,
     states_dir: PathBuf,
+    cheats_dir: PathBuf,
 }
 
 impl AndroidStorage {
@@ -31,6 +33,7 @@ impl AndroidStorage {
     pub fn new(base_dir: PathBuf) -> Self {
         let saves_dir = base_dir.join(ANDROID_SAVES_SUBDIR);
         let states_dir = base_dir.join(ANDROID_STATES_SUBDIR);
+        let cheats_dir = base_dir.join(ANDROID_CHEATS_SUBDIR);
 
         if let Err(err) = fs::create_dir_all(&saves_dir) {
             warn!("Failed to create Android saves directory {:?}: {}", saves_dir, err);
@@ -38,18 +41,23 @@ impl AndroidStorage {
         if let Err(err) = fs::create_dir_all(&states_dir) {
             warn!("Failed to create Android states directory {:?}: {}", states_dir, err);
         }
+        if let Err(err) = fs::create_dir_all(&cheats_dir) {
+            warn!("Failed to create Android cheats directory {:?}: {}", cheats_dir, err);
+        }
 
         info!(
-            "Android Scoped Storage initialized:\n  Base: {}\n  Saves: {}\n  States: {}",
+            "Android Scoped Storage initialized:\n  Base: {}\n  Saves: {}\n  States: {}\n  Cheats: {}",
             base_dir.display(),
             saves_dir.display(),
-            states_dir.display()
+            states_dir.display(),
+            cheats_dir.display()
         );
 
         Self {
             base_dir,
             saves_dir,
             states_dir,
+            cheats_dir,
         }
     }
 
@@ -66,6 +74,16 @@ impl AndroidStorage {
     /// Returns the dedicated states directory path.
     pub fn states_dir(&self) -> &Path {
         &self.states_dir
+    }
+
+    /// Returns the dedicated cheats directory path.
+    pub fn cheats_dir(&self) -> &Path {
+        &self.cheats_dir
+    }
+
+    /// Derives canonical per-game cheat file path: `<storage_dir>/cheats/<crc32_hex>.cht`.
+    pub fn get_cheat_path(&self, rom_crc32: u32) -> PathBuf {
+        self.cheats_dir.join(format!("{:08X}.cht", rom_crc32))
     }
 
     /// Derives canonical cartridge SRAM save path: `<storage_dir>/saves/<game_title>.sav`.
@@ -231,6 +249,20 @@ impl AndroidStorage {
         }
         slots
     }
+
+    /// Deletes a save state slot and its associated metadata under scoped storage.
+    pub fn delete_slot(&self, game_title: &str, slot: u8) -> std::io::Result<()> {
+        let clamped_slot = slot.clamp(1, 5);
+        let state_path = self.get_slot_state_path(game_title, clamped_slot);
+        let meta_path = self.get_slot_meta_path(game_title, clamped_slot);
+        if state_path.exists() {
+            let _ = fs::remove_file(state_path);
+        }
+        if meta_path.exists() {
+            let _ = fs::remove_file(meta_path);
+        }
+        Ok(())
+    }
 }
 
 impl PlatformStorage for AndroidStorage {
@@ -240,6 +272,10 @@ impl PlatformStorage for AndroidStorage {
 
     fn get_state_path(&self, rom_identifier: &str, slot: usize) -> PathBuf {
         self.get_state_path(rom_identifier, slot)
+    }
+
+    fn get_cheat_path(&self, rom_crc32: u32) -> PathBuf {
+        self.get_cheat_path(rom_crc32)
     }
 
     fn load_save(&self, rom_identifier: &str) -> Option<Vec<u8>> {

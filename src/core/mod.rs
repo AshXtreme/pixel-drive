@@ -56,4 +56,17 @@ pub trait EmulatorCore {
 
     /// Resets the emulation core to its initial state
     fn reset(&mut self) {}
+
+    /// Injects or applies active cheat codes to the emulation core before frame execution
+    fn apply_cheats(&mut self, _engine: &mut crate::cheats::CheatEngine) {}
+
+    /// Returns the ROM identifier metadata if known by the active core
+    fn rom_identifier(&self) -> Option<crate::rom::RomIdentifier> {
+        None
+    }
+
+    /// Returns raw ROM bytes if stored by the active core
+    fn rom_bytes(&self) -> Option<&[u8]> {
+        None
+    }
 }

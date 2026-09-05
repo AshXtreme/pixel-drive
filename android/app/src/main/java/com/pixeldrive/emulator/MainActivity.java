@@ -61,12 +61,20 @@ public class MainActivity extends NativeActivity {
                     if (takeFlags != 0) {
                         try {
                             getContentResolver().takePersistableUriPermission(uri, takeFlags);
-                        } catch (SecurityException ignored) {}
+                            Log.i(TAG, "Acquired persistable URI permission for " + uriString + " with flags: 0x" + Integer.toHexString(takeFlags));
+                        } catch (SecurityException se) {
+                            Log.w(TAG, "Could not take persistable URI permission (provider might not support persistence): " + se.getMessage());
+                        }
+                    } else {
+                        Log.d(TAG, "No persistable flags returned in data intent; streaming direct content stream");
                     }
-                } catch (Throwable ignored) {}
+                } catch (Throwable t) {
+                    Log.w(TAG, "Unexpected error attempting persistable URI permission: " + t.getMessage());
+                }
 
                 try {
                     nativeOnRomSelected(uriString);
+                    Log.i(TAG, "Dispatched nativeOnRomSelected to JNI event loop for: " + uriString);
                 } catch (UnsatisfiedLinkError err) {
                     Log.e(TAG, "Failed to invoke nativeOnRomSelected: " + err.getMessage());
                 }
@@ -92,9 +100,9 @@ public class MainActivity extends NativeActivity {
                         "application/x-gameboy-rom",
                         "application/x-gba-rom"
                     });
-                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
                     startActivityForResult(intent, REQUEST_CODE_PICK_ROM);
-                    Log.i(TAG, "Successfully fired ACTION_OPEN_DOCUMENT intent");
+                    Log.i(TAG, "Successfully fired ACTION_OPEN_DOCUMENT intent (persistable URI requested)");
                 } catch (Exception e) {
                     Log.e(TAG, "Failed to launch ACTION_OPEN_DOCUMENT: " + e.getMessage(), e);
                 }

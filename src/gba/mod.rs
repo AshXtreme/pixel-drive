@@ -76,6 +76,8 @@ pub struct GbaCore {
     pub header: Option<GbaHeader>,
     pub libretro: Option<LibretroCore>,
     pub rom_path: Option<std::path::PathBuf>,
+    pub rom_identifier: Option<crate::rom::RomIdentifier>,
+    pub rom_bytes: Option<Vec<u8>>,
 }
 
 impl Default for GbaCore {
@@ -115,6 +117,8 @@ impl GbaCore {
             header: None,
             libretro,
             rom_path: None,
+            rom_identifier: None,
+            rom_bytes: None,
         };
         core.reset_boot_state();
         core
@@ -161,6 +165,8 @@ impl GbaCore {
     /// Load raw ROM byte buffer into GBA MMU memory space with a filename hint.
     pub fn load_rom_with_hint(&mut self, rom_bytes: &[u8], filename_hint: &str) {
         self.header = GbaHeader::parse(rom_bytes);
+        self.rom_identifier = Some(crate::rom::identify_rom(rom_bytes));
+        self.rom_bytes = Some(rom_bytes.to_vec());
         self.mmu.load_rom(rom_bytes);
         self.reset_boot_state();
 
@@ -414,9 +420,24 @@ impl EmulatorCore for GbaCore {
     fn reset(&mut self) {
         if let Some(ref mut lr) = self.libretro {
             lr.reset();
-        } else {
-            self.reset_boot_state();
         }
+        self.reset_boot_state();
+    }
+
+    fn apply_cheats(&mut self, engine: &mut crate::cheats::CheatEngine) {
+        if let Some(ref mut lr) = self.libretro {
+            engine.apply_to_gba_libretro(lr);
+        } else {
+            engine.apply_to_gba_mmu(&mut self.mmu);
+        }
+    }
+
+    fn rom_identifier(&self) -> Option<crate::rom::RomIdentifier> {
+        self.rom_identifier.clone()
+    }
+
+    fn rom_bytes(&self) -> Option<&[u8]> {
+        self.rom_bytes.as_deref()
     }
 }
 

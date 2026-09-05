@@ -1,11 +1,13 @@
 pub mod menu;
 pub mod layout_config;
+pub mod cheats_menu;
 pub use menu::{
     FastForwardItem, FastForwardLayout, LayoutEditorLayout, LayoutEditorToolbarItem, MenuAction,
     MenuItem, MenuLayout, MenuState, SaveLoadItem, SaveLoadLayout, SettingsItem, SettingsLayout,
     SlotMode,
 };
 pub use layout_config::{FastForwardSpeed, TouchLayoutConfig, UiTheme};
+pub use cheats_menu::CheatsMenu;
 
 use crate::input::TouchOverlayPreset;
 use crate::render::FilterMode;
@@ -39,6 +41,7 @@ pub enum GuiAction {
     SetTouchOverlayScale(f32),
     SetTouchOverlayPreset(TouchOverlayPreset),
     ToggleDynamicDpad,
+    OpenCheatsMenu,
 }
 
 /// GuiRenderer manages egui state, overlay drawing, top menu bar, and on-screen HUD.
@@ -75,6 +78,9 @@ pub struct GuiRenderer {
     pub touch_overlay_scale: f32,
     pub touch_overlay_preset: TouchOverlayPreset,
     pub touch_dynamic_dpad: bool,
+
+    // Cheat Codes Modal
+    pub cheats_menu: CheatsMenu,
 }
 
 impl GuiRenderer {
@@ -109,10 +115,11 @@ impl GuiRenderer {
             active_core_name: "GBC".to_string(),
             toast: None,
             show_touch_overlay: false,
-            touch_overlay_opacity: 0.65,
+            touch_overlay_opacity: 0.85,
             touch_overlay_scale: 1.0,
             touch_overlay_preset: TouchOverlayPreset::Standard,
             touch_dynamic_dpad: false,
+            cheats_menu: CheatsMenu::new(),
         }
     }
 
@@ -199,8 +206,12 @@ impl GuiRenderer {
                                 actions.push(GuiAction::TogglePause);
                                 ui.close_menu();
                             }
-                            if ui.button("🔄 Reset Core").clicked() {
+                            if ui.button("🔄 Reset Game (Ctrl+R)").clicked() {
                                 actions.push(GuiAction::Reset);
+                                ui.close_menu();
+                            }
+                            if ui.button("👾 Cheat Codes...").clicked() {
+                                actions.push(GuiAction::OpenCheatsMenu);
                                 ui.close_menu();
                             }
                             ui.separator();

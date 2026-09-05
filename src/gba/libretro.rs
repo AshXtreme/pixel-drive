@@ -157,6 +157,8 @@ pub type RetroGetMemorySizeFn = unsafe extern "C" fn(id: c_uint) -> usize;
 pub type RetroSerializeSizeFn = unsafe extern "C" fn() -> usize;
 pub type RetroSerializeFn = unsafe extern "C" fn(data: *mut c_void, size: usize) -> bool;
 pub type RetroUnserializeFn = unsafe extern "C" fn(data: *const c_void, size: usize) -> bool;
+pub type RetroCheatResetFn = unsafe extern "C" fn();
+pub type RetroCheatSetFn = unsafe extern "C" fn(index: c_uint, enabled: bool, code: *const c_char);
 
 // ============================================================================
 // Global Thread-Safe Bridge State
@@ -690,6 +692,8 @@ pub struct LibretroCore {
     retro_serialize_size: RetroSerializeSizeFn,
     retro_serialize: RetroSerializeFn,
     retro_unserialize: RetroUnserializeFn,
+    pub retro_cheat_reset: Option<RetroCheatResetFn>,
+    pub retro_cheat_set: Option<RetroCheatSetFn>,
 
     pub library_name: String,
     pub library_version: String,
@@ -756,6 +760,10 @@ impl LibretroCore {
             unsafe { *lib.get(b"retro_serialize_size")? };
         let retro_serialize: RetroSerializeFn = unsafe { *lib.get(b"retro_serialize")? };
         let retro_unserialize: RetroUnserializeFn = unsafe { *lib.get(b"retro_unserialize")? };
+        let retro_cheat_reset: Option<RetroCheatResetFn> =
+            unsafe { lib.get(b"retro_cheat_reset").ok().map(|s| *s) };
+        let retro_cheat_set: Option<RetroCheatSetFn> =
+            unsafe { lib.get(b"retro_cheat_set").ok().map(|s| *s) };
 
         // Initialize bridge state with default system & save directory paths from storage
         let (sys_dir_c, save_dir_c) = {
@@ -836,6 +844,8 @@ impl LibretroCore {
             retro_serialize_size,
             retro_serialize,
             retro_unserialize,
+            retro_cheat_reset,
+            retro_cheat_set,
 
             library_name,
             library_version,
@@ -1020,6 +1030,45 @@ impl LibretroCore {
             unsafe {
                 (self.retro_reset)();
             }
+        }
+    }
+
+    /// Reset all registered cheat codes in the Libretro core.
+    pub fn cheat_reset(&mut self) {
+        if let Some(reset_fn) = self.retro_cheat_reset {
+            let _lock = LIBRETRO_LOCK.lock();
+            unsafe {
+                reset_fn();
+            }
+        }
+    }
+
+    /// Registers or updates a cheat code with the Libretro core.
+    pub fn cheat_set(&mut self, index: u32, enabled: bool, code: &str) -> bool {
+        if let Some(set_fn) = self.retro_cheat_set {
+            if let Ok(c_code) = std::ffi::CString::new(code) {
+                let _lock = LIBRETRO_LOCK.lock();
+                unsafe {
+                    set_fn(index as c_uint, enabled, c_code.as_ptr());
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Returns a mutable slice to active System RAM (EWRAM) if exposed by the Libretro core.
+    pub fn get_system_ram_mut(&mut self) -> Option<&mut [u8]> {
+        let ptr = unsafe { (self.retro_get_memory_data)(RETRO_MEMORY_SYSTEM_RAM) };
+        let size = unsafe { (self.retro_get_memory_size)(RETRO_MEMORY_SYSTEM_RAM) };
+        if !ptr.is_null()
+            && size > 0
+            && (ptr as usize) != usize::MAX
+            && (ptr as usize) != (u32::MAX as usize)
+        {
+            Some(unsafe { std::slice::from_raw_parts_mut(ptr as *mut u8, size) })
+        } else {
+            None
         }
     }
 

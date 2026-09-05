@@ -4,6 +4,7 @@
 //! emulator in Rust targeting macOS, Windows, and Android.
 
 pub mod audio;
+pub mod cheats;
 pub mod core;
 pub mod error;
 pub mod gba;
@@ -11,10 +12,12 @@ pub mod gbc;
 pub mod input;
 pub mod platform;
 pub mod render;
+pub mod rom;
 pub mod save;
 pub mod ui;
 
 pub use audio::{AudioPlayer, AudioProducer};
+pub use cheats::{CheatEngine, CheatEntry, CheatType, GameCheats};
 pub use core::{Button, EmulatorCore};
 pub use error::PixelDriveError;
 pub use gba::GbaCore;
@@ -28,9 +31,10 @@ pub use platform::{DesktopHaptics, DesktopStorage, PlatformAudio, PlatformHaptic
 #[cfg(target_os = "android")]
 pub use platform::{AndroidAudioPlayer, AndroidHaptics, AndroidStorage};
 pub use render::{FilterMode, ShaderPipeline, TouchOverlayRenderer, TouchOverlayUniforms};
+pub use rom::{identify_rom, RomIdentifier};
 pub use save::{format_unix_timestamp, SaveManager, SlotMetadata};
 pub use ui::{
-    FastForwardSpeed, MenuAction, MenuItem, MenuLayout, MenuState, SaveLoadItem, SaveLoadLayout,
-    SlotMode, TouchLayoutConfig, UiTheme,
+    CheatsMenu, FastForwardSpeed, MenuAction, MenuItem, MenuLayout, MenuState, SaveLoadItem,
+    SaveLoadLayout, SlotMode, TouchLayoutConfig, UiTheme,
 };
 

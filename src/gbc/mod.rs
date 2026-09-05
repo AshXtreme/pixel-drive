@@ -28,6 +28,8 @@ pub struct GbcCore {
     frame_count: u32,
     audio_producer: Option<AudioProducer>,
     pub rom_path: Option<std::path::PathBuf>,
+    pub rom_identifier: Option<crate::rom::RomIdentifier>,
+    pub rom_bytes: Option<Vec<u8>>,
 }
 
 pub const MAX_GBC_ROM_SIZE: usize = 8 * 1024 * 1024; // 8 MB max
@@ -50,6 +52,8 @@ impl GbcCore {
             frame_count: 0,
             audio_producer: None,
             rom_path: None,
+            rom_identifier: None,
+            rom_bytes: None,
         }
     }
 
@@ -65,6 +69,8 @@ impl GbcCore {
             "Loaded {} bytes into GBC MMU. Resetting CPU, PPU, Timer, and Memory state.",
             rom_bytes.len()
         );
+        self.rom_identifier = Some(crate::rom::identify_rom(rom_bytes));
+        self.rom_bytes = Some(rom_bytes.to_vec());
         self.cpu = Cpu::new();
         self.ppu = Ppu::new();
         self.timer = Timer::new();
@@ -284,6 +290,18 @@ impl EmulatorCore for GbcCore {
                 self.load_save_data(&sram);
             }
         }
+    }
+
+    fn apply_cheats(&mut self, engine: &mut crate::cheats::CheatEngine) {
+        engine.apply_to_gbc(&mut self.mmu);
+    }
+
+    fn rom_identifier(&self) -> Option<crate::rom::RomIdentifier> {
+        self.rom_identifier.clone()
+    }
+
+    fn rom_bytes(&self) -> Option<&[u8]> {
+        self.rom_bytes.as_deref()
     }
 }
 

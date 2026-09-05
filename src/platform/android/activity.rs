@@ -15,6 +15,7 @@ use raw_window_handle::{
 };
 
 use crate::audio::AudioProducer;
+use crate::cheats::CheatEngine;
 use crate::core::EmulatorCore;
 use crate::gba::{GbaCore, GbaHeader};
 use crate::gbc::GbcCore;
@@ -428,6 +429,7 @@ fn run_android_app(app: AndroidApp) {
     let mut menu_state = MenuState::Hidden;
     let mut fast_forward = false;
     let mut running = true;
+    let mut cheat_engine = CheatEngine::new();
 
     // 8. Frame pacing and thermal management
     let mut last_frame_time = Instant::now();
@@ -463,6 +465,9 @@ fn run_android_app(app: AndroidApp) {
                                     if let Err(err) = px.resize_buffer(core_width, core_height) {
                                         warn!("Failed to resize Pixels buffer after ROM load: {:?}", err);
                                     }
+                                }
+                                if let Some(bytes) = active_core.rom_bytes() {
+                                    cheat_engine.load_for_rom(bytes, storage.base_dir());
                                 }
                                 is_paused = false;
                                 if let Some(ref mut player) = audio_player {
@@ -857,6 +862,18 @@ fn run_android_app(app: AndroidApp) {
                                     menu_state = MenuState::Settings;
                                     touch_overlay.set_menu_state(MenuState::Settings);
                                 }
+                                TouchAction::MenuSelect(MenuItem::Cheats) => {
+                                    info!("Opening in-game Cheat Codes status for '{}'", current_game_title);
+                                    let active = cheat_engine.cheats.enabled_count();
+                                    let total = cheat_engine.cheats.len();
+                                    if total == 0 {
+                                        show_toast(jvm_ptr, activity_ptr, "Cheats: No codes configured (.cht)");
+                                    } else {
+                                        show_toast(jvm_ptr, activity_ptr, &format!("Cheats Active: {}/{}", active, total));
+                                    }
+                                    menu_state = MenuState::Cheats;
+                                    touch_overlay.set_menu_state(MenuState::Cheats);
+                                }
                                 TouchAction::SettingsSelect(item) => {
                                     match item {
                                         SettingsItem::CustomizeControls => {
@@ -973,10 +990,6 @@ fn run_android_app(app: AndroidApp) {
                                         }
                                     }
                                 }
-                                TouchAction::MenuSelect(MenuItem::Cheats) => {
-                                    info!("Menu option 'Cheat Codes' selected (Phase 4 placeholder)");
-                                    show_toast(jvm_ptr, activity_ptr, "Cheat Codes (Coming in Phase 4)");
-                                }
                                 TouchAction::QuickSave => {
                                     info!("QuickSave triggered for '{}'", current_game_title);
                                     if let Some(state_data) = active_core.save_state() {
@@ -1044,6 +1057,7 @@ fn run_android_app(app: AndroidApp) {
                 if !is_paused {
                     let steps = if fast_forward { layout_config.fast_forward().steps_per_frame() } else { 1 };
                     for _ in 0..steps {
+                        active_core.apply_cheats(&mut cheat_engine);
                         active_core.step_frame();
 
                         let audio_samples = active_core.audio_buffer();

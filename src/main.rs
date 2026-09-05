@@ -389,6 +389,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut input_manager = input::InputManager::new();
     let mut mouse_down = false;
     let mut last_mouse_pos = (0.0f32, 0.0f32);
+    let mut cheat_engine = pixeldrive::cheats::CheatEngine::new();
 
     // Check for CLI ROM argument on startup: cargo run -- path/to/game.gba
     if let Some(cli_rom_arg) = std::env::args().nth(1) {
@@ -417,6 +418,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
                 gui.show_toast(format!("Loaded: {}", name));
                 current_rom_path = Some(cli_path);
+                if let Some(bytes) = active_core.rom_bytes() {
+                    cheat_engine.load_for_rom(bytes, &std::path::PathBuf::from("saves"));
+                }
             }
         } else {
             warn!("CLI ROM file path does not exist: {}", cli_path.display());
@@ -485,7 +489,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             gui.loaded_rom_name = Some(name.clone());
                             gui.active_core_name = if active_core.display_dimensions() == (240, 160) { "GBA".to_string() } else { "GBC".to_string() };
                             gui.show_toast(format!("Loaded: {}", name));
-                            current_rom_path = Some(path);
+                            current_rom_path = Some(path.to_path_buf());
+                            if let Some(bytes) = active_core.rom_bytes() {
+                                cheat_engine.load_for_rom(bytes, &std::path::PathBuf::from("saves"));
+                            }
                         }
                     }
 
@@ -758,6 +765,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let steps = if fast_forward { 2 } else { 1 };
 
                             for _ in 0..steps {
+                                active_core.apply_cheats(&mut cheat_engine);
                                 active_core.step_frame();
 
                                 // Forward any core-buffered audio samples to host stream
@@ -836,6 +844,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                             gui.active_core_name = if active_core.display_dimensions() == (240, 160) { "GBA".to_string() } else { "GBC".to_string() };
                                             gui.show_toast(format!("Loaded: {}", name));
                                             current_rom_path = Some(file);
+                                            if let Some(bytes) = active_core.rom_bytes() {
+                                                cheat_engine.load_for_rom(bytes, &std::path::PathBuf::from("saves"));
+                                            }
                                         }
                                     }
                                 }
@@ -854,6 +865,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         gui.active_core_name = if active_core.display_dimensions() == (240, 160) { "GBA".to_string() } else { "GBC".to_string() };
                                         gui.show_toast(format!("Loaded: {}", name));
                                         current_rom_path = Some(file);
+                                        if let Some(bytes) = active_core.rom_bytes() {
+                                            cheat_engine.load_for_rom(bytes, &std::path::PathBuf::from("saves"));
+                                        }
                                     }
                                 }
                                 GuiAction::UnloadRom => {
@@ -1010,6 +1024,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         gui.show_toast("Dynamic D-Pad: Disabled");
                                     }
                                 }
+                                GuiAction::OpenCheatsMenu => {
+                                    let is_gba = active_core.display_dimensions() == (240, 160);
+                                    gui.cheats_menu.open(is_gba);
+                                }
                             }
                         }
 
@@ -1034,6 +1052,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 win_size.width,
                                 win_size.height,
                             );
+                            gui.cheats_menu.show(&gui.context, &mut cheat_engine);
                             gui.render(encoder, render_target, context, &window);
                             Ok(())
                         });

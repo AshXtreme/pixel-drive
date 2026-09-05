@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use crate::audio::AudioProducer;
 use crate::save::SaveManager;
 
-#[cfg(target_os = "android")]
 pub mod android;
 
+pub use android::AndroidStorage;
 #[cfg(target_os = "android")]
-pub use android::{AndroidAudioPlayer, AndroidHaptics, AndroidStorage};
+pub use android::{AndroidAudioPlayer, AndroidHaptics};
 
 /// Unified platform abstraction for tactile haptic vibration feedback.
 pub trait PlatformHaptics {
@@ -84,6 +84,9 @@ pub trait PlatformStorage {
     /// Resolves canonical save state path (`<storage_dir>/states/<game_title>.slot{slot}.state`).
     fn get_state_path(&self, rom_identifier: &str, slot: usize) -> PathBuf;
 
+    /// Resolves canonical per-game cheat file path (`<storage_dir>/cheats/<crc32_hex>.cht`).
+    fn get_cheat_path(&self, rom_crc32: u32) -> PathBuf;
+
     /// Reads battery-backed SRAM save data for the given game.
     fn load_save(&self, rom_identifier: &str) -> Option<Vec<u8>>;
 
@@ -119,7 +122,12 @@ impl DesktopStorage {
     pub fn new(base_dir: PathBuf) -> Self {
         let _ = std::fs::create_dir_all(&base_dir);
         let _ = std::fs::create_dir_all(base_dir.join("states"));
+        let _ = std::fs::create_dir_all(base_dir.join("cheats"));
         Self { base_dir }
+    }
+
+    pub fn base_dir(&self) -> &std::path::Path {
+        &self.base_dir
     }
 
     pub fn sanitize_stem(raw: &str) -> String {
@@ -141,6 +149,10 @@ impl DesktopStorage {
     pub fn get_slots_info(&self, game_title: &str) -> [crate::save::SlotMetadata; 5] {
         SaveManager::get_slots_info(game_title)
     }
+
+    pub fn delete_slot(&self, game_title: &str, slot: u8) -> std::io::Result<()> {
+        SaveManager::delete_slot(game_title, slot)
+    }
 }
 
 impl PlatformStorage for DesktopStorage {
@@ -152,6 +164,10 @@ impl PlatformStorage for DesktopStorage {
     fn get_state_path(&self, rom_identifier: &str, slot: usize) -> PathBuf {
         let stem = Self::sanitize_stem(rom_identifier);
         self.base_dir.join(format!("{}.state{}", stem, slot))
+    }
+
+    fn get_cheat_path(&self, rom_crc32: u32) -> PathBuf {
+        self.base_dir.join("cheats").join(format!("{:08X}.cht", rom_crc32))
     }
 
     fn load_save(&self, rom_identifier: &str) -> Option<Vec<u8>> {
