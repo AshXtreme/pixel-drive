@@ -380,6 +380,18 @@ fn draw_ff_icon(p: vec2<f32>, sz: f32) -> f32 {
     return min(t1, t2);
 }
 
+// Procedural Haptic Vibration Icon (📳 Device with lateral vibration waves)
+fn draw_vibration_icon(p: vec2<f32>, sz: f32) -> f32 {
+    let th = 0.0016;
+    let dev = sd_rounded_box(p, vec2<f32>(sz * 0.16, sz * 0.28), sz * 0.04);
+    let dev_rim = abs(dev + 0.001) - th;
+    let w_l1 = sd_segment(p, vec2<f32>(-sz * 0.26, -sz * 0.18), vec2<f32>(-sz * 0.32, 0.0)) - th;
+    let w_l2 = sd_segment(p, vec2<f32>(-sz * 0.32, 0.0), vec2<f32>(-sz * 0.26, sz * 0.18)) - th;
+    let w_r1 = sd_segment(p, vec2<f32>(sz * 0.26, -sz * 0.18), vec2<f32>(sz * 0.32, 0.0)) - th;
+    let w_r2 = sd_segment(p, vec2<f32>(sz * 0.32, 0.0), vec2<f32>(sz * 0.26, sz * 0.18)) - th;
+    return min(dev_rim, min(min(w_l1, w_l2), min(w_r1, w_r2)));
+}
+
 // Procedural Checkmark Icon (✔ Save)
 fn draw_check_icon(p: vec2<f32>, sz: f32) -> f32 {
     let th = 0.0022;
@@ -674,6 +686,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let col_accent_reset = vec3<f32>(0.72, 0.45, 0.42);
     let col_accent_settings = vec3<f32>(0.45, 0.50, 0.58);
     let col_accent_cheats = vec3<f32>(0.58, 0.48, 0.55);
+    let col_accent_haptics = vec3<f32>(0.38, 0.68, 0.65);
 
     if (uniforms.menu_state == 1u) {
         // ====================================================================
@@ -945,7 +958,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         // 2. Centered Solid Opaque Modal Card
         let modal_c = vec2<f32>(0.50 * aspect, 0.50);
-        let modal_half = vec2<f32>(0.28 * aspect, 0.40);
+        let modal_half = vec2<f32>(0.28 * aspect, 0.42);
         let modal_r = 0.024;
         let card_p = p - modal_c;
         let card_d = sd_rounded_box(card_p, modal_half, modal_r);
@@ -960,23 +973,23 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         final_color = blend_over(card_rim, blend_over(card_bg, final_color));
 
         // 3. Header: Gear Icon and Settings Title
-        let hdr_c = vec2<f32>(0.50 * aspect, 0.155);
+        let hdr_c = vec2<f32>(0.50 * aspect, 0.125);
         let hdr_p = p - hdr_c;
         if (length(hdr_p) < 0.06) {
-            let gear_d = draw_gear_icon(hdr_p, 0.024);
+            let gear_d = draw_gear_icon(hdr_p, 0.022);
             let gear_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, gear_d));
             final_color = blend_over(gear_col, final_color);
         }
 
         // Header Divider Line
-        let div_c = vec2<f32>(0.50 * aspect, 0.188);
+        let div_c = vec2<f32>(0.50 * aspect, 0.155);
         let div_p = p - div_c;
         let div_d = sd_segment(div_p, vec2<f32>(-modal_half.x * 0.82, 0.0), vec2<f32>(modal_half.x * 0.82, 0.0)) - 0.0010;
         let div_col = vec4<f32>(0.24, 0.27, 0.32, 0.90 * smoothstep(aa, -aa, div_d));
         final_color = blend_over(div_col, final_color);
 
         // 4. Interactive Settings Option Rows
-        let row_half = vec2<f32>(0.24 * aspect, 0.041);
+        let row_half = vec2<f32>(0.24 * aspect, 0.036);
         let row_r = 0.016;
         let pressed_item = uniforms.menu_pressed_item;
         let text_start_x = -row_half.x + 0.078;
@@ -985,7 +998,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let stroke_w = 0.0016;
 
         // Row 1: Customize Controls (Item 1 / Slate Accent)
-        let r1_c = vec2<f32>(0.50 * aspect, 0.246);
+        let r1_c = vec2<f32>(0.50 * aspect, 0.206);
         let r1_p = p - r1_c;
         if (abs(r1_p.y) < row_half.y * 1.3 && abs(r1_p.x) < row_half.x * 1.1) {
             let r1_col = render_modal_row(r1_p, row_half, row_r, pressed_item == 1u, col_btn_bg, col_accent_rom, aa);
@@ -997,7 +1010,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
 
         // Row 2: Button Opacity Slider (Item 2 / Steel Accent)
-        let r2_c = vec2<f32>(0.50 * aspect, 0.342);
+        let r2_c = vec2<f32>(0.50 * aspect, 0.288);
         let r2_p = p - r2_c;
         if (abs(r2_p.y) < row_half.y * 1.3 && abs(r2_p.x) < row_half.x * 1.1) {
             let r2_col = render_modal_row(r2_p, row_half, row_r, pressed_item == 2u, col_btn_bg, col_accent_settings, aa);
@@ -1010,7 +1023,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
 
         // Row 3: Overall Scale Slider (Item 3 / Lavender Accent)
-        let r3_c = vec2<f32>(0.50 * aspect, 0.438);
+        let r3_c = vec2<f32>(0.50 * aspect, 0.370);
         let r3_p = p - r3_c;
         if (abs(r3_p.y) < row_half.y * 1.3 && abs(r3_p.x) < row_half.x * 1.1) {
             let r3_col = render_modal_row(r3_p, row_half, row_r, pressed_item == 3u, col_btn_bg, col_accent_state, aa);
@@ -1023,7 +1036,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
 
         // Row 4: UI Theme Selection (Item 4 / Mint Accent)
-        let r4_c = vec2<f32>(0.50 * aspect, 0.534);
+        let r4_c = vec2<f32>(0.50 * aspect, 0.452);
         let r4_p = p - r4_c;
         if (abs(r4_p.y) < row_half.y * 1.3 && abs(r4_p.x) < row_half.x * 1.1) {
             let r4_col = render_modal_row(r4_p, row_half, row_r, pressed_item == 4u, col_btn_bg, col_accent_resume, aa);
@@ -1035,7 +1048,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
 
         // Row 5: Fast-Forward Speed (Item 5 / Terracotta Accent)
-        let r5_c = vec2<f32>(0.50 * aspect, 0.630);
+        let r5_c = vec2<f32>(0.50 * aspect, 0.534);
         let r5_p = p - r5_c;
         if (abs(r5_p.y) < row_half.y * 1.3 && abs(r5_p.x) < row_half.x * 1.1) {
             let r5_col = render_modal_row(r5_p, row_half, row_r, pressed_item == 5u, col_btn_bg, col_accent_reset, aa);
@@ -1046,16 +1059,45 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r5_col)), final_color);
         }
 
-        // Row 6: Back to Main Menu (Item 6 / Steel Accent)
-        let r6_c = vec2<f32>(0.50 * aspect, 0.726);
+        // Row 6: Haptic Feedback Toggle (Item 6 / Teal Accent)
+        let r6_c = vec2<f32>(0.50 * aspect, 0.616);
         let r6_p = p - r6_c;
         if (abs(r6_p.y) < row_half.y * 1.3 && abs(r6_p.x) < row_half.x * 1.1) {
-            let r6_col = render_modal_row(r6_p, row_half, row_r, pressed_item == 6u, col_btn_bg, col_accent_settings, aa);
-            let icon_d = draw_back_arrow(r6_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
+            let r6_col = render_modal_row(r6_p, row_half, row_r, pressed_item == 6u, col_btn_bg, col_accent_haptics, aa);
+            let icon_d = draw_vibration_icon(r6_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
             let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
-            let txt_d = draw_vector_string(r6_p, text_start_x, char_sz, spacing, stroke_w, 66u, 65u, 67u, 75u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 4u);
+            let txt_d = draw_vector_string(r6_p, text_start_x, char_sz, spacing, stroke_w, 72u, 65u, 80u, 84u, 73u, 67u, 83u, 0u, 0u, 0u, 0u, 7u);
             let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
-            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r6_col)), final_color);
+
+            // Status indicator / Action pill on right: [ ON ] / [ OFF ]
+            let pill_half = vec2<f32>(0.034 * aspect, 0.018);
+            let pill_c = vec2<f32>(row_half.x - 0.048, 0.0);
+            let pill_d = sd_rounded_box(r6_p - pill_c, pill_half, 0.008);
+            let haptics_on = ((uniforms.settings_values >> 24u) & 1u) != 0u;
+            let pill_accent = select(vec3<f32>(0.40, 0.45, 0.50), vec3<f32>(0.22, 0.78, 0.45), haptics_on);
+            let pill_bg = vec4<f32>(pill_accent, select(0.35, 0.85, haptics_on) * smoothstep(aa, -aa, pill_d));
+            let status_txt_d = select(
+                draw_vector_string(r6_p - pill_c, -0.016, vec2<f32>(0.009, 0.014), 0.011, 0.0013, 79u, 70u, 70u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 3u),
+                draw_vector_string(r6_p - pill_c, -0.011, vec2<f32>(0.009, 0.014), 0.011, 0.0013, 79u, 78u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 2u),
+                haptics_on
+            );
+            let status_txt_col = vec4<f32>(vec3<f32>(1.0), 0.95 * smoothstep(aa, -aa, status_txt_d));
+
+            var combined_r6 = blend_over(blend_over(txt_col, blend_over(icon_col, r6_col)), final_color);
+            combined_r6 = blend_over(status_txt_col, blend_over(pill_bg, combined_r6));
+            final_color = combined_r6;
+        }
+
+        // Row 7: Back to Main Menu (Item 7 / Steel Accent)
+        let r7_c = vec2<f32>(0.50 * aspect, 0.698);
+        let r7_p = p - r7_c;
+        if (abs(r7_p.y) < row_half.y * 1.3 && abs(r7_p.x) < row_half.x * 1.1) {
+            let r7_col = render_modal_row(r7_p, row_half, row_r, pressed_item == 7u, col_btn_bg, col_accent_settings, aa);
+            let icon_d = draw_back_arrow(r7_p - vec2<f32>(-row_half.x + 0.035, 0.0), 0.024);
+            let icon_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, icon_d));
+            let txt_d = draw_vector_string(r7_p, text_start_x, char_sz, spacing, stroke_w, 66u, 65u, 67u, 75u, 0u, 0u, 0u, 0u, 0u, 0u, 0u, 4u);
+            let txt_col = vec4<f32>(col_glyph.rgb, col_glyph.a * smoothstep(aa, -aa, txt_d));
+            final_color = blend_over(blend_over(txt_col, blend_over(icon_col, r7_col)), final_color);
         }
 
         return final_color;

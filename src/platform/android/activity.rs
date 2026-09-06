@@ -19,7 +19,7 @@ use crate::cheats::CheatEngine;
 use crate::core::EmulatorCore;
 use crate::gba::{GbaCore, GbaHeader};
 use crate::gbc::GbcCore;
-use crate::input::{InputSource, JoypadState, TouchAction, TouchOverlay, TouchPhase};
+use crate::input::{InputSource, JoypadState, TouchAction, TouchHapticFeedback, TouchOverlay, TouchPhase};
 use crate::platform::android::audio::AndroidAudioPlayer;
 use crate::platform::android::haptics::AndroidHaptics;
 use crate::platform::android::storage::jni_bridge;
@@ -422,6 +422,7 @@ fn run_android_app(app: AndroidApp) {
     layout_config.apply_to_overlay(&mut touch_overlay);
     touch_overlay.theme_index = layout_config.theme_index;
     touch_overlay.fast_forward_speed = layout_config.fast_forward().to_index();
+    haptics.set_enabled(layout_config.haptics_enabled);
     let mut prev_joypad_state = JoypadState::default();
 
     // 7. Lifecycle and state flags
@@ -707,24 +708,30 @@ fn run_android_app(app: AndroidApp) {
                         let touch_state = touch_overlay.poll();
                         let changes = touch_state.diff(prev_joypad_state);
                         prev_joypad_state = touch_state;
-                        let mut newly_pressed = false;
 
                         for (btn, pressed) in changes {
-                            if pressed {
-                                newly_pressed = true;
-                            }
                             active_core.handle_input(btn, pressed);
                         }
 
-                        // Tactile Haptic Trigger on virtual button activation
-                        if newly_pressed && touch_overlay.is_haptics_enabled() {
-                            haptics.vibrate_click();
+                        // Low-latency native tactile haptic feedback:
+                        // - VirtualKey on button rising edge
+                        // - KeyboardTap on D-Pad sliding transition across quadrants
+                        // - None on stationary moves
+                        if let Some(feedback) = touch_overlay.evaluate_haptic_feedback() {
+                            match feedback {
+                                TouchHapticFeedback::VirtualKey => {
+                                    haptics.trigger_virtual_key();
+                                }
+                                TouchHapticFeedback::KeyboardTap => {
+                                    haptics.trigger_keyboard_tap();
+                                }
+                            }
                         }
 
                         // Process non-joypad HUD and in-game menu actions
                         for hud_action in touch_overlay.poll_actions() {
                             if touch_overlay.is_haptics_enabled() {
-                                haptics.vibrate_click();
+                                haptics.trigger_virtual_key();
                             }
                             match hud_action {
                                 TouchAction::ToggleFastForward => {
@@ -903,6 +910,14 @@ fn run_android_app(app: AndroidApp) {
                                             menu_state = MenuState::FastForwardSelect;
                                             touch_overlay.set_menu_state(MenuState::FastForwardSelect);
                                         }
+                                        SettingsItem::HapticFeedback => {
+                                            layout_config.toggle_haptics();
+                                            layout_config.apply_to_overlay(&mut touch_overlay);
+                                            haptics.set_enabled(layout_config.haptics_enabled);
+                                            let _ = layout_config.save_to_file(&config_path);
+                                            let label = layout_config.haptics_label();
+                                            show_toast(jvm_ptr, activity_ptr, &format!("Haptic Feedback: {}", label));
+                                        }
                                         SettingsItem::Back => {
                                             let _ = layout_config.save_to_file(&config_path);
                                             menu_state = MenuState::MainMenu;
@@ -980,6 +995,9 @@ fn run_android_app(app: AndroidApp) {
                                         LayoutEditorToolbarItem::ResetDefaults => {
                                             let def = TouchLayoutConfig::default();
                                             def.apply_to_overlay(&mut touch_overlay);
+                                            haptics.set_enabled(def.haptics_enabled);
+                                            layout_config = def;
+                                            let _ = layout_config.save_to_file(&config_path);
                                             show_toast(jvm_ptr, activity_ptr, "Layout Reset to Defaults");
                                         }
                                         LayoutEditorToolbarItem::Cancel => {

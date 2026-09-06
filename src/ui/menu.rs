@@ -134,6 +134,7 @@ pub enum SettingsItem {
     Scale,
     Theme,
     FastForwardSpeed,
+    HapticFeedback,
     Back,
 }
 
@@ -145,7 +146,8 @@ impl SettingsItem {
             SettingsItem::Scale => 3,
             SettingsItem::Theme => 4,
             SettingsItem::FastForwardSpeed => 5,
-            SettingsItem::Back => 6,
+            SettingsItem::HapticFeedback => 6,
+            SettingsItem::Back => 7,
         }
     }
 
@@ -156,6 +158,7 @@ impl SettingsItem {
             SettingsItem::Scale => "Overall Scale",
             SettingsItem::Theme => "UI Theme",
             SettingsItem::FastForwardSpeed => "Fast-Forward Speed",
+            SettingsItem::HapticFeedback => "Haptic Feedback",
             SettingsItem::Back => "Back",
         }
     }
@@ -287,7 +290,7 @@ impl MenuLayout {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SettingsLayout {
     pub modal_rect: TouchRect,
-    pub item_rects: [(SettingsItem, TouchRect); 6],
+    pub item_rects: [(SettingsItem, TouchRect); 7],
 }
 
 impl Default for SettingsLayout {
@@ -302,15 +305,15 @@ impl SettingsLayout {
 
     pub fn new() -> Self {
         let modal_x = 0.22;
-        let modal_y = 0.10;
+        let modal_y = 0.08;
         let modal_w = 0.56;
-        let modal_h = 0.80;
+        let modal_h = 0.84;
 
         let btn_x = 0.26;
         let btn_w = 0.48;
-        let btn_h = 0.082;
-        let start_y = 0.205;
-        let gap_y = 0.096;
+        let btn_h = 0.072;
+        let start_y = 0.170;
+        let gap_y = 0.082;
 
         Self {
             modal_rect: TouchRect::new(modal_x, modal_y, modal_w, modal_h),
@@ -320,7 +323,8 @@ impl SettingsLayout {
                 (SettingsItem::Scale, TouchRect::new(btn_x, start_y + gap_y * 2.0, btn_w, btn_h)),
                 (SettingsItem::Theme, TouchRect::new(btn_x, start_y + gap_y * 3.0, btn_w, btn_h)),
                 (SettingsItem::FastForwardSpeed, TouchRect::new(btn_x, start_y + gap_y * 4.0, btn_w, btn_h)),
-                (SettingsItem::Back, TouchRect::new(btn_x, start_y + gap_y * 5.0, btn_w, btn_h)),
+                (SettingsItem::HapticFeedback, TouchRect::new(btn_x, start_y + gap_y * 5.0, btn_w, btn_h)),
+                (SettingsItem::Back, TouchRect::new(btn_x, start_y + gap_y * 6.0, btn_w, btn_h)),
             ],
         }
     }
@@ -611,8 +615,12 @@ mod tests {
         let (t_x, t_y) = layout.item_rects[3].1.center();
         assert_eq!(layout.hit_test(t_x, t_y), Some(SettingsItem::Theme));
 
+        // Hit Haptic Feedback
+        let (h_x, h_y) = layout.item_rects[5].1.center();
+        assert_eq!(layout.hit_test(h_x, h_y), Some(SettingsItem::HapticFeedback));
+
         // Hit Back
-        let (b_x, b_y) = layout.item_rects[5].1.center();
+        let (b_x, b_y) = layout.item_rects[6].1.center();
         assert_eq!(layout.hit_test(b_x, b_y), Some(SettingsItem::Back));
     }
 

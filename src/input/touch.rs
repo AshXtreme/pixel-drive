@@ -1381,6 +1381,51 @@ impl TouchInputManager {
     pub fn is_haptics_enabled(&self) -> bool {
         self.haptics_enabled
     }
+
+    /// Evaluates rising edge transitions and D-Pad sliding to determine if a tactile haptic
+    /// effect should be triggered.
+    ///
+    /// - Returns `Some(TouchHapticFeedback::VirtualKey)` for rising edges on buttons / D-Pad touch down.
+    /// - Returns `Some(TouchHapticFeedback::KeyboardTap)` when sliding between D-Pad quadrants.
+    /// - Returns `None` for stationary moves, releases, or when haptics are disabled.
+    pub fn evaluate_haptic_feedback(&mut self) -> Option<TouchHapticFeedback> {
+        if !self.haptics_enabled {
+            self.prev_pressed_mask = self.pressed_mask;
+            return None;
+        }
+
+        let curr = self.pressed_mask;
+        let prev = self.prev_pressed_mask;
+        self.prev_pressed_mask = curr;
+
+        const DPAD_MASK: u32 = touch_bits::DPAD_RIGHT
+            | touch_bits::DPAD_LEFT
+            | touch_bits::DPAD_UP
+            | touch_bits::DPAD_DOWN;
+
+        let prev_dpad = prev & DPAD_MASK;
+        let curr_dpad = curr & DPAD_MASK;
+
+        // D-Pad sliding: finger was already on D-Pad and changed direction/quadrant
+        if prev_dpad != 0 && curr_dpad != 0 && prev_dpad != curr_dpad {
+            return Some(TouchHapticFeedback::KeyboardTap);
+        }
+
+        // Rising edge on any button or fresh D-Pad press
+        let new_presses = curr & !prev;
+        if new_presses != 0 {
+            return Some(TouchHapticFeedback::VirtualKey);
+        }
+
+        None
+    }
+}
+
+/// Tactile haptic feedback event classification for touch overlay interactions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TouchHapticFeedback {
+    VirtualKey,
+    KeyboardTap,
 }
 
 impl InputSource for TouchInputManager {

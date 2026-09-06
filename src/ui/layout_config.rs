@@ -144,6 +144,12 @@ pub struct TouchLayoutConfig {
     pub btn_start_pos: (f32, f32),
     pub theme_index: u8,
     pub fast_forward_speed: u8,
+    #[serde(default = "default_true")]
+    pub haptics_enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for TouchLayoutConfig {
@@ -161,6 +167,7 @@ impl Default for TouchLayoutConfig {
             btn_start_pos: (0.575, 0.925),
             theme_index: UiTheme::DarkSlate.as_u8(),
             fast_forward_speed: FastForwardSpeed::Speed2x.as_u8(),
+            haptics_enabled: true,
         }
     }
 }
@@ -252,10 +259,25 @@ impl TouchLayoutConfig {
         FastForwardSpeed::from_u8(self.fast_forward_speed)
     }
 
+    /// Toggles tactile haptic feedback on or off.
+    pub fn toggle_haptics(&mut self) {
+        self.haptics_enabled = !self.haptics_enabled;
+    }
+
+    /// Display string for current haptic feedback state.
+    pub fn haptics_label(&self) -> &'static str {
+        if self.haptics_enabled {
+            "ON"
+        } else {
+            "OFF"
+        }
+    }
+
     /// Applies configuration values to a `TouchInputManager` instance.
     pub fn apply_to_overlay(&self, overlay: &mut TouchInputManager) {
         overlay.scale = self.scale;
         overlay.opacity = self.opacity;
+        overlay.set_haptics_enabled(self.haptics_enabled);
 
         // Apply D-Pad
         let dpad_pos = Self::clamp_pos(self.dpad_pos);
@@ -343,6 +365,7 @@ impl TouchLayoutConfig {
             btn_start_pos: overlay.btn_start.center(),
             theme_index,
             fast_forward_speed,
+            haptics_enabled: overlay.is_haptics_enabled(),
         }
     }
 
@@ -394,6 +417,7 @@ mod tests {
         assert_eq!(config.opacity, 0.65);
         assert_eq!(config.theme_index, 0);
         assert_eq!(config.fast_forward_speed, 2);
+        assert!(config.haptics_enabled);
 
         let json = serde_json::to_string(&config).unwrap();
         let deserialized: TouchLayoutConfig = serde_json::from_str(&json).unwrap();
@@ -403,6 +427,15 @@ mod tests {
     #[test]
     fn test_touch_layout_config_cycles() {
         let mut config = TouchLayoutConfig::default();
+
+        // Haptics toggle
+        assert!(config.haptics_enabled);
+        assert_eq!(config.haptics_label(), "ON");
+        config.toggle_haptics();
+        assert!(!config.haptics_enabled);
+        assert_eq!(config.haptics_label(), "OFF");
+        config.toggle_haptics();
+        assert!(config.haptics_enabled);
 
         // Opacity cycling
         config.opacity = 0.20;

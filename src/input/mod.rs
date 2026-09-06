@@ -5,9 +5,9 @@ pub mod touch;
 pub use gamepad::GamepadInput;
 pub use keyboard::KeyboardInput;
 pub use touch::{
-    touch_bits, ButtonShape, ChordHitbox, ControlGroup, TouchAction, TouchInputManager,
-    TouchOverlay, TouchOverlayPreset, TouchPhase, TouchPoint, TouchRect, VirtualButton,
-    VirtualButtonId, VirtualDPad,
+    touch_bits, ButtonShape, ChordHitbox, ControlGroup, TouchAction, TouchHapticFeedback,
+    TouchInputManager, TouchOverlay, TouchOverlayPreset, TouchPhase, TouchPoint, TouchRect,
+    VirtualButton, VirtualButtonId, VirtualDPad,
 };
 
 use crate::core::{Button, EmulatorCore};

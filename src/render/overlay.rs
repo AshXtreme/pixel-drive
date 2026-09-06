@@ -257,7 +257,8 @@ impl TouchOverlayRenderer {
                 let sc_pct = (touch_manager.scale.clamp(0.5, 2.0) * 100.0).round() as u32;
                 let th_idx = (touch_manager.theme_index as u32) & 0x07;
                 let ff_idx = (touch_manager.fast_forward_speed as u32) & 0x07;
-                op_pct | (sc_pct << 8) | (th_idx << 16) | (ff_idx << 20)
+                let hap_bit = if touch_manager.is_haptics_enabled() { 1u32 << 24 } else { 0u32 };
+                op_pct | (sc_pct << 8) | (th_idx << 16) | (ff_idx << 20) | hap_bit
             },
             _pad: 0,
         };
