@@ -2,7 +2,7 @@
 set -e
 
 # ==============================================================================
-# PixelDrive v1.2 — Production Multi-ABI Android APK Packaging Pipeline
+# PixelDrive v1.3 — Production Multi-ABI Android APK Packaging Pipeline
 # Supports ARM64 (arm64-v8a) and x86_64 (BlueStacks / Emulators / Chromebooks)
 # ==============================================================================
 
@@ -10,34 +10,48 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 echo "============================================================"
-echo "🚀 PixelDrive v1.2 — Multi-ABI Android Package Assembly"
+echo "🚀 PixelDrive v1.3 — Multi-ABI Android Package Assembly"
 echo "============================================================"
 
-# 1. Parse Arguments (Release vs Debug)
+# 1. Parse Arguments (Release vs Debug, Tag)
 BUILD_TYPE="Release"
 GRADLE_TASK="assembleRelease"
 CARGO_FLAGS="--release"
+TAG_NAME="${TAG_NAME:-v1.3}"
 
-for arg in "$@"; do
-    case "$arg" in
+while [[ $# -gt 0 ]]; do
+    case "$1" in
         --debug)
             BUILD_TYPE="Debug"
             GRADLE_TASK="assembleDebug"
             CARGO_FLAGS=""
+            shift
             ;;
         --release)
             BUILD_TYPE="Release"
             GRADLE_TASK="assembleRelease"
             CARGO_FLAGS="--release"
+            shift
+            ;;
+        --tag=*)
+            TAG_NAME="${1#*=}"
+            shift
+            ;;
+        --tag)
+            TAG_NAME="$2"
+            shift 2
             ;;
         -h|--help)
-            echo "Usage: ./scripts/package_android.sh [--release | --debug]"
+            echo "Usage: ./scripts/package_android.sh [--release | --debug] [--tag <tag>]"
             exit 0
+            ;;
+        *)
+            shift
             ;;
     esac
 done
 
-echo "⚙️  Build Profile: ${BUILD_TYPE}"
+echo "⚙️  Build Profile: ${BUILD_TYPE} (Tag: ${TAG_NAME})"
 
 # 2. Select compatible JDK (prefer Java 21 or 17 for Gradle/AGP compatibility)
 if [ -x "/usr/libexec/java_home" ]; then
@@ -200,7 +214,7 @@ APK_RELEASE_SIGNED="android/app/build/outputs/apk/release/app-release.apk"
 APK_RELEASE_UNSIGNED="android/app/build/outputs/apk/release/app-release-unsigned.apk"
 APK_DEBUG="android/app/build/outputs/apk/debug/app-debug.apk"
 
-DEST_APK="dist/PixelDrive-Android-v1.2.1.apk"
+DEST_APK="dist/PixelDrive-Android-${TAG_NAME}.apk"
 
 if [ -f "$APK_RELEASE_SIGNED" ]; then
     cp "$APK_RELEASE_SIGNED" "$DEST_APK"

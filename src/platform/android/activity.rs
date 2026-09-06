@@ -335,7 +335,7 @@ fn android_main(app: AndroidApp) {
         log::error!("CRITICAL RUST PANIC: {:?}", panic_info);
     }));
 
-    info!("=== Starting PixelDrive v1.2.1 (Android NativeActivity) ===");
+    info!("=== Starting PixelDrive v1.3 (Android NativeActivity) ===");
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         run_android_app(app);

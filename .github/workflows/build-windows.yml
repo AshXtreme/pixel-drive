@@ -33,7 +33,7 @@ jobs:
       - name: Package Windows Release Archive
         shell: bash
         run: |
-          TAG_NAME="${GITHUB_REF_NAME:-v1.2.1}"
+          TAG_NAME="${GITHUB_REF_NAME:-v1.3}"
           DIST_DIR="dist/PixelDrive-Windows"
           mkdir -p "$DIST_DIR/cores" "$DIST_DIR/saves" "$DIST_DIR/assets"
 
