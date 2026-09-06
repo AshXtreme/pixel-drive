@@ -1,6 +1,30 @@
 #!/usr/bin/env bash
 set -e
 
+TAG="v1.3"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tag)
+      TAG="$2"
+      shift 2
+      ;;
+    *)
+      if [[ "$1" =~ ^v[0-9] ]]; then
+        TAG="$1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [ -n "$TAG_NAME" ]; then
+  TAG="$TAG_NAME"
+fi
+
+echo "============================================================"
+echo "🍏 PixelDrive $TAG — macOS Application & DMG Package Assembly"
+echo "============================================================"
+
 echo "🔨 Building PixelDrive in Release mode..."
 cargo build --release
 
@@ -12,7 +36,7 @@ MACOS="$CONTENTS/MacOS"
 RESOURCES="$CONTENTS/Resources"
 
 echo "🧹 Cleaning previous staging & disk image files..."
-rm -rf dist/dmg_staging "dist/$APP_NAME-v1.2.1.dmg"
+rm -rf "$DMG_DIR" "dist/$APP_NAME-$TAG.dmg" "dist/$APP_NAME-macOS-$TAG.dmg"
 mkdir -p "$MACOS" "$RESOURCES/cores" "$RESOURCES/saves"
 
 echo "📦 Assembling $APP_NAME.app bundle..."
@@ -51,9 +75,16 @@ hdiutil create -volname "$APP_NAME" \
                -srcfolder "$DMG_DIR" \
                -ov \
                -format UDZO \
-               "dist/$APP_NAME-v1.2.1.dmg"
+               "dist/$APP_NAME-$TAG.dmg"
+
+# Also create PixelDrive-macOS-vX.X.dmg alias copy
+cp "dist/$APP_NAME-$TAG.dmg" "dist/$APP_NAME-macOS-$TAG.dmg"
 
 echo "🧹 Cleaning up temporary staging files..."
 rm -rf "$DMG_DIR"
 
-echo "✅ Success! macOS DMG created at: dist/$APP_NAME-v1.2.1.dmg"
+echo "============================================================"
+echo "✅ Success! macOS DMG created at:"
+echo "   - dist/$APP_NAME-$TAG.dmg"
+echo "   - dist/$APP_NAME-macOS-$TAG.dmg"
+echo "============================================================"

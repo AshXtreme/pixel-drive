@@ -1,9 +1,31 @@
 #!/usr/bin/env bash
 set -e
 
-echo "🔨 Packaging Windows x86_64 Release..."
+TAG="v1.3"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --tag)
+      TAG="$2"
+      shift 2
+      ;;
+    *)
+      if [[ "$1" =~ ^v[0-9] ]]; then
+        TAG="$1"
+      fi
+      shift
+      ;;
+  esac
+done
+
+if [ -n "$TAG_NAME" ]; then
+  TAG="$TAG_NAME"
+fi
+
+echo "============================================================"
+echo "🔨 Packaging Windows x86_64 Release ($TAG)..."
+echo "============================================================"
 DIST_DIR="dist/PixelDrive-Windows"
-rm -rf "$DIST_DIR" "dist/PixelDrive-Windows.zip" "dist/PixelDrive-Windows-x86_64.zip"
+rm -rf "$DIST_DIR" "dist/PixelDrive-Windows-$TAG.zip" "dist/PixelDrive-Windows-x86_64.zip"
 mkdir -p "$DIST_DIR/cores" "$DIST_DIR/saves" "$DIST_DIR/assets"
 
 # Detect and copy Windows executable
@@ -32,6 +54,8 @@ if [ -d "cores" ] && [ "$(ls -A cores 2>/dev/null)" ]; then
 fi
 
 cd dist
-zip -r PixelDrive-Windows-v1.2.1.zip PixelDrive-Windows
-cp PixelDrive-Windows-v1.2.1.zip PixelDrive-Windows-x86_64.zip
-echo "✅ Windows bundle created: dist/PixelDrive-Windows-v1.2.1.zip"
+zip -r "PixelDrive-Windows-$TAG.zip" PixelDrive-Windows
+cp "PixelDrive-Windows-$TAG.zip" PixelDrive-Windows-x86_64.zip
+echo "============================================================"
+echo "✅ Windows bundle created: dist/PixelDrive-Windows-$TAG.zip"
+echo "============================================================"

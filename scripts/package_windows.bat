@@ -1,7 +1,11 @@
 @echo off
+setlocal enabledelayedexpansion
 echo ============================================
 echo   PixelDrive Windows Distribution Builder
 echo ============================================
+
+set TAG=v1.3
+if not "%1"=="" set TAG=%1
 
 echo Building PixelDrive in Release mode...
 cargo build --release
@@ -27,9 +31,10 @@ if exist assets\windows\icon.ico copy assets\windows\icon.ico %DIST_DIR%\assets\
 if exist cores\*.dll copy cores\*.dll %DIST_DIR%\cores\ >nul 2>&1
 
 echo Creating ZIP distribution archive...
-powershell -Command "Compress-Archive -Path '%DIST_DIR%' -DestinationPath 'dist\PixelDrive-Windows-v1.2.1.zip' -Force"
+powershell -Command "Compress-Archive -Path '%DIST_DIR%' -DestinationPath 'dist\PixelDrive-Windows-%TAG%.zip' -Force"
+powershell -Command "Copy-Item 'dist\PixelDrive-Windows-%TAG%.zip' 'dist\PixelDrive-Windows-x86_64.zip' -Force"
 
 echo ============================================
 echo [SUCCESS] Windows package created:
-echo dist\PixelDrive-Windows-v1.2.1.zip
+echo dist\PixelDrive-Windows-%TAG%.zip
 echo ============================================
