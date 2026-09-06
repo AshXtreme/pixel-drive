@@ -1148,7 +1148,25 @@ impl TouchInputManager {
                 self.recompute_state();
                 return;
             }
-            MenuState::Hidden | MenuState::Cheats => {}
+            MenuState::Cheats => {
+                match phase {
+                    TouchPhase::Started => {
+                        let pt = TouchPoint::new(id, norm_x, norm_y, TouchPhase::Started);
+                        self.active_touches.insert(id, pt);
+                    }
+                    TouchPhase::Ended => {
+                        self.pending_actions.push(TouchAction::MenuBack);
+                        self.active_touches.remove(&id);
+                    }
+                    TouchPhase::Cancelled => {
+                        self.active_touches.remove(&id);
+                    }
+                    _ => {}
+                }
+                self.recompute_state();
+                return;
+            }
+            MenuState::Hidden => {}
         }
 
         match phase {

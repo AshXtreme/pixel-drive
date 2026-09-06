@@ -95,14 +95,14 @@ impl MenuItem {
             MenuItem::SaveLoadStates => "Save / Load States",
             MenuItem::ResetGame => "Reset Game",
             MenuItem::Settings => "Settings",
-            MenuItem::Cheats => "Cheat Codes",
+            MenuItem::Cheats => "👾 Cheat Codes",
         }
     }
 
     /// Subtitle or phase status indicator.
     pub fn subtitle(&self) -> Option<&'static str> {
         match self {
-            MenuItem::Cheats => Some("Phase 4"),
+            MenuItem::Cheats => Some("Action Replay / GameShark"),
             _ => None,
         }
     }
