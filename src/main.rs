@@ -1,3 +1,5 @@
+#[cfg(not(target_os = "android"))]
+mod desktop {
 use pixeldrive::{audio, core, gba, gbc, input, render, save, ui};
 
 use audio::{AudioPlayer, AudioProducer};
@@ -308,7 +310,7 @@ pub fn set_macos_dock_icon() {
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+pub fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     info!("Starting PixelDrive Handheld Emulator with OSD & egui Overlay...");
 
@@ -1096,3 +1098,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+}
+
+#[cfg(not(target_os = "android"))]
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    desktop::main()
+}
+
+#[cfg(target_os = "android")]
+fn main() {}
