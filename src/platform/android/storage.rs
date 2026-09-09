@@ -124,6 +124,18 @@ impl AndroidStorage {
         self.states_dir.join(format!("{}.slot{}.state", clean_stem, slot))
     }
 
+    /// Derives canonical auto-save state path: `<storage_dir>/states/<rom_crc32_hex>/auto_save.state`.
+    pub fn get_auto_save_state_path(&self, rom_crc32_hex: &str) -> PathBuf {
+        let clean_crc = rom_crc32_hex.trim().to_uppercase();
+        self.states_dir.join(clean_crc).join("auto_save.state")
+    }
+
+    /// Derives slot-1 fallback state path: `<storage_dir>/states/<rom_crc32_hex>/slot_1.state`.
+    pub fn get_slot_1_fallback_state_path(&self, rom_crc32_hex: &str) -> PathBuf {
+        let clean_crc = rom_crc32_hex.trim().to_uppercase();
+        self.states_dir.join(clean_crc).join("slot_1.state")
+    }
+
     /// Derives slot state path: `<storage_dir>/states/<game_title>/slot_<slot>.state`.
     pub fn get_slot_state_path(&self, game_title: &str, slot: u8) -> PathBuf {
         let clean = SaveManager::sanitize_stem(game_title);
@@ -761,5 +773,20 @@ mod tests {
 
         let _ = fs::remove_dir_all(temp_dir);
         Ok(())
+    }
+
+    #[test]
+    fn test_android_auto_save_state_paths() {
+        let base_dir = PathBuf::from("/data/user/0/com.pixeldrive.emulator/files");
+        let storage = AndroidStorage::new(base_dir.clone());
+
+        assert_eq!(
+            storage.get_auto_save_state_path("84ee4776"),
+            base_dir.join("states/84EE4776/auto_save.state")
+        );
+        assert_eq!(
+            storage.get_slot_1_fallback_state_path("84ee4776"),
+            base_dir.join("states/84EE4776/slot_1.state")
+        );
     }
 }

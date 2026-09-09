@@ -27,6 +27,9 @@ pub struct RomEntry {
     /// Optional absolute path to generated JPEG snapshot thumbnail.
     #[serde(default)]
     pub thumbnail_path: Option<String>,
+    /// Indicates if a quick-resume auto-save state snapshot exists on disk.
+    #[serde(default)]
+    pub has_auto_save: bool,
 }
 
 impl RomEntry {
@@ -43,7 +46,14 @@ impl RomEntry {
             crc32,
             last_played,
             thumbnail_path,
+            has_auto_save: false,
         }
+    }
+
+    /// Sets whether this entry has an associated auto-save snapshot on disk.
+    pub fn with_auto_save(mut self, has_auto_save: bool) -> Self {
+        self.has_auto_save = has_auto_save;
+        self
     }
 }
 
@@ -135,6 +145,7 @@ impl LibraryManager {
                 crc32: crc32.to_uppercase(),
                 last_played: now,
                 thumbnail_path,
+                has_auto_save: false,
             });
         }
 
@@ -150,6 +161,17 @@ impl LibraryManager {
     pub fn update_thumbnail(&mut self, crc32: &str, thumb_path: &str) -> bool {
         if let Some(entry) = self.entries.iter_mut().find(|e| e.crc32.eq_ignore_ascii_case(crc32)) {
             entry.thumbnail_path = Some(thumb_path.to_string());
+            let _ = self.save_to_disk();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Marks whether a fast-resume auto-save state snapshot exists on disk for this ROM.
+    pub fn mark_auto_save(&mut self, crc32: &str, has_auto_save: bool) -> bool {
+        if let Some(entry) = self.entries.iter_mut().find(|e| e.crc32.eq_ignore_ascii_case(crc32)) {
+            entry.has_auto_save = has_auto_save;
             let _ = self.save_to_disk();
             true
         } else {
@@ -203,6 +225,26 @@ mod tests {
         let reloaded = LibraryManager::load_or_create(&config_path);
         assert_eq!(reloaded.recent_entries().len(), 2);
         assert_eq!(reloaded.recent_entries()[0].crc32, "11111111");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_library_manager_auto_save() {
+        let temp_dir = std::env::temp_dir().join("pixeldrive_test_lib_autosave");
+        let config_path = temp_dir.join("recent_roms.json");
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        let mut manager = LibraryManager::load_or_create(&config_path);
+        manager.add_or_update("path/pokemon.gba", "Pokemon FireRed", "84EE4776", None);
+        assert!(!manager.recent_entries()[0].has_auto_save);
+
+        assert!(manager.mark_auto_save("84EE4776", true));
+        assert!(manager.recent_entries()[0].has_auto_save);
+
+        // Verify persistence
+        let reloaded = LibraryManager::load_or_create(&config_path);
+        assert!(reloaded.recent_entries()[0].has_auto_save);
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

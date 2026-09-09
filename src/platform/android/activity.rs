@@ -332,9 +332,98 @@ fn load_rom_bytes_into_core(
     true
 }
 
+/// Restores the last active gameplay auto-save state, or falls back to slot 1, or boots normally to title screen.
+fn restore_auto_save_or_fallback(
+    core: &mut dyn EmulatorCore,
+    storage: &AndroidStorage,
+    rom_crc32_hex: &str,
+    game_title: &str,
+    pixels: &mut Option<Pixels>,
+) -> bool {
+    let auto_save_path = storage.get_auto_save_state_path(rom_crc32_hex);
+    let mut restored = false;
+
+    if auto_save_path.exists() {
+        match std::fs::read(&auto_save_path) {
+            Ok(bytes) => {
+                if core.load_state(&bytes) {
+                    info!(
+                        "Auto-Restore: successfully resumed active gameplay state for '{}' [CRC32: {}] ({} bytes) from {:?}",
+                        game_title, rom_crc32_hex, bytes.len(), auto_save_path
+                    );
+                    restored = true;
+                } else {
+                    warn!(
+                        "Auto-Restore: core failed to unserialize state for '{}' from {:?}",
+                        game_title, auto_save_path
+                    );
+                }
+            }
+            Err(err) => {
+                warn!(
+                    "Auto-Restore: error reading auto_save.state at {:?}: {:?}",
+                    auto_save_path, err
+                );
+            }
+        }
+    }
+
+    if !restored {
+        // Fallback: Check if slot_1.state exists (by CRC folder or by sanitized title)
+        let slot1_crc_path = storage.get_slot_1_fallback_state_path(rom_crc32_hex);
+        let slot1_title_path = storage.get_slot_state_path(game_title, 1);
+        let fallback_path = if slot1_crc_path.exists() {
+            Some(slot1_crc_path)
+        } else if slot1_title_path.exists() {
+            Some(slot1_title_path)
+        } else {
+            None
+        };
+
+        if let Some(path) = fallback_path {
+            match std::fs::read(&path) {
+                Ok(bytes) => {
+                    if core.load_state(&bytes) {
+                        info!(
+                            "Auto-Restore fallback: successfully resumed slot 1 state for '{}' ({} bytes) from {:?}",
+                            game_title, bytes.len(), path
+                        );
+                        restored = true;
+                    } else {
+                        warn!("Auto-Restore fallback: failed to unserialize slot 1 state from {:?}", path);
+                    }
+                }
+                Err(err) => {
+                    warn!("Auto-Restore fallback: error reading slot 1 state from {:?}: {:?}", path, err);
+                }
+            }
+        }
+    }
+
+    if restored {
+        // Step 1 frame to render the restored state into the framebuffer cache immediately
+        core.step_frame();
+        if let Some(ref mut px) = pixels {
+            let fb = core.framebuffer();
+            if !fb.is_empty() {
+                let px_frame = px.frame_mut();
+                let copy_len = fb.len().min(px_frame.len());
+                px_frame[..copy_len].copy_from_slice(&fb[..copy_len]);
+            }
+        }
+        true
+    } else {
+        info!(
+            "Auto-Restore: no previous save state found for '{}' [CRC32: {}] — booting to title screen",
+            game_title, rom_crc32_hex
+        );
+        false
+    }
+}
+
 /// Exits active emulation back to the Home Screen / Library Carousel,
-/// capturing the last drawn frame as a thumbnail snapshot, flushing battery SRAM saves,
-/// and reloading the persistent ROM library.
+/// capturing the last drawn frame as a thumbnail snapshot, saving an auto-save state snapshot,
+/// flushing battery SRAM saves, and reloading the persistent ROM library.
 fn exit_emulation_to_home_screen(
     app_mode: &mut AppMode,
     active_core: &mut Box<dyn EmulatorCore>,
@@ -357,8 +446,8 @@ fn exit_emulation_to_home_screen(
         player.pause_audio_stream();
     }
 
-    // 1. Capture thumbnail of last drawn frame and persist
     if let Some(ref crc32_hex) = active_rom_crc32 {
+        // 1. Thumbnail Synchronization: Capture thumbnail of last drawn frame BEFORE auto-saving state
         let thumb_path = storage.get_thumbnail_path(crc32_hex);
         let fb = active_core.framebuffer();
         if !fb.is_empty() && core_width > 0 && core_height > 0 {
@@ -366,19 +455,40 @@ fn exit_emulation_to_home_screen(
                 Ok(_path) => {
                     info!("Successfully captured and saved thumbnail for CRC32 {} at {:?}", crc32_hex, thumb_path);
                     library.update_thumbnail(crc32_hex, &thumb_path.to_string_lossy());
-                    let _ = library.save_to_disk();
                 }
                 Err(err) => {
                     warn!("Failed to capture thumbnail for CRC32 {}: {:?}", crc32_hex, err);
                 }
             }
         }
+
+        // 2. Auto-State Snapshot on Exit: Serialize active core state to <files_dir>/states/<rom_crc32>/auto_save.state
+        if let Some(state_data) = active_core.save_state() {
+            let auto_state_path = storage.get_auto_save_state_path(crc32_hex);
+            match AndroidStorage::write_atomic(&auto_state_path, &state_data) {
+                Ok(()) => {
+                    info!(
+                        "Auto-State Snapshot: successfully saved {} bytes -> {:?}",
+                        state_data.len(),
+                        auto_state_path
+                    );
+                    library.mark_auto_save(crc32_hex, true);
+                }
+                Err(err) => {
+                    warn!("Failed to write auto-save state to {:?}: {:?}", auto_state_path, err);
+                }
+            }
+        } else {
+            warn!("Active core returned None on save_state() during exit to Home Screen");
+        }
+
+        let _ = library.save_to_disk();
     }
 
-    // 2. Flush battery SRAM save data
+    // 3. Flush battery SRAM save data
     flush_core_save(active_core.as_ref(), storage, current_game_title);
 
-    // 3. Reload library and switch mode
+    // 4. Reload library and switch mode
     home_screen_state.reload_from_library(library);
     *app_mode = AppMode::HomeScreen;
     info!("Exited emulation -> Returned to Home Screen library carousel");
@@ -445,6 +555,15 @@ fn launch_rom_entry(
             if let Some(bytes) = active_core.rom_bytes() {
                 cheat_engine.load_for_rom(bytes, storage.base_dir());
             }
+
+            // Auto-Restore Sequence: restore last saved/active state or fallback to slot 1
+            restore_auto_save_or_fallback(
+                active_core.as_mut(),
+                storage,
+                &entry.crc32,
+                current_game_title,
+                pixels,
+            );
 
             // Update recency in library
             library.add_or_update(
@@ -647,6 +766,15 @@ fn run_android_app(app: AndroidApp) {
                                     cheat_engine.load_for_rom(bytes, storage.base_dir());
                                 }
 
+                                // Auto-Restore Sequence: restore last saved/active state or fallback to slot 1
+                                restore_auto_save_or_fallback(
+                                    active_core.as_mut(),
+                                    &storage,
+                                    &crc32_hex,
+                                    &current_game_title,
+                                    &mut pixels,
+                                );
+
                                 let thumb_path = storage.get_thumbnail_path(&crc32_hex);
                                 let thumb_str = if thumb_path.exists() {
                                     Some(thumb_path.to_string_lossy().to_string())
@@ -802,12 +930,34 @@ fn run_android_app(app: AndroidApp) {
                         }
 
                         MainEvent::Pause => {
-                            info!("Android MainEvent: Pause — Auto-pausing audio, emulation, and flushing SRAM");
+                            info!("Android MainEvent: Pause — Auto-pausing audio, emulation, and flushing SRAM/state");
                             is_paused = true;
                             if let Some(ref mut player) = audio_player {
                                 player.pause_audio_stream();
                             }
                             flush_core_save(active_core.as_ref(), &storage, &current_game_title);
+
+                            if app_mode == AppMode::Emulating {
+                                if let Some(ref crc32_hex) = active_rom_crc32 {
+                                    // 1. Capture thumbnail
+                                    let thumb_path = storage.get_thumbnail_path(crc32_hex);
+                                    let fb = active_core.framebuffer();
+                                    if !fb.is_empty() && core_width > 0 && core_height > 0 {
+                                        if let Ok(_p) = capture_and_save_thumbnail(fb, core_width, core_height, &thumb_path) {
+                                            library.update_thumbnail(crc32_hex, &thumb_path.to_string_lossy());
+                                        }
+                                    }
+                                    // 2. Auto-save snapshot
+                                    if let Some(state_data) = active_core.save_state() {
+                                        let auto_state_path = storage.get_auto_save_state_path(crc32_hex);
+                                        if AndroidStorage::write_atomic(&auto_state_path, &state_data).is_ok() {
+                                            library.mark_auto_save(crc32_hex, true);
+                                            info!("Auto-saved active state on MainEvent::Pause for CRC32 {}", crc32_hex);
+                                        }
+                                    }
+                                    let _ = library.save_to_disk();
+                                }
+                            }
                         }
 
                         MainEvent::Resume { .. } => {

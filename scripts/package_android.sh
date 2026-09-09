@@ -2,7 +2,7 @@
 set -e
 
 # ==============================================================================
-# PixelDrive v1.3 — Production Multi-ABI Android APK Packaging Pipeline
+# PixelDrive v1.4 — Production Multi-ABI Android APK Packaging Pipeline
 # Supports ARM64 (arm64-v8a) and x86_64 (BlueStacks / Emulators / Chromebooks)
 # ==============================================================================
 
@@ -10,14 +10,14 @@ PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
 echo "============================================================"
-echo "🚀 PixelDrive v1.3 — Multi-ABI Android Package Assembly"
+echo "🚀 PixelDrive v1.4 — Multi-ABI Android Package Assembly"
 echo "============================================================"
 
 # 1. Parse Arguments (Release vs Debug, Tag)
 BUILD_TYPE="Release"
 GRADLE_TASK="assembleRelease"
 CARGO_FLAGS="--release"
-TAG_NAME="${TAG_NAME:-v1.3}"
+TAG_NAME="${TAG_NAME:-v1.4}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in

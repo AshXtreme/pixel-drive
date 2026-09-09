@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-TAG="v1.3"
+TAG="v1.4"
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --tag)

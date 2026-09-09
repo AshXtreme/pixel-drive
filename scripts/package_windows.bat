@@ -4,7 +4,7 @@ echo ============================================
 echo   PixelDrive Windows Distribution Builder
 echo ============================================
 
-set TAG=v1.3
+set TAG=v1.4
 if not "%1"=="" set TAG=%1
 
 echo Building PixelDrive in Release mode...
