@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use android_activity::input::{InputEvent, KeyAction, MotionAction};
+use android_activity::input::{InputEvent, KeyAction, Keycode, MotionAction};
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
 use log::{debug, error, info, warn};
 use pixels::{Pixels, PixelsBuilder, SurfaceTexture};
@@ -20,15 +20,25 @@ use crate::core::EmulatorCore;
 use crate::gba::{GbaCore, GbaHeader};
 use crate::gbc::GbcCore;
 use crate::input::{InputSource, JoypadState, TouchAction, TouchHapticFeedback, TouchOverlay, TouchPhase};
+use crate::library::{capture_and_save_thumbnail, LibraryManager, RomEntry};
 use crate::platform::android::audio::AndroidAudioPlayer;
 use crate::platform::android::haptics::AndroidHaptics;
 use crate::platform::android::storage::jni_bridge;
 use crate::platform::android::storage::AndroidStorage;
 use crate::platform::PlatformStorage;
 use crate::render::{FilterMode, ShaderPipeline, TouchOverlayRenderer};
+use crate::rom::identifier::identify_rom;
 use crate::save::SaveManager;
 use crate::ui::layout_config::{FastForwardSpeed, TouchLayoutConfig};
 use crate::ui::menu::{FastForwardItem, LayoutEditorToolbarItem, MenuItem, MenuState, SettingsItem, SlotMode};
+use crate::ui::{HomeScreenAction, HomeScreenRenderer, HomeScreenState};
+
+/// High-level application state mode: Home Screen Library Carousel or Active Emulation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppMode {
+    HomeScreen,
+    Emulating,
+}
 
 /// Thread-safe queue storing pending Content URIs selected via Android SAF ROM picker.
 static PENDING_ROM_URI: Mutex<Option<String>> = Mutex::new(None);
@@ -322,12 +332,153 @@ fn load_rom_bytes_into_core(
     true
 }
 
+/// Exits active emulation back to the Home Screen / Library Carousel,
+/// capturing the last drawn frame as a thumbnail snapshot, flushing battery SRAM saves,
+/// and reloading the persistent ROM library.
+fn exit_emulation_to_home_screen(
+    app_mode: &mut AppMode,
+    active_core: &mut Box<dyn EmulatorCore>,
+    library: &mut LibraryManager,
+    home_screen_state: &mut HomeScreenState,
+    storage: &AndroidStorage,
+    active_rom_crc32: &Option<String>,
+    current_game_title: &str,
+    core_width: u32,
+    core_height: u32,
+    audio_player: &mut Option<AndroidAudioPlayer>,
+    is_paused: &mut bool,
+    menu_state: &mut MenuState,
+    touch_overlay: &mut TouchOverlay,
+) {
+    *menu_state = MenuState::Hidden;
+    touch_overlay.set_menu_state(MenuState::Hidden);
+    *is_paused = true;
+    if let Some(ref mut player) = audio_player {
+        player.pause_audio_stream();
+    }
+
+    // 1. Capture thumbnail of last drawn frame and persist
+    if let Some(ref crc32_hex) = active_rom_crc32 {
+        let thumb_path = storage.get_thumbnail_path(crc32_hex);
+        let fb = active_core.framebuffer();
+        if !fb.is_empty() && core_width > 0 && core_height > 0 {
+            match capture_and_save_thumbnail(fb, core_width, core_height, &thumb_path) {
+                Ok(_path) => {
+                    info!("Successfully captured and saved thumbnail for CRC32 {} at {:?}", crc32_hex, thumb_path);
+                    library.update_thumbnail(crc32_hex, &thumb_path.to_string_lossy());
+                    let _ = library.save_to_disk();
+                }
+                Err(err) => {
+                    warn!("Failed to capture thumbnail for CRC32 {}: {:?}", crc32_hex, err);
+                }
+            }
+        }
+    }
+
+    // 2. Flush battery SRAM save data
+    flush_core_save(active_core.as_ref(), storage, current_game_title);
+
+    // 3. Reload library and switch mode
+    home_screen_state.reload_from_library(library);
+    *app_mode = AppMode::HomeScreen;
+    info!("Exited emulation -> Returned to Home Screen library carousel");
+}
+
+/// Boots a selected RomEntry into active emulation, restoring SRAM saves and updating recency.
+fn launch_rom_entry(
+    entry: &RomEntry,
+    active_core: &mut Box<dyn EmulatorCore>,
+    storage: &AndroidStorage,
+    current_game_title: &mut String,
+    core_width: &mut u32,
+    core_height: &mut u32,
+    audio_producer: &Option<AudioProducer>,
+    audio_player: &mut Option<AndroidAudioPlayer>,
+    pixels: &mut Option<Pixels>,
+    cheat_engine: &mut CheatEngine,
+    library: &mut LibraryManager,
+    home_screen_state: &mut HomeScreenState,
+    active_rom_crc32: &mut Option<String>,
+    active_rom_path: &mut Option<String>,
+    app_mode: &mut AppMode,
+    is_paused: &mut bool,
+    jvm_ptr: *mut std::ffi::c_void,
+    activity_ptr: *mut std::ffi::c_void,
+) -> bool {
+    let rom_bytes_opt = if entry.path.starts_with("content://") {
+        if !jvm_ptr.is_null() && !activity_ptr.is_null() {
+            if let Ok(vm) = unsafe { jni::JavaVM::from_raw(jvm_ptr.cast()) } {
+                let act_obj = unsafe { jni::objects::JObject::from_raw(activity_ptr as _) };
+                jni_bridge::read_bytes_from_content_uri(&vm, &act_obj, &entry.path).ok()
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        let clean = entry.path.trim_start_matches("file://");
+        std::fs::read(clean).ok()
+    };
+
+    if let Some(rom_bytes) = rom_bytes_opt {
+        let filename_hint = entry
+            .path
+            .split('/')
+            .last()
+            .unwrap_or("game.rom")
+            .replace("%20", " ");
+
+        if load_rom_bytes_into_core(
+            &rom_bytes,
+            &filename_hint,
+            active_core,
+            storage,
+            current_game_title,
+            core_width,
+            core_height,
+            audio_producer,
+        ) {
+            if let Some(ref mut px) = pixels {
+                let _ = px.resize_buffer(*core_width, *core_height);
+            }
+            if let Some(bytes) = active_core.rom_bytes() {
+                cheat_engine.load_for_rom(bytes, storage.base_dir());
+            }
+
+            // Update recency in library
+            library.add_or_update(
+                &entry.path,
+                &entry.display_name,
+                &entry.crc32,
+                entry.thumbnail_path.clone(),
+            );
+            let _ = library.save_to_disk();
+            home_screen_state.reload_from_library(library);
+
+            *active_rom_crc32 = Some(entry.crc32.clone());
+            *active_rom_path = Some(entry.path.clone());
+            *app_mode = AppMode::Emulating;
+            *is_paused = false;
+            if let Some(ref mut player) = audio_player {
+                player.resume_audio_stream();
+            }
+            info!("Launched '{}' from Home Screen carousel", entry.display_name);
+            return true;
+        }
+    } else {
+        warn!("Failed to read ROM bytes for '{}'", entry.path);
+        show_toast(jvm_ptr, activity_ptr, "Cannot open ROM (permission lost or file moved)");
+    }
+    false
+}
+
 /// Main entrypoint invoked by Android `NativeActivity`.
 #[no_mangle]
 fn android_main(app: AndroidApp) {
     android_logger::init_once(
         android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Debug)
+            .with_max_level(log::LevelFilter::Info)
             .with_tag("PixelDriveNative"),
     );
 
@@ -410,9 +561,18 @@ fn run_android_app(app: AndroidApp) {
     let mut pixels: Option<Pixels> = None;
     let mut shader_pipeline: Option<ShaderPipeline> = None;
     let mut touch_overlay_renderer: Option<TouchOverlayRenderer> = None;
+    let mut home_screen_renderer: Option<HomeScreenRenderer> = None;
     let filter_mode = FilterMode::Nearest;
     let mut window_width: u32 = 0;
     let mut window_height: u32 = 0;
+
+    // 5b. Home Screen / Library Carousel Subsystem
+    let mut app_mode = AppMode::HomeScreen;
+    let recent_roms_path = storage.base_dir().join("config/recent_roms.json");
+    let mut library = LibraryManager::load_or_create(&recent_roms_path);
+    let mut home_screen_state = HomeScreenState::from_library(&library);
+    let mut active_rom_crc32: Option<String> = None;
+    let mut active_rom_path: Option<String> = None;
 
     // 6. Input management, configuration, and virtual touch overlay
     let mut touch_overlay = TouchOverlay::new();
@@ -441,11 +601,27 @@ fn run_android_app(app: AndroidApp) {
         // 1. Check for newly selected SAF Content URI
         if let Some(uri_str) = poll_pending_rom_uri() {
             info!("Processing incoming Content URI: {}", uri_str);
-            if !jvm_ptr.is_null() && !activity_ptr.is_null() {
-                if let Ok(vm) = unsafe { jni::JavaVM::from_raw(jvm_ptr.cast()) } {
-                    let act_obj = unsafe { jni::objects::JObject::from_raw(activity_ptr as _) };
-                    match jni_bridge::read_bytes_from_content_uri(&vm, &act_obj, &uri_str) {
-                        Ok(rom_bytes) => {
+            let rom_bytes_res = if uri_str.starts_with("content://") {
+                if !jvm_ptr.is_null() && !activity_ptr.is_null() {
+                    if let Ok(vm) = unsafe { jni::JavaVM::from_raw(jvm_ptr.cast()) } {
+                        let act_obj = unsafe { jni::objects::JObject::from_raw(activity_ptr as _) };
+                        jni_bridge::read_bytes_from_content_uri(&vm, &act_obj, &uri_str)
+                    } else {
+                        Err("JavaVM unavailable".to_string())
+                    }
+                } else {
+                    Err("JNI pointers unavailable".to_string())
+                }
+            } else {
+                let clean = uri_str.trim_start_matches("file://");
+                std::fs::read(clean).map_err(|e| format!("Failed to read file {}: {:?}", clean, e))
+            };
+
+            match rom_bytes_res {
+                Ok(rom_bytes) => {
+                            let rom_id = identify_rom(&rom_bytes);
+                            let crc32_hex = rom_id.crc32_hex();
+                            let display_name = rom_id.display_name();
                             let filename_hint = uri_str
                                 .split('/')
                                 .last()
@@ -470,18 +646,32 @@ fn run_android_app(app: AndroidApp) {
                                 if let Some(bytes) = active_core.rom_bytes() {
                                     cheat_engine.load_for_rom(bytes, storage.base_dir());
                                 }
+
+                                let thumb_path = storage.get_thumbnail_path(&crc32_hex);
+                                let thumb_str = if thumb_path.exists() {
+                                    Some(thumb_path.to_string_lossy().to_string())
+                                } else {
+                                    None
+                                };
+                                library.add_or_update(&uri_str, &display_name, &crc32_hex, thumb_str);
+                                let _ = library.save_to_disk();
+                                home_screen_state.reload_from_library(&library);
+
+                                active_rom_crc32 = Some(crc32_hex);
+                                active_rom_path = Some(uri_str.clone());
+                                app_mode = AppMode::Emulating;
                                 is_paused = false;
                                 if let Some(ref mut player) = audio_player {
                                     player.resume_audio_stream();
                                 }
+                                info!("Registered and launched '{}' into active emulation", display_name);
                             }
                         }
                         Err(err) => {
                             error!("Failed to stream ROM bytes from Content URI: {}", err);
+                            show_toast(jvm_ptr, activity_ptr, "Failed to read selected ROM file");
                         }
                     }
-                }
-            }
         }
 
         // 2. Process Android NativeActivity lifecycle and window events
@@ -524,10 +714,16 @@ fn run_android_app(app: AndroidApp) {
                                                 px.device(),
                                                 surface_format,
                                             );
+                                            let hs_renderer = HomeScreenRenderer::new(
+                                                px.device(),
+                                                px.queue(),
+                                                surface_format,
+                                            );
                                             shader_pipeline = Some(pipeline);
                                             touch_overlay_renderer = Some(overlay);
+                                            home_screen_renderer = Some(hs_renderer);
                                             pixels = Some(px);
-                                            info!("WGPU surface, ShaderPipeline, and TouchOverlayRenderer successfully initialized!");
+                                            info!("WGPU surface, ShaderPipeline, TouchOverlayRenderer, and HomeScreenRenderer successfully initialized!");
                                         }
                                         Err(err) => {
                                             error!("Failed to create Pixels surface: {:?}", err);
@@ -543,6 +739,7 @@ fn run_android_app(app: AndroidApp) {
                             info!("Android MainEvent: TerminateWindow — Releasing WGPU surface");
                             shader_pipeline = None;
                             touch_overlay_renderer = None;
+                            home_screen_renderer = None;
                             pixels = None;
                         }
 
@@ -580,8 +777,14 @@ fn run_android_app(app: AndroidApp) {
                                                     px.device(),
                                                     surface_format,
                                                 );
+                                                let hs_renderer = HomeScreenRenderer::new(
+                                                    px.device(),
+                                                    px.queue(),
+                                                    surface_format,
+                                                );
                                                 shader_pipeline = Some(pipeline);
                                                 touch_overlay_renderer = Some(overlay);
+                                                home_screen_renderer = Some(hs_renderer);
                                                 pixels = Some(px);
                                                 info!("WGPU surface successfully initialized on WindowResized!");
                                             }
@@ -626,7 +829,19 @@ fn run_android_app(app: AndroidApp) {
                             if let Some(ref mut player) = audio_player {
                                 player.pause_audio_stream();
                             }
-                            flush_core_save(active_core.as_ref(), &storage, &current_game_title);
+                            if app_mode == AppMode::Emulating {
+                                if let Some(ref crc32_hex) = active_rom_crc32 {
+                                    let thumb_path = storage.get_thumbnail_path(crc32_hex);
+                                    let fb = active_core.framebuffer();
+                                    if !fb.is_empty() && core_width > 0 && core_height > 0 {
+                                        if let Ok(_path) = capture_and_save_thumbnail(fb, core_width, core_height, &thumb_path) {
+                                            library.update_thumbnail(crc32_hex, &thumb_path.to_string_lossy());
+                                            let _ = library.save_to_disk();
+                                        }
+                                    }
+                                }
+                                flush_core_save(active_core.as_ref(), &storage, &current_game_title);
+                            }
                             running = false;
                         }
 
@@ -648,6 +863,58 @@ fn run_android_app(app: AndroidApp) {
                 match event {
                     InputEvent::MotionEvent(motion) => {
                         let action = motion.action();
+
+                        if app_mode == AppMode::HomeScreen {
+                            let p = motion.pointer_at_index(0);
+                            let nx = (p.x() / window_width.max(1) as f32).clamp(0.0, 1.0);
+                            let ny = (p.y() / window_height.max(1) as f32).clamp(0.0, 1.0);
+
+                            match action {
+                                MotionAction::Down | MotionAction::PointerDown => {
+                                    home_screen_state.handle_touch_down(nx, ny);
+                                }
+                                MotionAction::Move => {
+                                    home_screen_state.handle_touch_move(nx, ny);
+                                }
+                                MotionAction::Up | MotionAction::PointerUp => {
+                                    if let Some(hs_action) = home_screen_state.handle_touch_up(nx, ny) {
+                                        haptics.trigger_virtual_key();
+                                        match hs_action {
+                                            HomeScreenAction::AddGame => {
+                                                info!("HomeScreen: Add Game selected");
+                                                launch_saf_picker(jvm_ptr, activity_ptr);
+                                            }
+                                            HomeScreenAction::LaunchRom(entry) => {
+                                                info!("HomeScreen: Launching '{}'", entry.display_name);
+                                                launch_rom_entry(
+                                                    &entry,
+                                                    &mut active_core,
+                                                    &storage,
+                                                    &mut current_game_title,
+                                                    &mut core_width,
+                                                    &mut core_height,
+                                                    &audio_producer,
+                                                    &mut audio_player,
+                                                    &mut pixels,
+                                                    &mut cheat_engine,
+                                                    &mut library,
+                                                    &mut home_screen_state,
+                                                    &mut active_rom_crc32,
+                                                    &mut active_rom_path,
+                                                    &mut app_mode,
+                                                    &mut is_paused,
+                                                    jvm_ptr,
+                                                    activity_ptr,
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                            return InputStatus::Handled;
+                        }
+
                         let ptr_count = motion.pointer_count();
 
                         match action {
@@ -769,10 +1036,22 @@ fn run_android_app(app: AndroidApp) {
                                     }
                                 }
                                 TouchAction::MenuSelect(MenuItem::LoadRom) => {
-                                    info!("Menu option 'Load ROM' selected: launching SAF Document Picker...");
-                                    menu_state = MenuState::Hidden;
-                                    touch_overlay.set_menu_state(MenuState::Hidden);
-                                    launch_saf_picker(jvm_ptr, activity_ptr);
+                                    info!("Menu option 'Load ROM' selected: exiting to Home Screen carousel...");
+                                    exit_emulation_to_home_screen(
+                                        &mut app_mode,
+                                        &mut active_core,
+                                        &mut library,
+                                        &mut home_screen_state,
+                                        &storage,
+                                        &active_rom_crc32,
+                                        &current_game_title,
+                                        core_width,
+                                        core_height,
+                                        &mut audio_player,
+                                        &mut is_paused,
+                                        &mut menu_state,
+                                        &mut touch_overlay,
+                                    );
                                 }
                                 TouchAction::MenuSelect(MenuItem::ResetGame) => {
                                     info!("Menu option 'Reset Game' selected: resetting core state...");
@@ -1037,8 +1316,82 @@ fn run_android_app(app: AndroidApp) {
                     }
 
                     InputEvent::KeyEvent(key) => {
-                        let _pressed = key.action() == KeyAction::Down;
-                        // Key mappings (Volume, Back, Controller D-Pad)
+                        let pressed = key.action() == KeyAction::Down;
+                        if pressed {
+                            let code = key.key_code();
+                            if code == Keycode::Back {
+                                if app_mode == AppMode::Emulating {
+                                    if menu_state.is_visible() {
+                                        menu_state = MenuState::Hidden;
+                                        touch_overlay.set_menu_state(MenuState::Hidden);
+                                        is_paused = false;
+                                        if let Some(ref mut player) = audio_player {
+                                            player.resume_audio_stream();
+                                        }
+                                    } else {
+                                        info!("Back pressed during emulation: returning to Home Screen...");
+                                        exit_emulation_to_home_screen(
+                                            &mut app_mode,
+                                            &mut active_core,
+                                            &mut library,
+                                            &mut home_screen_state,
+                                            &storage,
+                                            &active_rom_crc32,
+                                            &current_game_title,
+                                            core_width,
+                                            core_height,
+                                            &mut audio_player,
+                                            &mut is_paused,
+                                            &mut menu_state,
+                                            &mut touch_overlay,
+                                        );
+                                    }
+                                    return InputStatus::Handled;
+                                }
+                            } else if app_mode == AppMode::HomeScreen {
+                                if code == Keycode::DpadLeft {
+                                    home_screen_state.navigate_left();
+                                    haptics.trigger_keyboard_tap();
+                                    return InputStatus::Handled;
+                                } else if code == Keycode::DpadRight {
+                                    home_screen_state.navigate_right();
+                                    haptics.trigger_keyboard_tap();
+                                    return InputStatus::Handled;
+                                } else if code == Keycode::DpadCenter || code == Keycode::Enter || code == Keycode::Space || code == Keycode::ButtonA {
+                                    if let Some(hs_action) = home_screen_state.confirm_selection() {
+                                        haptics.trigger_virtual_key();
+                                        match hs_action {
+                                            HomeScreenAction::AddGame => {
+                                                launch_saf_picker(jvm_ptr, activity_ptr);
+                                            }
+                                            HomeScreenAction::LaunchRom(entry) => {
+                                                launch_rom_entry(
+                                                    &entry,
+                                                    &mut active_core,
+                                                    &storage,
+                                                    &mut current_game_title,
+                                                    &mut core_width,
+                                                    &mut core_height,
+                                                    &audio_producer,
+                                                    &mut audio_player,
+                                                    &mut pixels,
+                                                    &mut cheat_engine,
+                                                    &mut library,
+                                                    &mut home_screen_state,
+                                                    &mut active_rom_crc32,
+                                                    &mut active_rom_path,
+                                                    &mut app_mode,
+                                                    &mut is_paused,
+                                                    jvm_ptr,
+                                                    activity_ptr,
+                                                );
+                                            }
+                                        }
+                                    }
+                                    return InputStatus::Handled;
+                                }
+                            }
+                        }
                         InputStatus::Unhandled
                     }
 
@@ -1048,98 +1401,151 @@ fn run_android_app(app: AndroidApp) {
         }
 
         // 4. Emulation Stepping & Frame Pacing with Thermal Management
-        let surface_ready = pixels.is_some() && shader_pipeline.is_some() && app.native_window().is_some();
+        let surface_ready = pixels.is_some() && app.native_window().is_some();
         if surface_ready {
             let now = Instant::now();
 
-            // Periodic auto-save flush (only while emulation is actively advancing)
-            if !is_paused && now.duration_since(last_save_time) >= auto_save_interval {
-                last_save_time = now;
-                flush_core_save(active_core.as_ref(), &storage, &current_game_title);
-            }
+            match app_mode {
+                AppMode::HomeScreen => {
+                    let target_frame_duration = Duration::from_nanos(16_666_667); // 60 FPS
+                    let elapsed = now.duration_since(last_frame_time);
 
-            // Sub-millisecond fractional frame pacing (59.7275 Hz normal / 119.455 Hz fast-forward / 60 Hz paused menu)
-            let is_accelerated = fast_forward && !is_paused && layout_config.fast_forward() != FastForwardSpeed::Normal;
-            let target_frame_nanos = if is_accelerated { 8_371_353 } else { 16_742_706 };
-            let target_frame_duration = Duration::from_nanos(target_frame_nanos);
-            let elapsed = now.duration_since(last_frame_time);
+                    if elapsed >= target_frame_duration {
+                        last_frame_time = if elapsed > target_frame_duration * 2 {
+                            now
+                        } else {
+                            last_frame_time + target_frame_duration
+                        };
 
-            if elapsed >= target_frame_duration {
-                last_frame_time = if elapsed > target_frame_duration * 2 {
-                    now
-                } else {
-                    last_frame_time + target_frame_duration
-                };
+                        let dt = elapsed.as_secs_f32().min(0.05);
+                        home_screen_state.update(dt);
 
-                // Step core emulation and audio generation ONLY when unpaused
-                if !is_paused {
-                    let steps = if fast_forward { layout_config.fast_forward().steps_per_frame() } else { 1 };
-                    for _ in 0..steps {
-                        active_core.apply_cheats(&mut cheat_engine);
-                        active_core.step_frame();
+                        if let Some(ref mut px) = pixels {
+                            if let Some(ref mut hs_renderer) = home_screen_renderer {
+                                let render_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    px.render_with(|encoder, render_target, context| {
+                                        hs_renderer.render(
+                                            encoder,
+                                            render_target,
+                                            context,
+                                            &home_screen_state,
+                                            window_width,
+                                            window_height,
+                                        );
+                                        Ok(())
+                                    })
+                                }));
 
-                        let audio_samples = active_core.audio_buffer();
-                        if !audio_samples.is_empty() {
-                            if let Some(ref prod) = audio_producer {
-                                prod.push_f32_slice(&audio_samples);
-                            }
-                        }
-                    }
-                }
-
-                // Copy framebuffer and render with WGPU post-processing shader + touch overlay (including modal pause menu)
-                if let Some(ref mut px) = pixels {
-                    let frame = px.frame_mut();
-                    let fb = active_core.framebuffer();
-
-                    if frame.len() == fb.len() {
-                        frame.copy_from_slice(fb);
-                    }
-
-                    if let Some(ref mut pipeline) = shader_pipeline {
-                        let render_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            px.render_with(|encoder, render_target, context| {
-                                pipeline.render(
-                                    encoder,
-                                    render_target,
-                                    context,
-                                    filter_mode,
-                                    core_width,
-                                    core_height,
-                                    window_width,
-                                    window_height,
-                                );
-                                if let Some(ref mut overlay) = touch_overlay_renderer {
-                                    overlay.render(
-                                        encoder,
-                                        render_target,
-                                        context,
-                                        &touch_overlay,
-                                        window_width,
-                                        window_height,
-                                    );
+                                match render_res {
+                                    Ok(Ok(())) => {}
+                                    Ok(Err(err)) => {
+                                        warn!("HomeScreen render error: {:?}", err);
+                                    }
+                                    Err(panic_err) => {
+                                        error!("Panic during HomeScreen render_with: {:?}", panic_err);
+                                    }
                                 }
-                                Ok(())
-                            })
-                        }));
-
-                        match render_res {
-                            Ok(Ok(())) => {}
-                            Ok(Err(err)) => {
-                                warn!("Pixels Android render error: {:?}", err);
                             }
-                            Err(panic_err) => {
-                                error!("Panic during Pixels render_with: {:?}", panic_err);
-                            }
+                        }
+                    } else {
+                        let remaining = target_frame_duration - elapsed;
+                        let sleep_margin = Duration::from_micros(500);
+                        if remaining > sleep_margin {
+                            std::thread::sleep(remaining - sleep_margin);
                         }
                     }
                 }
-            } else {
-                // Thermal sleep loop: Sleep remaining time to prevent thread spinning & thermal throttling
-                let remaining = target_frame_duration - elapsed;
-                let sleep_margin = Duration::from_micros(500);
-                if remaining > sleep_margin {
-                    std::thread::sleep(remaining - sleep_margin);
+                AppMode::Emulating => {
+                    // Periodic auto-save flush (only while emulation is actively advancing)
+                    if !is_paused && now.duration_since(last_save_time) >= auto_save_interval {
+                        last_save_time = now;
+                        flush_core_save(active_core.as_ref(), &storage, &current_game_title);
+                    }
+
+                    // Sub-millisecond fractional frame pacing (59.7275 Hz normal / 119.455 Hz fast-forward / 60 Hz paused menu)
+                    let is_accelerated = fast_forward && !is_paused && layout_config.fast_forward() != FastForwardSpeed::Normal;
+                    let target_frame_nanos = if is_accelerated { 8_371_353 } else { 16_742_706 };
+                    let target_frame_duration = Duration::from_nanos(target_frame_nanos);
+                    let elapsed = now.duration_since(last_frame_time);
+
+                    if elapsed >= target_frame_duration {
+                        last_frame_time = if elapsed > target_frame_duration * 2 {
+                            now
+                        } else {
+                            last_frame_time + target_frame_duration
+                        };
+
+                        // Step core emulation and audio generation ONLY when unpaused
+                        if !is_paused {
+                            let steps = if fast_forward { layout_config.fast_forward().steps_per_frame() } else { 1 };
+                            for _ in 0..steps {
+                                active_core.apply_cheats(&mut cheat_engine);
+                                active_core.step_frame();
+
+                                let audio_samples = active_core.audio_buffer();
+                                if !audio_samples.is_empty() {
+                                    if let Some(ref prod) = audio_producer {
+                                        prod.push_f32_slice(&audio_samples);
+                                    }
+                                }
+                            }
+                        }
+
+                        // Copy framebuffer and render with WGPU post-processing shader + touch overlay (including modal pause menu)
+                        if let Some(ref mut px) = pixels {
+                            let frame = px.frame_mut();
+                            let fb = active_core.framebuffer();
+
+                            if frame.len() == fb.len() {
+                                frame.copy_from_slice(fb);
+                            }
+
+                            if let Some(ref mut pipeline) = shader_pipeline {
+                                let render_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    px.render_with(|encoder, render_target, context| {
+                                        pipeline.render(
+                                            encoder,
+                                            render_target,
+                                            context,
+                                            filter_mode,
+                                            core_width,
+                                            core_height,
+                                            window_width,
+                                            window_height,
+                                        );
+                                        if let Some(ref mut overlay) = touch_overlay_renderer {
+                                            overlay.render(
+                                                encoder,
+                                                render_target,
+                                                context,
+                                                &touch_overlay,
+                                                window_width,
+                                                window_height,
+                                            );
+                                        }
+                                        Ok(())
+                                    })
+                                }));
+
+                                match render_res {
+                                    Ok(Ok(())) => {}
+                                    Ok(Err(err)) => {
+                                        warn!("Pixels Android render error: {:?}", err);
+                                    }
+                                    Err(panic_err) => {
+                                        error!("Panic during Pixels render_with: {:?}", panic_err);
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        // Thermal sleep loop: Sleep remaining time to prevent thread spinning & thermal throttling
+                        let remaining = target_frame_duration - elapsed;
+                        let sleep_margin = Duration::from_micros(500);
+                        if remaining > sleep_margin {
+                            std::thread::sleep(remaining - sleep_margin);
+                        }
+                    }
                 }
             }
         }

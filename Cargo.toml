@@ -35,6 +35,8 @@ parking_lot = "0.12"
 raw-window-handle = "0.6"
 pollster = "0.3"
 crc32fast = "1.4"
+jpeg-encoder = "0.7"
+jpeg-decoder = "0.3"
 
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.5", features = ["native-activity"] }

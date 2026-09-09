@@ -15,6 +15,7 @@ use crate::save::SaveManager;
 pub const ANDROID_SAVES_SUBDIR: &str = "saves";
 pub const ANDROID_STATES_SUBDIR: &str = "states";
 pub const ANDROID_CHEATS_SUBDIR: &str = "cheats";
+pub const ANDROID_THUMBNAILS_SUBDIR: &str = "thumbnails";
 
 /// Request code used when launching the SAF document picker intent.
 pub const SAF_ROM_PICKER_REQUEST_CODE: i32 = 0x524F; // "RO"
@@ -26,6 +27,7 @@ pub struct AndroidStorage {
     saves_dir: PathBuf,
     states_dir: PathBuf,
     cheats_dir: PathBuf,
+    thumbnails_dir: PathBuf,
 }
 
 impl AndroidStorage {
@@ -34,6 +36,7 @@ impl AndroidStorage {
         let saves_dir = base_dir.join(ANDROID_SAVES_SUBDIR);
         let states_dir = base_dir.join(ANDROID_STATES_SUBDIR);
         let cheats_dir = base_dir.join(ANDROID_CHEATS_SUBDIR);
+        let thumbnails_dir = base_dir.join(ANDROID_THUMBNAILS_SUBDIR);
 
         if let Err(err) = fs::create_dir_all(&saves_dir) {
             warn!("Failed to create Android saves directory {:?}: {}", saves_dir, err);
@@ -44,13 +47,17 @@ impl AndroidStorage {
         if let Err(err) = fs::create_dir_all(&cheats_dir) {
             warn!("Failed to create Android cheats directory {:?}: {}", cheats_dir, err);
         }
+        if let Err(err) = fs::create_dir_all(&thumbnails_dir) {
+            warn!("Failed to create Android thumbnails directory {:?}: {}", thumbnails_dir, err);
+        }
 
         info!(
-            "Android Scoped Storage initialized:\n  Base: {}\n  Saves: {}\n  States: {}\n  Cheats: {}",
+            "Android Scoped Storage initialized:\n  Base: {}\n  Saves: {}\n  States: {}\n  Cheats: {}\n  Thumbnails: {}",
             base_dir.display(),
             saves_dir.display(),
             states_dir.display(),
-            cheats_dir.display()
+            cheats_dir.display(),
+            thumbnails_dir.display()
         );
 
         Self {
@@ -58,6 +65,7 @@ impl AndroidStorage {
             saves_dir,
             states_dir,
             cheats_dir,
+            thumbnails_dir,
         }
     }
 
@@ -79,6 +87,16 @@ impl AndroidStorage {
     /// Returns the dedicated cheats directory path.
     pub fn cheats_dir(&self) -> &Path {
         &self.cheats_dir
+    }
+
+    /// Returns the dedicated thumbnails directory path.
+    pub fn thumbnails_dir(&self) -> &Path {
+        &self.thumbnails_dir
+    }
+
+    /// Derives canonical thumbnail snapshot path: `<storage_dir>/thumbnails/<crc32_hex>.jpg`.
+    pub fn get_thumbnail_path(&self, rom_crc32_hex: &str) -> PathBuf {
+        self.thumbnails_dir.join(format!("{}.jpg", rom_crc32_hex))
     }
 
     /// Derives canonical per-game cheat file path: `<storage_dir>/cheats/<crc32_hex>.cht`.

@@ -41,9 +41,33 @@ public class MainActivity extends NativeActivity {
         try {
             super.onCreate(savedInstanceState);
             Log.i(TAG, "MainActivity.onCreate completed successfully");
+            handleIntent(getIntent());
         } catch (Throwable t) {
             Log.e(TAG, "CRITICAL: Exception inside NativeActivity.onCreate: " + t.getMessage(), t);
             throw t;
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        Log.i(TAG, "MainActivity.onNewIntent: " + intent);
+        setIntent(intent);
+        handleIntent(intent);
+    }
+
+    private void handleIntent(Intent intent) {
+        if (intent != null) {
+            Log.i(TAG, "MainActivity handleIntent action=" + intent.getAction() + " data=" + intent.getData());
+            if (intent.getData() != null) {
+                String uriString = intent.getData().toString();
+                Log.i(TAG, "MainActivity handleIntent received URI: " + uriString);
+                nativeOnRomSelected(uriString);
+            } else if (intent.hasExtra("rom")) {
+                String romPath = intent.getStringExtra("rom");
+                Log.i(TAG, "MainActivity handleIntent received extra 'rom': " + romPath);
+                nativeOnRomSelected(romPath);
+            }
         }
     }
 

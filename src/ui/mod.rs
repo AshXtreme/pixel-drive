@@ -1,6 +1,7 @@
 pub mod menu;
 pub mod layout_config;
 pub mod cheats_menu;
+pub mod home_screen;
 pub use menu::{
     FastForwardItem, FastForwardLayout, LayoutEditorLayout, LayoutEditorToolbarItem, MenuAction,
     MenuItem, MenuLayout, MenuState, SaveLoadItem, SaveLoadLayout, SettingsItem, SettingsLayout,
@@ -8,6 +9,7 @@ pub use menu::{
 };
 pub use layout_config::{FastForwardSpeed, TouchLayoutConfig, UiTheme};
 pub use cheats_menu::CheatsMenu;
+pub use home_screen::{HomeScreenAction, HomeScreenRenderer, HomeScreenState, HomeScreenUniforms};
 
 use crate::input::TouchOverlayPreset;
 use crate::render::FilterMode;

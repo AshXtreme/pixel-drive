@@ -34,6 +34,7 @@
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|navigation|uiMode"
             android:screenOrientation="sensorLandscape"
             android:resizeableActivity="false"
+            android:launchMode="singleTask"
             android:exported="true">
 
             <!-- Tell NativeActivity which dynamic library to load (.so) -->
@@ -44,6 +45,16 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- Support opening ROM files directly from File Managers, Browsers, and Intents -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
     </application>

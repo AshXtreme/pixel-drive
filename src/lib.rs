@@ -10,6 +10,7 @@ pub mod error;
 pub mod gba;
 pub mod gbc;
 pub mod input;
+pub mod library;
 pub mod platform;
 pub mod render;
 pub mod rom;
@@ -22,6 +23,7 @@ pub use core::{Button, EmulatorCore};
 pub use error::PixelDriveError;
 pub use gba::GbaCore;
 pub use gbc::GbcCore;
+pub use library::{LibraryManager, RomEntry};
 pub use input::{
     touch_bits, ButtonShape, ChordHitbox, InputManager, InputSource, JoypadState, TouchAction,
     TouchInputManager, TouchOverlay, TouchOverlayPreset, TouchPhase, TouchPoint, TouchRect,
