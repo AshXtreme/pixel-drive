@@ -94,9 +94,35 @@ impl AndroidStorage {
         &self.thumbnails_dir
     }
 
-    /// Derives canonical thumbnail snapshot path: `<storage_dir>/thumbnails/<crc32_hex>.jpg`.
+    /// Derives canonical thumbnail snapshot path: `<storage_dir>/thumbnails/<crc32_hex>.png`.
     pub fn get_thumbnail_path(&self, rom_crc32_hex: &str) -> PathBuf {
-        self.thumbnails_dir.join(format!("{}.jpg", rom_crc32_hex))
+        self.thumbnails_dir.join(format!("{}.png", rom_crc32_hex.trim().to_uppercase()))
+    }
+
+    /// Resolves existing thumbnail snapshot path, preferring `.png` and falling back to legacy `.jpg`.
+    pub fn find_thumbnail_path(&self, rom_crc32_hex: &str) -> PathBuf {
+        let clean = rom_crc32_hex.trim().to_uppercase();
+        let png = self.thumbnails_dir.join(format!("{}.png", clean));
+        if png.exists() {
+            return png;
+        }
+        let jpg = self.thumbnails_dir.join(format!("{}.jpg", clean));
+        if jpg.exists() {
+            return jpg;
+        }
+        png
+    }
+
+    /// Derives slot thumbnail snapshot path: `<storage_dir>/states/<game_title>/slot_<slot>_thumb.png`.
+    pub fn get_slot_thumb_path(&self, game_title: &str, slot: u8) -> PathBuf {
+        let clean = SaveManager::sanitize_stem(game_title);
+        self.states_dir.join(&clean).join(format!("slot_{}_thumb.png", slot))
+    }
+
+    /// Derives auto-save thumbnail snapshot path: `<storage_dir>/states/<rom_crc32_hex>/auto_save_thumb.png`.
+    pub fn get_auto_save_thumb_path(&self, rom_crc32_hex: &str) -> PathBuf {
+        let clean_crc = rom_crc32_hex.trim().to_uppercase();
+        self.states_dir.join(clean_crc).join("auto_save_thumb.png")
     }
 
     /// Derives canonical per-game cheat file path: `<storage_dir>/cheats/<crc32_hex>.cht`.
@@ -787,6 +813,18 @@ mod tests {
         assert_eq!(
             storage.get_slot_1_fallback_state_path("84ee4776"),
             base_dir.join("states/84EE4776/slot_1.state")
+        );
+        assert_eq!(
+            storage.get_thumbnail_path("84ee4776"),
+            base_dir.join("thumbnails/84EE4776.png")
+        );
+        assert_eq!(
+            storage.get_slot_thumb_path("Pokemon FireRed", 2),
+            base_dir.join("states/Pokemon FireRed/slot_2_thumb.png")
+        );
+        assert_eq!(
+            storage.get_auto_save_thumb_path("84ee4776"),
+            base_dir.join("states/84EE4776/auto_save_thumb.png")
         );
     }
 }

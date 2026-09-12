@@ -8,7 +8,7 @@ use std::path::Path;
 use log::{info, warn};
 use pixels::wgpu::{self, util::DeviceExt};
 
-use crate::library::{decode_jpeg, LibraryManager, RomEntry};
+use crate::library::{decode_image, LibraryManager, RomEntry};
 
 /// Embedded WGSL shader source for Home Screen Carousel rendering.
 pub const HOME_SCREEN_SHADER_SOURCE: &str = include_str!("../../shaders/home_screen.wgsl");
@@ -37,8 +37,8 @@ pub struct HomeScreenUniforms {
 
     pub has_thumbnail: u32,
     pub title_len: u32,
-    pub _pad0: u32,
-    pub _pad1: u32,
+    pub thumb_width: u32,
+    pub thumb_height: u32,
 
     pub title_chars_0: [u32; 4],
     pub title_chars_1: [u32; 4],
@@ -58,8 +58,8 @@ impl Default for HomeScreenUniforms {
             is_add_game_selected: 1,
             has_thumbnail: 0,
             title_len: 8,
-            _pad0: 0,
-            _pad1: 0,
+            thumb_width: 0,
+            thumb_height: 0,
             title_chars_0: [65, 68, 68, 32], // "ADD "
             title_chars_1: [71, 65, 77, 69], // "GAME"
             title_chars_2: [0; 4],
@@ -245,6 +245,9 @@ pub struct HomeScreenRenderer {
     active_thumb_texture: Option<wgpu::Texture>,
     active_thumb_view: Option<wgpu::TextureView>,
     active_thumb_crc32: Option<String>,
+    active_thumb_path: Option<String>,
+    active_thumb_mtime: Option<std::time::SystemTime>,
+    active_thumb_dims: (u32, u32),
     bind_group: Option<wgpu::BindGroup>,
     cached_uniforms: Option<HomeScreenUniforms>,
 }
@@ -265,9 +268,9 @@ impl HomeScreenRenderer {
             label: Some("HomeScreen_Sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
+            mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
 
@@ -382,9 +385,23 @@ impl HomeScreenRenderer {
             active_thumb_texture: None,
             active_thumb_view: None,
             active_thumb_crc32: None,
+            active_thumb_path: None,
+            active_thumb_mtime: None,
+            active_thumb_dims: (0, 0),
             bind_group: None,
             cached_uniforms: None,
         }
+    }
+
+    /// Invalidates the cached thumbnail texture forcing a reload on the next render pass.
+    pub fn invalidate_thumbnail(&mut self) {
+        self.active_thumb_crc32 = None;
+        self.active_thumb_path = None;
+        self.active_thumb_mtime = None;
+        self.active_thumb_texture = None;
+        self.active_thumb_view = None;
+        self.active_thumb_dims = (0, 0);
+        self.bind_group = None;
     }
 
     /// Loads thumbnail snapshot texture for the given entry from disk into WGPU.
@@ -394,34 +411,55 @@ impl HomeScreenRenderer {
         queue: &wgpu::Queue,
         entry_opt: Option<&RomEntry>,
     ) {
+        let resolved_path = entry_opt.and_then(|entry| {
+            if let Some(ref p) = entry.thumbnail_path {
+                let path = Path::new(p);
+                let png_alt = path.with_extension("png");
+                if png_alt.exists() {
+                    Some(png_alt.to_string_lossy().to_string())
+                } else if path.exists() {
+                    Some(p.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        });
+
+        let current_mtime = resolved_path
+            .as_ref()
+            .and_then(|p| fs::metadata(p).and_then(|m| m.modified()).ok());
+
         let crc = entry_opt.map(|e| e.crc32.clone());
-        if crc == self.active_thumb_crc32 && self.active_thumb_texture.is_some() {
+
+        if crc == self.active_thumb_crc32
+            && resolved_path == self.active_thumb_path
+            && current_mtime == self.active_thumb_mtime
+            && self.active_thumb_texture.is_some()
+        {
             return;
         }
 
         self.active_thumb_crc32 = crc.clone();
+        self.active_thumb_path = resolved_path.clone();
+        self.active_thumb_mtime = current_mtime;
         self.bind_group = None; // Invalidate cached bind group
 
-        let loaded_rgba = entry_opt.and_then(|entry| {
-            entry.thumbnail_path.as_ref().and_then(|p| {
-                if Path::new(p).exists() {
-                    match fs::read(p) {
-                        Ok(bytes) => match decode_jpeg(&bytes) {
-                            Ok((rgba, w, h)) => Some((rgba, w, h)),
-                            Err(e) => {
-                                warn!("Failed to decode thumbnail {:?}: {}", p, e);
-                                None
-                            }
-                        },
-                        Err(e) => {
-                            warn!("Failed to read thumbnail file {:?}: {}", p, e);
-                            None
-                        }
+        let loaded_rgba = resolved_path.as_ref().and_then(|p| {
+            match fs::read(p) {
+                Ok(bytes) => match decode_image(&bytes) {
+                    Ok((rgba, w, h)) => Some((rgba, w, h)),
+                    Err(e) => {
+                        warn!("Failed to decode thumbnail {:?}: {}", p, e);
+                        None
                     }
-                } else {
+                },
+                Err(e) => {
+                    warn!("Failed to read thumbnail file {:?}: {}", p, e);
                     None
                 }
-            })
+            }
         });
 
         if let Some((rgba, w, h)) = loaded_rgba {
@@ -447,10 +485,12 @@ impl HomeScreenRenderer {
             let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
             self.active_thumb_texture = Some(tex);
             self.active_thumb_view = Some(view);
+            self.active_thumb_dims = (w, h);
             info!("HomeScreenRenderer: loaded thumbnail texture ({}x{}) for CRC {:?}", w, h, crc);
         } else {
             self.active_thumb_texture = None;
             self.active_thumb_view = None;
+            self.active_thumb_dims = (0, 0);
         }
     }
 
@@ -485,8 +525,8 @@ impl HomeScreenRenderer {
             is_add_game_selected: if state.is_add_game_selected() { 1 } else { 0 },
             has_thumbnail: if self.active_thumb_view.is_some() { 1 } else { 0 },
             title_len,
-            _pad0: 0,
-            _pad1: 0,
+            thumb_width: self.active_thumb_dims.0,
+            thumb_height: self.active_thumb_dims.1,
             title_chars_0: chars[0],
             title_chars_1: chars[1],
             title_chars_2: chars[2],

@@ -141,6 +141,14 @@ impl SaveManager {
         state_path
     }
 
+    /// Derives save state thumbnail path from ROM stem: `./saves/{rom_stem}.slot{slot}_thumb.png`.
+    pub fn get_slot_thumb_path_from_stem(rom_stem: &str, slot: usize) -> PathBuf {
+        let clean_stem = Self::sanitize_stem(rom_stem);
+        let mut path = PathBuf::from(SAVES_DIR);
+        path.push(format!("{}.slot{}_thumb.png", clean_stem, slot));
+        path
+    }
+
     /// Writes real-time save state snapshot bytes to disk under `./saves/{rom_stem}.state{slot}` atomically.
     pub fn save_state_to_disk(rom_stem: &str, slot: usize, data: &[u8]) -> std::io::Result<()> {
         if data.is_empty() {

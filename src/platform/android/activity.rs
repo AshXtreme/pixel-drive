@@ -449,12 +449,14 @@ fn exit_emulation_to_home_screen(
     if let Some(ref crc32_hex) = active_rom_crc32 {
         // 1. Thumbnail Synchronization: Capture thumbnail of last drawn frame BEFORE auto-saving state
         let thumb_path = storage.get_thumbnail_path(crc32_hex);
+        let auto_thumb_path = storage.get_auto_save_thumb_path(crc32_hex);
         let fb = active_core.framebuffer();
         if !fb.is_empty() && core_width > 0 && core_height > 0 {
             match capture_and_save_thumbnail(fb, core_width, core_height, &thumb_path) {
                 Ok(_path) => {
                     info!("Successfully captured and saved thumbnail for CRC32 {} at {:?}", crc32_hex, thumb_path);
                     library.update_thumbnail(crc32_hex, &thumb_path.to_string_lossy());
+                    let _ = capture_and_save_thumbnail(fb, core_width, core_height, &auto_thumb_path);
                 }
                 Err(err) => {
                     warn!("Failed to capture thumbnail for CRC32 {}: {:?}", crc32_hex, err);
@@ -1247,6 +1249,13 @@ fn run_android_app(app: AndroidApp) {
                                                 match storage.save_to_slot(&current_game_title, slot, &state_data) {
                                                     Ok(meta) => {
                                                         info!("Successfully saved state to Slot {} ({})", slot, meta.formatted_time);
+                                                        let fb = active_core.framebuffer();
+                                                        if !fb.is_empty() && core_width > 0 && core_height > 0 {
+                                                            let slot_thumb = storage.get_slot_thumb_path(&current_game_title, slot);
+                                                            if let Ok(p) = capture_and_save_thumbnail(fb, core_width, core_height, &slot_thumb) {
+                                                                info!("Saved slot {} snapshot thumbnail: {:?}", slot, p);
+                                                            }
+                                                        }
                                                         let slots = storage.get_slots_info(&current_game_title);
                                                         let mut mask = 0u32;
                                                         for (idx, s) in slots.iter().enumerate() {

@@ -35,8 +35,8 @@ struct HomeScreenUniforms {
 
     has_thumbnail: u32,
     title_len: u32,
-    _pad0: u32,
-    _pad1: u32,
+    thumb_width: u32,
+    thumb_height: u32,
 
     title_chars_0: vec4<u32>,
     title_chars_1: vec4<u32>,
@@ -290,15 +290,19 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     final_color = blend_over(div_col, final_color);
 
     // 3. Carousel Cards Layout
-    let card_w = 0.22 * aspect;
-    let card_h = 0.19;
+    // Isotropic card dimensions preserving a 3:2 aspect ratio (0.285 / 0.190 = 1.50)
+    let card_w = 0.285;
+    let card_h = 0.190;
     let card_half = vec2<f32>(card_w, card_h);
-    let card_r = 0.020;
+    let card_r = 0.016;
     let center_y = 0.46;
+    let card_spacing = card_w * 2.22; // ~0.632 isotropic spacing
+
+    let center_c = vec2<f32>(0.50 * aspect + uniforms.scroll_offset, center_y);
 
     // Previous neighbor card (offset left)
     if (uniforms.selected_index > 0u) {
-        let prev_c = vec2<f32>((0.50 - 0.44) * aspect + uniforms.scroll_offset, center_y);
+        let prev_c = vec2<f32>(center_c.x - card_spacing, center_y);
         let prev_p = p - prev_c;
         let prev_half = card_half * 0.82;
         let prev_d = sd_rounded_box(prev_p, prev_half, card_r * 0.82);
@@ -309,7 +313,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Next neighbor card (offset right)
     if (uniforms.selected_index < uniforms.total_tiles - 1u) {
-        let next_c = vec2<f32>((0.50 + 0.44) * aspect + uniforms.scroll_offset, center_y);
+        let next_c = vec2<f32>(center_c.x + card_spacing, center_y);
         let next_p = p - next_c;
         let next_half = card_half * 0.82;
         let next_d = sd_rounded_box(next_p, next_half, card_r * 0.82);
@@ -319,9 +323,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     // Center Active Card
-    let center_c = vec2<f32>(0.50 * aspect + uniforms.scroll_offset, center_y);
     let card_p = p - center_c;
     let card_d = sd_rounded_box(card_p, card_half, card_r);
+
+    // Soft drop shadow below active card
+    let shadow_p = card_p - vec2<f32>(0.0, 0.014);
+    let shadow_d = sd_rounded_box(shadow_p, card_half + vec2<f32>(0.006, 0.006), card_r + 0.012);
+    let shadow_alpha = 0.50 * smoothstep(0.045, -0.005, shadow_d);
+    final_color = blend_over(vec4<f32>(0.0, 0.0, 0.0, shadow_alpha), final_color);
 
     if (card_d < 0.02) {
         let card_alpha = smoothstep(aa, -aa, card_d);
@@ -356,9 +365,35 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         } else {
             // Game ROM Tile: Render Thumbnail Texture or Placeholder
             if (uniforms.has_thumbnail != 0u) {
-                let tex_uv = (card_p / (card_half * 2.0)) + vec2<f32>(0.5, 0.5);
-                let sampled_col = textureSample(thumb_texture, thumb_sampler, clamp(tex_uv, vec2<f32>(0.0), vec2<f32>(1.0)));
-                interior_col = vec4<f32>(sampled_col.rgb, sampled_col.a * card_alpha);
+                var thumb_ar = 1.5;
+                if (uniforms.thumb_width > 0u && uniforms.thumb_height > 0u) {
+                    thumb_ar = f32(uniforms.thumb_width) / f32(uniforms.thumb_height);
+                }
+
+                let inner_margin = 0.008;
+                let inner_half = card_half - vec2<f32>(inner_margin, inner_margin);
+                let inner_ar = inner_half.x / inner_half.y;
+
+                var fit_half = inner_half;
+                if (thumb_ar >= inner_ar) {
+                    fit_half = vec2<f32>(inner_half.x, inner_half.x / thumb_ar);
+                } else {
+                    fit_half = vec2<f32>(inner_half.y * thumb_ar, inner_half.y);
+                }
+
+                let fit_d = sd_rounded_box(card_p, fit_half, 0.008);
+                if (fit_d <= 0.002) {
+                    let tex_uv = (card_p / (fit_half * 2.0)) + vec2<f32>(0.5, 0.5);
+                    let sampled_col = textureSampleLevel(thumb_texture, thumb_sampler, clamp(tex_uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0);
+                    let thumb_alpha = smoothstep(aa, -aa, fit_d) * card_alpha;
+                    let thumb_col = vec4<f32>(sampled_col.rgb, sampled_col.a * thumb_alpha);
+                    interior_col = blend_over(thumb_col, interior_col);
+
+                    // Crisp 1px inner bezel around thumbnail
+                    let rim_d = abs(fit_d + 0.0010) - 0.0010;
+                    let rim_c = vec4<f32>(0.35, 0.45, 0.55, 0.50 * smoothstep(aa, -aa, rim_d) * card_alpha);
+                    interior_col = blend_over(rim_c, interior_col);
+                }
             } else {
                 // Stylish Dark Placeholder Cartridge
                 let cart_d = draw_cartridge_icon(card_p, 0.052);
