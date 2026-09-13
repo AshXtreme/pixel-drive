@@ -196,8 +196,8 @@ impl HomeScreenState {
                 self.target_offset = 0.0;
                 None
             } else {
-                // Check if user tapped center card area (Y in 0.25..0.70)
-                if norm_y >= 0.25 && norm_y <= 0.70 {
+                // Check if user tapped carousel card or title area (Y in 0.25..0.76)
+                if norm_y >= 0.25 && norm_y <= 0.76 {
                     if norm_x < 0.30 {
                         self.navigate_left();
                         None
@@ -207,9 +207,6 @@ impl HomeScreenState {
                     } else {
                         self.confirm_selection()
                     }
-                } else if norm_y > 0.70 && norm_y < 0.85 {
-                    // Tapped action prompt pill
-                    self.confirm_selection()
                 } else {
                     None
                 }
@@ -226,6 +223,13 @@ impl HomeScreenState {
     /// Formats the active title string for display and shader uniform packing.
     pub fn current_title(&self) -> String {
         if let Some(entry) = self.selected_entry() {
+            // Strip bracketed ROM serials like "[BPRE]" for a clean, premium carousel title
+            if let Some((title_part, _)) = entry.display_name.split_once('[') {
+                let trimmed = title_part.trim();
+                if !trimmed.is_empty() {
+                    return trimmed.to_string();
+                }
+            }
             entry.display_name.clone()
         } else {
             "ADD NEW ROM".to_string()
