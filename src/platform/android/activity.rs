@@ -17,7 +17,7 @@ use raw_window_handle::{
 use crate::audio::AudioProducer;
 use crate::cheats::CheatEngine;
 use crate::core::EmulatorCore;
-use crate::gba::{GbaCore, GbaHeader};
+use crate::gba::{AudioDrivenPacer, GbaCore, GbaHeader, PacingDecision};
 use crate::gbc::GbcCore;
 use crate::input::{InputSource, JoypadState, TouchAction, TouchHapticFeedback, TouchOverlay, TouchPhase};
 use crate::library::{capture_and_save_thumbnail, LibraryManager, RomEntry};
@@ -26,7 +26,7 @@ use crate::platform::android::haptics::AndroidHaptics;
 use crate::platform::android::storage::jni_bridge;
 use crate::platform::android::storage::AndroidStorage;
 use crate::platform::PlatformStorage;
-use crate::render::{FilterMode, ShaderPipeline, TouchOverlayRenderer};
+use crate::render::{FilterMode, ShaderPipeline, TouchOverlayRenderer, WgpuRenderer};
 use crate::rom::identifier::identify_rom;
 use crate::save::SaveManager;
 use crate::ui::layout_config::{FastForwardSpeed, TouchLayoutConfig};
@@ -683,6 +683,7 @@ fn run_android_app(app: AndroidApp) {
     let mut shader_pipeline: Option<ShaderPipeline> = None;
     let mut touch_overlay_renderer: Option<TouchOverlayRenderer> = None;
     let mut home_screen_renderer: Option<HomeScreenRenderer> = None;
+    let mut wgpu_renderer: Option<WgpuRenderer> = None;
     let filter_mode = FilterMode::Nearest;
     let mut window_width: u32 = 0;
     let mut window_height: u32 = 0;
@@ -715,6 +716,7 @@ fn run_android_app(app: AndroidApp) {
 
     // 8. Frame pacing and thermal management
     let mut last_frame_time = Instant::now();
+    let mut audio_pacer = AudioDrivenPacer::new();
     let mut last_save_time = Instant::now();
     let auto_save_interval = Duration::from_secs(5);
 
@@ -849,11 +851,18 @@ fn run_android_app(app: AndroidApp) {
                                                 px.queue(),
                                                 surface_format,
                                             );
+                                            let renderer = WgpuRenderer::new(
+                                                px.device(),
+                                                surface_format,
+                                                core_width,
+                                                core_height,
+                                            );
                                             shader_pipeline = Some(pipeline);
                                             touch_overlay_renderer = Some(overlay);
                                             home_screen_renderer = Some(hs_renderer);
+                                            wgpu_renderer = Some(renderer);
                                             pixels = Some(px);
-                                            info!("WGPU surface, ShaderPipeline, TouchOverlayRenderer, and HomeScreenRenderer successfully initialized!");
+                                            info!("WGPU surface, ShaderPipeline, TouchOverlayRenderer, HomeScreenRenderer, and WgpuRenderer successfully initialized!");
                                         }
                                         Err(err) => {
                                             error!("Failed to create Pixels surface: {:?}", err);
@@ -870,6 +879,7 @@ fn run_android_app(app: AndroidApp) {
                             shader_pipeline = None;
                             touch_overlay_renderer = None;
                             home_screen_renderer = None;
+                            wgpu_renderer = None;
                             pixels = None;
                         }
 
@@ -912,9 +922,16 @@ fn run_android_app(app: AndroidApp) {
                                                     px.queue(),
                                                     surface_format,
                                                 );
+                                                let renderer = WgpuRenderer::new(
+                                                    px.device(),
+                                                    surface_format,
+                                                    core_width,
+                                                    core_height,
+                                                );
                                                 shader_pipeline = Some(pipeline);
                                                 touch_overlay_renderer = Some(overlay);
                                                 home_screen_renderer = Some(hs_renderer);
+                                                wgpu_renderer = Some(renderer);
                                                 pixels = Some(px);
                                                 info!("WGPU surface successfully initialized on WindowResized!");
                                             }
@@ -1621,88 +1638,131 @@ fn run_android_app(app: AndroidApp) {
                         flush_core_save(active_core.as_ref(), &storage, &current_game_title);
                     }
 
-                    // Sub-millisecond fractional frame pacing (59.7275 Hz normal / 119.455 Hz fast-forward / 60 Hz paused menu)
+                    // Audio-driven dynamic frame pacing (eliminates thread::sleep and CPU spinlocks)
                     let is_accelerated = fast_forward && !is_paused && layout_config.fast_forward() != FastForwardSpeed::Normal;
-                    let target_frame_nanos = if is_accelerated { 8_371_353 } else { 16_742_706 };
-                    let target_frame_duration = Duration::from_nanos(target_frame_nanos);
-                    let elapsed = now.duration_since(last_frame_time);
+                    let steps_per_frame = if is_accelerated { layout_config.fast_forward().steps_per_frame() } else { 1 };
+                    audio_pacer.set_fast_forward(is_accelerated, steps_per_frame);
 
-                    if elapsed >= target_frame_duration {
-                        last_frame_time = if elapsed > target_frame_duration * 2 {
-                            now
-                        } else {
-                            last_frame_time + target_frame_duration
-                        };
+                    let pacing_decision = audio_pacer.evaluate_pacing(audio_producer.as_ref(), is_paused);
 
-                        // Step core emulation and audio generation ONLY when unpaused
-                        if !is_paused {
-                            let steps = if fast_forward { layout_config.fast_forward().steps_per_frame() } else { 1 };
-                            for _ in 0..steps {
-                                active_core.apply_cheats(&mut cheat_engine);
-                                active_core.step_frame();
+                    match pacing_decision {
+                        PacingDecision::Step(steps) => {
+                            // Step core emulation and audio generation ONLY when unpaused
+                            if !is_paused {
+                                for _ in 0..steps {
+                                    active_core.apply_cheats(&mut cheat_engine);
+                                    active_core.step_frame();
 
-                                let audio_samples = active_core.audio_buffer();
-                                if !audio_samples.is_empty() {
-                                    if let Some(ref prod) = audio_producer {
-                                        prod.push_f32_slice(&audio_samples);
+                                    let audio_samples = active_core.audio_buffer();
+                                    if !audio_samples.is_empty() {
+                                        if let Some(ref prod) = audio_producer {
+                                            prod.push_f32_slice(&audio_samples);
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        // Copy framebuffer and render with WGPU post-processing shader + touch overlay (including modal pause menu)
-                        if let Some(ref mut px) = pixels {
-                            let frame = px.frame_mut();
+                            // Zero-copy ring-buffered texture upload into inactive back texture
                             let fb = active_core.framebuffer();
-
-                            if frame.len() == fb.len() {
-                                frame.copy_from_slice(fb);
+                            if let Some(ref mut renderer) = wgpu_renderer {
+                                if let Some(ref px) = pixels {
+                                    renderer.ensure_dimensions(px.device(), core_width, core_height);
+                                    renderer.upload_frame(px.queue(), fb);
+                                }
+                            } else if let Some(ref mut px) = pixels {
+                                let frame = px.frame_mut();
+                                if frame.len() == fb.len() {
+                                    frame.copy_from_slice(fb);
+                                }
                             }
 
-                            if let Some(ref mut pipeline) = shader_pipeline {
-                                let render_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    px.render_with(|encoder, render_target, context| {
-                                        pipeline.render(
-                                            encoder,
-                                            render_target,
-                                            context,
-                                            filter_mode,
-                                            core_width,
-                                            core_height,
-                                            window_width,
-                                            window_height,
-                                        );
-                                        if let Some(ref mut overlay) = touch_overlay_renderer {
-                                            overlay.render(
+                            // Render front texture to swapchain render target with zero allocations
+                            if let Some(ref mut px) = pixels {
+                                if let Some(ref mut renderer) = wgpu_renderer {
+                                    let render_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        px.render_with(|encoder, render_target, context| {
+                                            renderer.render(
                                                 encoder,
                                                 render_target,
-                                                context,
-                                                &touch_overlay,
+                                                &context.queue,
+                                                filter_mode,
                                                 window_width,
                                                 window_height,
                                             );
-                                        }
-                                        Ok(())
-                                    })
-                                }));
+                                            if let Some(ref mut overlay) = touch_overlay_renderer {
+                                                overlay.render(
+                                                    encoder,
+                                                    render_target,
+                                                    context,
+                                                    &touch_overlay,
+                                                    window_width,
+                                                    window_height,
+                                                );
+                                            }
+                                            Ok(())
+                                        })
+                                    }));
 
-                                match render_res {
-                                    Ok(Ok(())) => {}
-                                    Ok(Err(err)) => {
-                                        warn!("Pixels Android render error: {:?}", err);
+                                    match render_res {
+                                        Ok(Ok(())) => {}
+                                        Ok(Err(err)) => {
+                                            warn!("Pixels Android render error: {:?}", err);
+                                        }
+                                        Err(panic_err) => {
+                                            error!("Panic during Pixels render_with: {:?}", panic_err);
+                                        }
                                     }
-                                    Err(panic_err) => {
-                                        error!("Panic during Pixels render_with: {:?}", panic_err);
+                                } else if let Some(ref mut pipeline) = shader_pipeline {
+                                    let render_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        px.render_with(|encoder, render_target, context| {
+                                            pipeline.render(
+                                                encoder,
+                                                render_target,
+                                                context,
+                                                filter_mode,
+                                                core_width,
+                                                core_height,
+                                                window_width,
+                                                window_height,
+                                            );
+                                            if let Some(ref mut overlay) = touch_overlay_renderer {
+                                                overlay.render(
+                                                    encoder,
+                                                    render_target,
+                                                    context,
+                                                    &touch_overlay,
+                                                    window_width,
+                                                    window_height,
+                                                );
+                                            }
+                                            Ok(())
+                                        })
+                                    }));
+
+                                    match render_res {
+                                        Ok(Ok(())) => {}
+                                        Ok(Err(err)) => {
+                                            warn!("Pixels Android render error: {:?}", err);
+                                        }
+                                        Err(panic_err) => {
+                                            error!("Panic during Pixels render_with: {:?}", panic_err);
+                                        }
                                     }
                                 }
                             }
                         }
-                    } else {
-                        // Thermal sleep loop: Sleep remaining time to prevent thread spinning & thermal throttling
-                        let remaining = target_frame_duration - elapsed;
-                        let sleep_margin = Duration::from_micros(500);
-                        if remaining > sleep_margin {
-                            std::thread::sleep(remaining - sleep_margin);
+                        PacingDecision::Throttle => {
+                            // Audio ring buffer is full (> 3-4 frames safe threshold);
+                            // Yield CPU smoothly without thread::sleep or busy spinlocks
+                            std::thread::yield_now();
+                        }
+                        PacingDecision::Wait => {
+                            // Sub-frame interval waiting; yield CPU to prevent thermal spinning
+                            std::thread::yield_now();
+                        }
+                        PacingDecision::Paused => {
+                            std::thread::sleep(Duration::from_millis(16));
+                            audio_pacer.reset_timing();
                         }
                     }
                 }

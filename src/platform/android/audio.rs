@@ -109,8 +109,8 @@ impl AndroidAudioPlayer {
                             last_left = s;
                             *sample = s;
                         } else {
-                            // Smooth exponential decay on underrun prevents audio pop
-                            last_left *= 0.92;
+                            // Subtle sample duplication with gentle attenuation preserves waveform continuity without pops
+                            last_left *= 0.995;
                             *sample = last_left;
                         }
                     }
@@ -128,7 +128,8 @@ impl AndroidAudioPlayer {
                             last_left = s;
                             s
                         } else {
-                            last_left *= 0.92;
+                            // Subtle sample duplication on depletion keeps waveform continuous
+                            last_left *= 0.995;
                             last_left
                         };
 
@@ -136,7 +137,7 @@ impl AndroidAudioPlayer {
                             last_right = s;
                             s
                         } else {
-                            last_right *= 0.92;
+                            last_right *= 0.995;
                             last_right
                         };
 

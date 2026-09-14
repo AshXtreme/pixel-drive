@@ -764,17 +764,20 @@ pub fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
 
                         if !is_paused {
-                            let steps = if fast_forward { 2 } else { 1 };
+                            let throttle = !fast_forward && audio_producer.as_ref().map(|a| a.should_throttle()).unwrap_or(false);
+                            if !throttle {
+                                let steps = if fast_forward { 2 } else { 1 };
 
-                            for _ in 0..steps {
-                                active_core.apply_cheats(&mut cheat_engine);
-                                active_core.step_frame();
+                                for _ in 0..steps {
+                                    active_core.apply_cheats(&mut cheat_engine);
+                                    active_core.step_frame();
 
-                                // Forward any core-buffered audio samples to host stream
-                                let audio_samples = active_core.audio_buffer();
-                                if !audio_samples.is_empty() {
-                                    if let Some(ref prod) = audio_producer {
-                                        prod.push_f32_slice(&audio_samples);
+                                    // Forward any core-buffered audio samples to host stream
+                                    let audio_samples = active_core.audio_buffer();
+                                    if !audio_samples.is_empty() {
+                                        if let Some(ref prod) = audio_producer {
+                                            prod.push_f32_slice(&audio_samples);
+                                        }
                                     }
                                 }
                             }

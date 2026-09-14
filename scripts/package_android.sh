@@ -130,7 +130,9 @@ fi
 echo "🔨 Step 1: Compiling native cdylib for arm64-v8a & x86_64 with cargo-ndk..."
 mkdir -p android/app/src/main/jniLibs/arm64-v8a android/app/src/main/jniLibs/x86_64
 
-RUSTFLAGS="-C link-arg=-lc++_shared -C link-arg=-Wl,-z,max-page-size=16384 ${RUSTFLAGS}" cargo ndk -t arm64-v8a -t x86_64 -o android/app/src/main/jniLibs build --lib ${CARGO_FLAGS}
+CARGO_TARGET_AARCH64_LINUX_ANDROID_RUSTFLAGS="-C link-arg=-lc++_shared -C link-arg=-Wl,-z,max-page-size=16384 -C target-feature=+neon" \
+CARGO_TARGET_X86_64_LINUX_ANDROID_RUSTFLAGS="-C link-arg=-lc++_shared -C link-arg=-Wl,-z,max-page-size=16384" \
+cargo ndk -t arm64-v8a -t x86_64 -o android/app/src/main/jniLibs build --lib ${CARGO_FLAGS}
 
 # Bundle libc++_shared.so from Android NDK toolchain
 if [ -n "$ANDROID_NDK_HOME" ]; then

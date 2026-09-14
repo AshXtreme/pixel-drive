@@ -1,11 +1,13 @@
 pub mod overlay;
 pub mod shaders;
 pub mod viewport;
+pub mod wgpu_renderer;
 
 use pixels::wgpu::{self, util::DeviceExt};
 pub use overlay::{TouchOverlayRenderer, TouchOverlayUniforms};
 pub use shaders::FilterMode;
 pub use viewport::{ViewportConfig, ViewportRect};
+pub use wgpu_renderer::{DoubleBufferedTextureStream, WgpuRenderer};
 use shaders::{ShaderUniforms, SHADER_SOURCE};
 
 /// Post-processing Shader Pipeline managing WGSL shader passes, filter modes, and samplers.
@@ -254,5 +256,57 @@ impl ShaderPipeline {
             rpass.set_bind_group(0, bind_group, &[]);
             rpass.draw(0..3, 0..1); // Full-screen triangle
         }
+    }
+
+    /// Returns the pipeline bind group layout for pre-caching bind groups.
+    pub fn bind_group_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.bind_group_layout
+    }
+
+    /// Renders using an externally managed and pre-cached bind group with zero runtime allocations.
+    pub fn render_with_bind_group(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        render_target: &wgpu::TextureView,
+        queue: &wgpu::Queue,
+        bind_group: &wgpu::BindGroup,
+        filter_mode: FilterMode,
+        tex_width: u32,
+        tex_height: u32,
+        out_width: u32,
+        out_height: u32,
+    ) {
+        let uniforms = ShaderUniforms {
+            texture_size: [tex_width as f32, tex_height as f32],
+            output_size: [out_width as f32, out_height as f32],
+            filter_type: filter_mode.as_u32(),
+            intensity: 1.0,
+            _pad: [0.0, 0.0],
+        };
+
+        if self.cached_uniforms != Some(uniforms) {
+            queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+            self.cached_uniforms = Some(uniforms);
+            self.current_filter = filter_mode;
+        }
+
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("PostProcess_RenderPass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: render_target,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        rpass.set_pipeline(&self.render_pipeline);
+        rpass.set_bind_group(0, bind_group, &[]);
+        rpass.draw(0..3, 0..1);
     }
 }

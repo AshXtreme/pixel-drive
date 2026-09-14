@@ -404,6 +404,57 @@ impl AudioProducer {
         }
     }
 
+    /// Returns the number of float samples currently queued in the ring buffer.
+    pub fn buffered_samples(&self) -> usize {
+        if let Ok(inner) = self.inner.lock() {
+            inner.prod.occupied_len()
+        } else {
+            0
+        }
+    }
+
+    /// Returns the number of stereo audio frames currently queued in the ring buffer.
+    pub fn buffered_frames(&self) -> usize {
+        self.buffered_samples() / 2
+    }
+
+    /// Returns the total ring buffer capacity in stereo frames.
+    pub fn capacity_frames(&self) -> usize {
+        if let Ok(inner) = self.inner.lock() {
+            inner.prod.capacity().get() / 2
+        } else {
+            DEFAULT_BUFFER_CAPACITY / 2
+        }
+    }
+
+    /// Returns current fill fraction (0.0 to 1.0) of the audio ring buffer.
+    pub fn fill_ratio(&self) -> f32 {
+        if let Ok(inner) = self.inner.lock() {
+            let cap = inner.prod.capacity().get();
+            if cap > 0 {
+                inner.prod.occupied_len() as f32 / cap as f32
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        }
+    }
+
+    /// Checks if audio queue occupancy exceeds safe threshold (> 3–4 video frames = > 2400-3200 stereo frames at 48kHz).
+    /// Used by core dynamic pacing to throttle execution and eliminate audio latency buildup.
+    pub fn should_throttle(&self) -> bool {
+        // At 48kHz, 1 video frame (16.74ms) = 800 stereo frames.
+        // Safe upper threshold: 3.5 frames = 2800 stereo frames (~70% of 4096 default capacity).
+        self.buffered_frames() >= 2800 || self.fill_ratio() >= 0.70
+    }
+
+    /// Checks if audio queue is near depletion (< 1.5 video frames = < 1200 stereo frames at 48kHz).
+    /// Core should step immediately without delay when this returns true to prevent audio starvation.
+    pub fn needs_refill(&self) -> bool {
+        self.buffered_frames() <= 1200 || self.fill_ratio() <= 0.30
+    }
+
     /// Set the input sample rate from the active emulation core (e.g. 65536.0 Hz for GBA).
     pub fn set_input_sample_rate(&self, in_rate: f64) {
         if let Ok(mut inner) = self.inner.lock() {
@@ -566,8 +617,8 @@ impl AudioPlayer {
                                 last_left = s;
                                 *sample = s;
                             } else {
-                                // Smooth decay on underrun prevents audio pop
-                                last_left *= 0.92;
+                                // Subtle sample duplication with gentle attenuation preserves waveform continuity without pops
+                                last_left *= 0.995;
                                 *sample = last_left;
                             }
                         }
@@ -588,7 +639,8 @@ impl AudioPlayer {
                                 last_left = s;
                                 s
                             } else {
-                                last_left *= 0.92;
+                                // Subtle sample duplication on depletion keeps waveform continuous
+                                last_left *= 0.995;
                                 last_left
                             };
 
@@ -596,7 +648,7 @@ impl AudioPlayer {
                                 last_right = s;
                                 s
                             } else {
-                                last_right *= 0.92;
+                                last_right *= 0.995;
                                 last_right
                             };
 

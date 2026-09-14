@@ -6,6 +6,7 @@ pub mod cpu;
 pub mod dma;
 pub mod keypad;
 pub mod libretro;
+pub mod r#loop;
 pub mod mmu;
 pub mod ppu;
 pub mod thumb;
@@ -13,6 +14,10 @@ pub mod thumb;
 use crate::core::{Button, EmulatorCore};
 pub use cpu::{Cpu, CpuMode};
 pub use libretro::LibretroCore;
+pub use r#loop::{
+    AudioDrivenPacer, DecoupledCoreRunner, PacingDecision, SharedFrameBuffer,
+    AUDIO_SAFE_LOWER_THRESHOLD_FRAMES, AUDIO_SAFE_UPPER_THRESHOLD_FRAMES,
+};
 use log::{info, warn};
 pub use mmu::GbaMemoryBus;
 use std::path::Path;
