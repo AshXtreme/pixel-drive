@@ -5,7 +5,7 @@ echo "🔨 Building PixelDrive in Release mode..."
 cargo build --release
 
 DIST_DIR="dist/PixelDrive"
-rm -rf dist
+rm -rf "$DIST_DIR" "dist/PixelDrive.app" "dist/PixelDrive-Release.tar.gz"
 mkdir -p "$DIST_DIR/cores" "$DIST_DIR/saves"
 
 echo "📦 Copying binary and assets..."
