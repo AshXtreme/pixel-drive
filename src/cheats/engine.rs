@@ -265,24 +265,18 @@ impl CheatEngine {
             if (0x02000000..=0x0203FFFF).contains(&addr) {
                 let offset = (addr - 0x02000000) as usize;
                 match patch.width {
-                    1 => {
-                        if offset < mmu.ewram.len() {
-                            mmu.ewram[offset] = val as u8;
-                        }
+                    1 if offset < mmu.ewram.len() => {
+                        mmu.ewram[offset] = val as u8;
                     }
-                    2 => {
-                        if offset + 1 < mmu.ewram.len() {
-                            mmu.ewram[offset] = val as u8;
-                            mmu.ewram[offset + 1] = (val >> 8) as u8;
-                        }
+                    2 if offset + 1 < mmu.ewram.len() => {
+                        mmu.ewram[offset] = val as u8;
+                        mmu.ewram[offset + 1] = (val >> 8) as u8;
                     }
-                    4 => {
-                        if offset + 3 < mmu.ewram.len() {
-                            mmu.ewram[offset] = val as u8;
-                            mmu.ewram[offset + 1] = (val >> 8) as u8;
-                            mmu.ewram[offset + 2] = (val >> 16) as u8;
-                            mmu.ewram[offset + 3] = (val >> 24) as u8;
-                        }
+                    4 if offset + 3 < mmu.ewram.len() => {
+                        mmu.ewram[offset] = val as u8;
+                        mmu.ewram[offset + 1] = (val >> 8) as u8;
+                        mmu.ewram[offset + 2] = (val >> 16) as u8;
+                        mmu.ewram[offset + 3] = (val >> 24) as u8;
                     }
                     _ => {}
                 }
@@ -291,24 +285,18 @@ impl CheatEngine {
             else if (0x03000000..=0x03007FFF).contains(&addr) {
                 let offset = (addr - 0x03000000) as usize;
                 match patch.width {
-                    1 => {
-                        if offset < mmu.iwram.len() {
-                            mmu.iwram[offset] = val as u8;
-                        }
+                    1 if offset < mmu.iwram.len() => {
+                        mmu.iwram[offset] = val as u8;
                     }
-                    2 => {
-                        if offset + 1 < mmu.iwram.len() {
-                            mmu.iwram[offset] = val as u8;
-                            mmu.iwram[offset + 1] = (val >> 8) as u8;
-                        }
+                    2 if offset + 1 < mmu.iwram.len() => {
+                        mmu.iwram[offset] = val as u8;
+                        mmu.iwram[offset + 1] = (val >> 8) as u8;
                     }
-                    4 => {
-                        if offset + 3 < mmu.iwram.len() {
-                            mmu.iwram[offset] = val as u8;
-                            mmu.iwram[offset + 1] = (val >> 8) as u8;
-                            mmu.iwram[offset + 2] = (val >> 16) as u8;
-                            mmu.iwram[offset + 3] = (val >> 24) as u8;
-                        }
+                    4 if offset + 3 < mmu.iwram.len() => {
+                        mmu.iwram[offset] = val as u8;
+                        mmu.iwram[offset + 1] = (val >> 8) as u8;
+                        mmu.iwram[offset + 2] = (val >> 16) as u8;
+                        mmu.iwram[offset + 3] = (val >> 24) as u8;
                     }
                     _ => {}
                 }

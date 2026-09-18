@@ -197,7 +197,7 @@ impl HomeScreenState {
                 None
             } else {
                 // Check if user tapped carousel card or title area (Y in 0.25..0.76)
-                if norm_y >= 0.25 && norm_y <= 0.76 {
+                if (0.25..=0.76).contains(&norm_y) {
                     if norm_x < 0.30 {
                         self.navigate_left();
                         None

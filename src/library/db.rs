@@ -74,7 +74,7 @@ impl LibraryManager {
             match fs::read_to_string(config_path) {
                 Ok(content) => match serde_json::from_str::<Vec<RomEntry>>(&content) {
                     Ok(mut entries) => {
-                        entries.sort_by(|a, b| b.last_played.cmp(&a.last_played));
+                        entries.sort_by_key(|b| std::cmp::Reverse(b.last_played));
                         info!(
                             "LibraryManager: loaded {} recent ROM entries from {:?}",
                             entries.len(),
@@ -104,11 +104,29 @@ impl LibraryManager {
     /// Persists the active entries list to disk as pretty JSON.
     pub fn save_to_disk(&self) -> io::Result<()> {
         if let Some(parent) = self.config_path.parent() {
-            let _ = fs::create_dir_all(parent);
+            if !parent.exists() {
+                let _ = fs::create_dir_all(parent);
+            }
         }
         let json_data = serde_json::to_string_pretty(&self.entries)
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-        fs::write(&self.config_path, json_data.as_bytes())?;
+
+        let file_name = self.config_path.file_name().and_then(|s| s.to_str()).unwrap_or("library");
+        let temp_name = format!(".{}.tmp.{}", file_name, std::process::id());
+        let temp_path = self.config_path.with_file_name(temp_name);
+
+        fs::write(&temp_path, json_data.as_bytes())?;
+
+        if let Err(err) = fs::rename(&temp_path, &self.config_path) {
+            if self.config_path.exists() {
+                let _ = fs::remove_file(&self.config_path);
+                fs::rename(&temp_path, &self.config_path)?;
+            } else {
+                let _ = fs::remove_file(&temp_path);
+                return Err(err);
+            }
+        }
+
         info!(
             "LibraryManager: successfully saved {} entries to {:?}",
             self.entries.len(),
@@ -150,7 +168,7 @@ impl LibraryManager {
         }
 
         // Sort descending by last_played
-        self.entries.sort_by(|a, b| b.last_played.cmp(&a.last_played));
+        self.entries.sort_by_key(|b| std::cmp::Reverse(b.last_played));
         self.entries.truncate(MAX_RECENT_ROMS);
 
         let _ = self.save_to_disk();

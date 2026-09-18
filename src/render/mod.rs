@@ -264,6 +264,7 @@ impl ShaderPipeline {
     }
 
     /// Renders using an externally managed and pre-cached bind group with zero runtime allocations.
+    #[allow(clippy::too_many_arguments)]
     pub fn render_with_bind_group(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,

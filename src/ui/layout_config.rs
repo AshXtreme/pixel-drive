@@ -369,14 +369,32 @@ impl TouchLayoutConfig {
         }
     }
 
-    /// Serializes and writes configuration to disk JSON file.
+    /// Serializes and writes configuration to disk JSON file atomically.
     pub fn save_to_file(&self, file_path: &Path) -> std::io::Result<()> {
         if let Some(parent) = file_path.parent() {
-            let _ = fs::create_dir_all(parent);
+            if !parent.exists() {
+                let _ = fs::create_dir_all(parent);
+            }
         }
         let json_str = serde_json::to_string_pretty(self)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-        fs::write(file_path, json_str.as_bytes())?;
+
+        let file_name = file_path.file_name().and_then(|s| s.to_str()).unwrap_or("layout");
+        let temp_name = format!(".{}.tmp.{}", file_name, std::process::id());
+        let temp_path = file_path.with_file_name(temp_name);
+
+        fs::write(&temp_path, json_str.as_bytes())?;
+
+        if let Err(err) = fs::rename(&temp_path, file_path) {
+            if file_path.exists() {
+                let _ = fs::remove_file(file_path);
+                fs::rename(&temp_path, file_path)?;
+            } else {
+                let _ = fs::remove_file(&temp_path);
+                return Err(err);
+            }
+        }
+
         info!("Touch layout configuration successfully saved to {:?}", file_path);
         Ok(())
     }

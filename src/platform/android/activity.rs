@@ -50,12 +50,20 @@ pub extern "system" fn Java_com_pixeldrive_emulator_MainActivity_nativeOnRomSele
     _class: jni::objects::JClass,
     uri_jstring: jni::objects::JString,
 ) {
-    if let Ok(uri) = env.get_string(&uri_jstring) {
-        let uri_str: String = uri.into();
-        info!("JNI nativeOnRomSelected received Content URI: {}", uri_str);
-        if let Ok(mut lock) = PENDING_ROM_URI.lock() {
-            *lock = Some(uri_str);
+    if env.exception_check().unwrap_or(false) {
+        let _ = env.exception_clear();
+    }
+    if !uri_jstring.is_null() {
+        if let Ok(uri) = env.get_string(&uri_jstring) {
+            let uri_str: String = uri.into();
+            info!("JNI nativeOnRomSelected received Content URI: {}", uri_str);
+            if let Ok(mut lock) = PENDING_ROM_URI.lock() {
+                *lock = Some(uri_str);
+            }
         }
+    }
+    if env.exception_check().unwrap_or(false) {
+        let _ = env.exception_clear();
     }
 }
 
@@ -191,11 +199,17 @@ fn launch_saf_picker(jvm_ptr: *mut std::ffi::c_void, activity_ptr: *mut std::ffi
     }
     if let Ok(vm) = unsafe { jni::JavaVM::from_raw(jvm_ptr.cast()) } {
         if let Ok(mut env) = vm.attach_current_thread() {
+            if env.exception_check().unwrap_or(false) {
+                let _ = env.exception_clear();
+            }
             let act_obj = unsafe { jni::objects::JObject::from_raw(activity_ptr as _) };
             if let Err(err) = env.call_method(&act_obj, "openRomPicker", "()V", &[]) {
                 warn!("Failed to invoke MainActivity.openRomPicker(): {:?}", err);
             } else {
                 info!("Successfully launched SAF ROM Document Picker");
+            }
+            if env.exception_check().unwrap_or(false) {
+                let _ = env.exception_clear();
             }
         }
     }
@@ -208,6 +222,9 @@ fn show_toast(jvm_ptr: *mut std::ffi::c_void, activity_ptr: *mut std::ffi::c_voi
     }
     if let Ok(vm) = unsafe { jni::JavaVM::from_raw(jvm_ptr.cast()) } {
         if let Ok(mut env) = vm.attach_current_thread() {
+            if env.exception_check().unwrap_or(false) {
+                let _ = env.exception_clear();
+            }
             let act_obj = unsafe { jni::objects::JObject::from_raw(activity_ptr as _) };
             if let Ok(msg_jstring) = env.new_string(message) {
                 if let Err(err) = env.call_method(
@@ -219,11 +236,15 @@ fn show_toast(jvm_ptr: *mut std::ffi::c_void, activity_ptr: *mut std::ffi::c_voi
                     debug!("Failed to call MainActivity.showToast(): {:?}", err);
                 }
             }
+            if env.exception_check().unwrap_or(false) {
+                let _ = env.exception_clear();
+            }
         }
     }
 }
 
 /// Hot-loads raw ROM bytes into the appropriate emulator core (GBA or GBC), restoring battery saves.
+#[allow(clippy::too_many_arguments)]
 fn load_rom_bytes_into_core(
     rom_bytes: &[u8],
     filename_hint: &str,
@@ -424,6 +445,7 @@ fn restore_auto_save_or_fallback(
 /// Exits active emulation back to the Home Screen / Library Carousel,
 /// capturing the last drawn frame as a thumbnail snapshot, saving an auto-save state snapshot,
 /// flushing battery SRAM saves, and reloading the persistent ROM library.
+#[allow(clippy::too_many_arguments)]
 fn exit_emulation_to_home_screen(
     app_mode: &mut AppMode,
     active_core: &mut Box<dyn EmulatorCore>,
@@ -497,6 +519,7 @@ fn exit_emulation_to_home_screen(
 }
 
 /// Boots a selected RomEntry into active emulation, restoring SRAM saves and updating recency.
+#[allow(clippy::too_many_arguments)]
 fn launch_rom_entry(
     entry: &RomEntry,
     active_core: &mut Box<dyn EmulatorCore>,
@@ -537,7 +560,7 @@ fn launch_rom_entry(
         let filename_hint = entry
             .path
             .split('/')
-            .last()
+            .next_back()
             .unwrap_or("game.rom")
             .replace("%20", " ");
 
@@ -747,7 +770,7 @@ fn run_android_app(app: AndroidApp) {
                             let display_name = rom_id.display_name();
                             let filename_hint = uri_str
                                 .split('/')
-                                .last()
+                                .next_back()
                                 .unwrap_or("game.rom")
                                 .replace("%20", " ");
 

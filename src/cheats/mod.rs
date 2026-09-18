@@ -147,7 +147,8 @@ impl GameCheats {
     pub fn add(&mut self, desc: String, code: String, cheat_type: CheatType) -> &CheatEntry {
         let entry = CheatEntry::new(desc, code, true, cheat_type);
         self.entries.push(entry);
-        self.entries.last().unwrap()
+        let idx = self.entries.len() - 1;
+        &self.entries[idx]
     }
 
     /// Removes a cheat entry by its ID.
@@ -255,8 +256,7 @@ impl GameCheats {
                     continue;
                 }
 
-                if key.starts_with("cheat") {
-                    let rest = &key[5..];
+                if let Some(rest) = key.strip_prefix("cheat") {
                     if let Some(underscore_pos) = rest.find('_') {
                         let idx_str = &rest[..underscore_pos];
                         let field = &rest[underscore_pos + 1..];
@@ -272,10 +272,7 @@ impl GameCheats {
                                     codes.insert(idx, normalized);
                                 }
                                 "enable" => {
-                                    let enabled = match unquoted.to_lowercase().as_str() {
-                                        "true" | "1" | "yes" | "on" => true,
-                                        _ => false,
-                                    };
+                                    let enabled = matches!(unquoted.to_lowercase().as_str(), "true" | "1" | "yes" | "on");
                                     enables.insert(idx, enabled);
                                 }
                                 "type" => {
@@ -341,13 +338,27 @@ impl GameCheats {
     pub fn save_to_path<P: AsRef<Path>>(&self, path: P) -> std::io::Result<()> {
         let path_ref = path.as_ref();
         if let Some(parent) = path_ref.parent() {
-            fs::create_dir_all(parent)?;
+            if !parent.exists() {
+                fs::create_dir_all(parent)?;
+            }
         }
 
+        let file_name = path_ref.file_name().and_then(|s| s.to_str()).unwrap_or("cheat");
+        let temp_name = format!(".{}.tmp.{}", file_name, std::process::id());
+        let temp_path = path_ref.with_file_name(temp_name);
+
         let content = self.to_cht_string();
-        let tmp_path = path_ref.with_extension("cht.tmp");
-        fs::write(&tmp_path, &content)?;
-        fs::rename(&tmp_path, path_ref)?;
+        fs::write(&temp_path, content.as_bytes())?;
+
+        if let Err(err) = fs::rename(&temp_path, path_ref) {
+            if path_ref.exists() {
+                let _ = fs::remove_file(path_ref);
+                fs::rename(&temp_path, path_ref)?;
+            } else {
+                let _ = fs::remove_file(&temp_path);
+                return Err(err);
+            }
+        }
         Ok(())
     }
 }

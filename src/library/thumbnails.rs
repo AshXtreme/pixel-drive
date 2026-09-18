@@ -286,13 +286,28 @@ pub fn capture_and_save_thumbnail(
 
     let bytes = if is_jpg {
         encode_jpeg(&scaled_rgba, dst_w, dst_h, DEFAULT_JPEG_QUALITY)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+            .map_err(io::Error::other)?
     } else {
         encode_png(&scaled_rgba, dst_w, dst_h)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+            .map_err(io::Error::other)?
     };
 
-    fs::write(out_path, &bytes)?;
+    let file_name = out_path.file_name().and_then(|s| s.to_str()).unwrap_or("thumb");
+    let temp_name = format!(".{}.tmp.{}", file_name, std::process::id());
+    let temp_path = out_path.with_file_name(temp_name);
+
+    fs::write(&temp_path, &bytes)?;
+
+    if let Err(err) = fs::rename(&temp_path, out_path) {
+        if out_path.exists() {
+            let _ = fs::remove_file(out_path);
+            fs::rename(&temp_path, out_path)?;
+        } else {
+            let _ = fs::remove_file(&temp_path);
+            return Err(err);
+        }
+    }
+
     info!(
         "High-fidelity snapshot thumbnail successfully written: {:?} ({}x{}, {} bytes)",
         out_path,

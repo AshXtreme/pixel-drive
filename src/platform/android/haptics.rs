@@ -21,18 +21,46 @@ pub enum HapticEffect {
     LongPress = 0,    // HapticFeedbackConstants.LONG_PRESS
 }
 
+/// Clears any pending JVM exception on the JNI environment, returning true if an exception was caught.
+#[inline]
+pub fn clear_pending_exception(env: &mut JNIEnv) -> bool {
+    if env.exception_check().unwrap_or(false) {
+        let _ = env.exception_clear();
+        true
+    } else {
+        false
+    }
+}
+
 /// Triggers native Android window haptic feedback via decor view with zero permissions.
 pub fn trigger_haptic(env: &mut JNIEnv, activity_obj: &JObject, effect: HapticEffect) {
-    let window = env
-        .call_method(activity_obj, "getWindow", "()Landroid/view/Window;", &[])
-        .ok()
-        .and_then(|v| v.l().ok());
+    if activity_obj.is_null() {
+        return;
+    }
+    clear_pending_exception(env);
+
+    let window = match env.call_method(activity_obj, "getWindow", "()Landroid/view/Window;", &[]) {
+        Ok(v) => match v.l() {
+            Ok(w) if !w.is_null() => Some(w),
+            _ => None,
+        },
+        Err(_) => {
+            clear_pending_exception(env);
+            None
+        }
+    };
 
     if let Some(w) = window {
-        let decor_view = env
-            .call_method(&w, "getDecorView", "()Landroid/view/View;", &[])
-            .ok()
-            .and_then(|v| v.l().ok());
+        let decor_view = match env.call_method(&w, "getDecorView", "()Landroid/view/View;", &[]) {
+            Ok(v) => match v.l() {
+                Ok(view) if !view.is_null() => Some(view),
+                _ => None,
+            },
+            Err(_) => {
+                clear_pending_exception(env);
+                None
+            }
+        };
 
         if let Some(view) = decor_view {
             let _ = env.call_method(
@@ -41,8 +69,10 @@ pub fn trigger_haptic(env: &mut JNIEnv, activity_obj: &JObject, effect: HapticEf
                 "(I)Z",
                 &[JValue::Int(effect as i32)],
             );
+            clear_pending_exception(env);
         }
     }
+    clear_pending_exception(env);
 }
 
 /// Default tactile click duration in milliseconds (15ms - 25ms light impulse).
@@ -72,9 +102,12 @@ impl AndroidHaptics {
     pub fn new(vm: JavaVM, activity_raw: *mut std::ffi::c_void) -> Self {
         let arc_vm = Arc::new(vm);
         let activity_ref = if !activity_raw.is_null() {
-            if let Ok(env) = arc_vm.attach_current_thread() {
+            if let Ok(mut env) = arc_vm.attach_current_thread() {
+                clear_pending_exception(&mut env);
                 let local_obj = unsafe { JObject::from_raw(activity_raw as _) };
-                env.new_global_ref(local_obj).ok()
+                let gref = env.new_global_ref(local_obj).ok();
+                clear_pending_exception(&mut env);
+                gref
             } else {
                 None
             }
@@ -144,10 +177,15 @@ impl AndroidHaptics {
             }
         };
 
+        clear_pending_exception(&mut env);
+
         // 1. Get Vibrator service: activity.getSystemService("vibrator")
         let service_name = match env.new_string("vibrator") {
             Ok(s) => s,
-            Err(_) => return,
+            Err(_) => {
+                clear_pending_exception(&mut env);
+                return;
+            }
         };
 
         let vibrator_obj = match env.call_method(
@@ -158,9 +196,13 @@ impl AndroidHaptics {
         ) {
             Ok(val) => match val.l() {
                 Ok(obj) if !obj.is_null() => obj,
-                _ => return,
+                _ => {
+                    clear_pending_exception(&mut env);
+                    return;
+                }
             },
             Err(err) => {
+                clear_pending_exception(&mut env);
                 debug!("getSystemService(vibrator) failed: {:?}", err);
                 return;
             }
@@ -170,13 +212,17 @@ impl AndroidHaptics {
         let sdk_int = env
             .get_static_field("android/os/Build$VERSION", "SDK_INT", "I")
             .and_then(|val| val.i())
-            .unwrap_or(26);
+            .unwrap_or_else(|_| {
+                clear_pending_exception(&mut env);
+                26
+            });
 
         if sdk_int >= 26 {
             // API >= 26: Use VibrationEffect.createOneShot(duration, amplitude)
             let effect_class = match env.find_class("android/os/VibrationEffect") {
                 Ok(cls) => cls,
                 Err(_) => {
+                    clear_pending_exception(&mut env);
                     // Fallback to legacy vibrate
                     let _ = env.call_method(
                         &vibrator_obj,
@@ -184,6 +230,7 @@ impl AndroidHaptics {
                         "(J)V",
                         &[JValue::Long(duration_ms as i64)],
                     );
+                    clear_pending_exception(&mut env);
                     return;
                 }
             };
@@ -198,13 +245,16 @@ impl AndroidHaptics {
                 .and_then(|val| val.l());
 
             if let Ok(effect) = effect_obj {
-                let _ = env.call_method(
-                    &vibrator_obj,
-                    "vibrate",
-                    "(Landroid/os/VibrationEffect;)V",
-                    &[JValue::Object(&effect)],
-                );
+                if !effect.is_null() {
+                    let _ = env.call_method(
+                        &vibrator_obj,
+                        "vibrate",
+                        "(Landroid/os/VibrationEffect;)V",
+                        &[JValue::Object(&effect)],
+                    );
+                }
             } else {
+                clear_pending_exception(&mut env);
                 // Fallback to legacy vibrate
                 let _ = env.call_method(
                     &vibrator_obj,
@@ -213,6 +263,7 @@ impl AndroidHaptics {
                     &[JValue::Long(duration_ms as i64)],
                 );
             }
+            clear_pending_exception(&mut env);
         } else {
             // Legacy API < 26: vibrator.vibrate(duration)
             let _ = env.call_method(
@@ -221,6 +272,7 @@ impl AndroidHaptics {
                 "(J)V",
                 &[JValue::Long(duration_ms as i64)],
             );
+            clear_pending_exception(&mut env);
         }
     }
 

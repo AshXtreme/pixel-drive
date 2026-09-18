@@ -291,7 +291,7 @@ impl AndroidStorage {
                     .and_then(|m| m.modified())
                     .and_then(|t| {
                         t.duration_since(std::time::UNIX_EPOCH)
-                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                            .map_err(std::io::Error::other)
                     })
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
@@ -386,8 +386,7 @@ impl PlatformStorage for AndroidStorage {
     fn read_rom_bytes(&self, uri_or_path: &str) -> std::io::Result<Vec<u8>> {
         if uri_or_path.starts_with("content://") {
             // Content URI resolution requires JNI bridge via Activity ContentResolver
-            Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
+            Err(std::io::Error::other(
                 format!("Content URI '{}' requires Activity JNI ContentResolver bridge", uri_or_path),
             ))
         } else {
@@ -407,6 +406,17 @@ pub mod jni_bridge {
     use jni::objects::{JObject, JString, JValue};
     use jni::JavaVM;
 
+    /// Clears any pending JVM exception on the JNI environment, returning true if an exception was cleared.
+    #[inline]
+    pub fn clear_pending_exception(env: &mut jni::JNIEnv) -> bool {
+        if env.exception_check().unwrap_or(false) {
+            let _ = env.exception_clear();
+            true
+        } else {
+            false
+        }
+    }
+
     /// Launches the Android SAF native document picker filtering for `.gb`, `.gbc`, `.gba`, and `.zip`.
     pub fn launch_saf_rom_picker(
         vm: &JavaVM,
@@ -417,10 +427,15 @@ pub mod jni_bridge {
             .attach_current_thread()
             .map_err(|e| format!("Failed to attach JNI thread: {:?}", e))?;
 
+        clear_pending_exception(&mut env);
+
         // 1. Create Intent("android.intent.action.OPEN_DOCUMENT")
         let action_str = env
             .new_string("android.intent.action.OPEN_DOCUMENT")
-            .map_err(|e| format!("JNI string error: {:?}", e))?;
+            .map_err(|e| {
+                clear_pending_exception(&mut env);
+                format!("JNI string error: {:?}", e)
+            })?;
         let intent_class = env
             .find_class("android/content/Intent")
             .map_err(|e| format!("Intent class not found: {:?}", e))?;
@@ -518,79 +533,123 @@ pub mod jni_bridge {
             .attach_current_thread()
             .map_err(|e| format!("Failed to attach JNI thread: {:?}", e))?;
 
+        clear_pending_exception(&mut env);
+
         // 1. Get ContentResolver: activity.getContentResolver()
-        let content_resolver = env
-            .call_method(
-                activity,
-                "getContentResolver",
-                "()Landroid/content/ContentResolver;",
-                &[],
-            )
-            .map_err(|e| format!("Failed to get ContentResolver: {:?}", e))?
-            .l()
-            .map_err(|e| format!("ContentResolver object error: {:?}", e))?;
+        let content_resolver = match env.call_method(
+            activity,
+            "getContentResolver",
+            "()Landroid/content/ContentResolver;",
+            &[],
+        ) {
+            Ok(v) => match v.l() {
+                Ok(obj) if !obj.is_null() => obj,
+                _ => {
+                    clear_pending_exception(&mut env);
+                    return Err("ContentResolver object is null".to_string());
+                }
+            },
+            Err(e) => {
+                clear_pending_exception(&mut env);
+                return Err(format!("Failed to get ContentResolver: {:?}", e));
+            }
+        };
 
         // 2. Parse URI: Uri.parse(uri_str)
-        let j_uri_str = env
-            .new_string(uri_str)
-            .map_err(|e| format!("JNI string error: {:?}", e))?;
-        let uri_class = env
-            .find_class("android/net/Uri")
-            .map_err(|e| format!("Uri class not found: {:?}", e))?;
-        let uri = env
-            .call_static_method(
-                &uri_class,
-                "parse",
-                "(Ljava/lang/String;)Landroid/net/Uri;",
-                &[JValue::Object(&j_uri_str)],
-            )
-            .map_err(|e| format!("Failed to parse Uri: {:?}", e))?
-            .l()
-            .map_err(|e| format!("Uri object error: {:?}", e))?;
+        let j_uri_str = match env.new_string(uri_str) {
+            Ok(s) => s,
+            Err(e) => {
+                clear_pending_exception(&mut env);
+                return Err(format!("JNI string error: {:?}", e));
+            }
+        };
+        let uri_class = match env.find_class("android/net/Uri") {
+            Ok(cls) => cls,
+            Err(e) => {
+                clear_pending_exception(&mut env);
+                return Err(format!("Uri class not found: {:?}", e));
+            }
+        };
+        let uri = match env.call_static_method(
+            &uri_class,
+            "parse",
+            "(Ljava/lang/String;)Landroid/net/Uri;",
+            &[JValue::Object(&j_uri_str)],
+        ) {
+            Ok(v) => match v.l() {
+                Ok(obj) if !obj.is_null() => obj,
+                _ => {
+                    clear_pending_exception(&mut env);
+                    return Err("Parsed Uri object is null".to_string());
+                }
+            },
+            Err(e) => {
+                clear_pending_exception(&mut env);
+                return Err(format!("Failed to parse Uri: {:?}", e));
+            }
+        };
 
         // 3. Open InputStream: contentResolver.openInputStream(uri)
-        let input_stream = env
-            .call_method(
-                &content_resolver,
-                "openInputStream",
-                "(Landroid/net/Uri;)Ljava/io/InputStream;",
-                &[JValue::Object(&uri)],
-            )
-            .map_err(|e| format!("Failed to openInputStream: {:?}", e))?
-            .l()
-            .map_err(|e| format!("InputStream object error: {:?}", e))?;
-
-        if input_stream.is_null() {
-            return Err(format!("ContentResolver returned null InputStream for URI: {}", uri_str));
-        }
+        let input_stream = match env.call_method(
+            &content_resolver,
+            "openInputStream",
+            "(Landroid/net/Uri;)Ljava/io/InputStream;",
+            &[JValue::Object(&uri)],
+        ) {
+            Ok(v) => match v.l() {
+                Ok(obj) if !obj.is_null() => obj,
+                _ => {
+                    clear_pending_exception(&mut env);
+                    return Err(format!("ContentResolver returned null InputStream for URI: {}", uri_str));
+                }
+            },
+            Err(e) => {
+                clear_pending_exception(&mut env);
+                return Err(format!("Failed to openInputStream: {:?}", e));
+            }
+        };
 
         // 4. Read bytes from InputStream in chunks (64KB buffer)
         let chunk_size = 64 * 1024;
-        let byte_array = env
-            .new_byte_array(chunk_size as i32)
-            .map_err(|e| format!("Failed to allocate byte array: {:?}", e))?;
+        let byte_array = match env.new_byte_array(chunk_size as i32) {
+            Ok(arr) => arr,
+            Err(e) => {
+                clear_pending_exception(&mut env);
+                return Err(format!("Failed to allocate byte array: {:?}", e));
+            }
+        };
 
         let mut result = Vec::new();
         let mut temp_buf = vec![0i8; chunk_size];
 
         loop {
-            let bytes_read = env
-                .call_method(
-                    &input_stream,
-                    "read",
-                    "([B)I",
-                    &[JValue::Object(&byte_array)],
-                )
-                .map_err(|e| format!("InputStream.read() failed: {:?}", e))?
-                .i()
-                .map_err(|e| format!("read() return error: {:?}", e))?;
+            let bytes_read = match env.call_method(
+                &input_stream,
+                "read",
+                "([B)I",
+                &[JValue::Object(&byte_array)],
+            ) {
+                Ok(v) => match v.i() {
+                    Ok(read) => read,
+                    Err(e) => {
+                        clear_pending_exception(&mut env);
+                        return Err(format!("read() return error: {:?}", e));
+                    }
+                },
+                Err(e) => {
+                    clear_pending_exception(&mut env);
+                    return Err(format!("InputStream.read() failed: {:?}", e));
+                }
+            };
 
             if bytes_read <= 0 {
                 break;
             }
 
-            env.get_byte_array_region(&byte_array, 0, &mut temp_buf[..bytes_read as usize])
-                .map_err(|e| format!("get_byte_array_region failed: {:?}", e))?;
+            if let Err(e) = env.get_byte_array_region(&byte_array, 0, &mut temp_buf[..bytes_read as usize]) {
+                clear_pending_exception(&mut env);
+                return Err(format!("get_byte_array_region failed: {:?}", e));
+            }
 
             let u8_slice: &[u8] = unsafe {
                 std::slice::from_raw_parts(temp_buf.as_ptr() as *const u8, bytes_read as usize)
@@ -600,6 +659,7 @@ pub mod jni_bridge {
 
         // 5. Close InputStream
         let _ = env.call_method(&input_stream, "close", "()V", &[]);
+        clear_pending_exception(&mut env);
 
         info!("Successfully read {} bytes from Content URI '{}'", result.len(), uri_str);
         Ok(result)
@@ -608,6 +668,7 @@ pub mod jni_bridge {
     /// Resolves the app scoped storage directory targeting `context.getExternalFilesDir(null)` or `context.getFilesDir()`.
     pub fn get_app_storage_dir(vm: &JavaVM, activity: &JObject) -> Option<PathBuf> {
         let mut env = vm.attach_current_thread().ok()?;
+        clear_pending_exception(&mut env);
 
         // Try context.getExternalFilesDir(null)
         let ext_dir_obj = env
@@ -624,6 +685,7 @@ pub mod jni_bridge {
         let target_file_obj = if !ext_dir_obj.is_null() {
             ext_dir_obj
         } else {
+            clear_pending_exception(&mut env);
             // Fallback to internal context.getFilesDir()
             env.call_method(activity, "getFilesDir", "()Ljava/io/File;", &[])
                 .ok()?
@@ -632,6 +694,7 @@ pub mod jni_bridge {
         };
 
         if target_file_obj.is_null() {
+            clear_pending_exception(&mut env);
             return None;
         }
 
@@ -643,6 +706,7 @@ pub mod jni_bridge {
             .into();
 
         let path_rust: String = env.get_string(&abs_path_str).ok()?.into();
+        clear_pending_exception(&mut env);
         Some(PathBuf::from(path_rust))
     }
 
@@ -653,6 +717,7 @@ pub mod jni_bridge {
         uri_str: &str,
     ) -> Option<String> {
         let mut env = vm.attach_current_thread().ok()?;
+        clear_pending_exception(&mut env);
 
         let content_resolver = env
             .call_method(
@@ -704,6 +769,7 @@ pub mod jni_bridge {
             .ok()?;
 
         if cursor.is_null() {
+            clear_pending_exception(&mut env);
             return None;
         }
 
@@ -715,6 +781,7 @@ pub mod jni_bridge {
 
         if !has_first {
             let _ = env.call_method(&cursor, "close", "()V", &[]);
+            clear_pending_exception(&mut env);
             return None;
         }
 
@@ -742,8 +809,8 @@ pub mod jni_bridge {
             .into();
 
         let _ = env.call_method(&cursor, "close", "()V", &[]);
-
         let name_rust: String = env.get_string(&display_name_jstr).ok()?.into();
+        clear_pending_exception(&mut env);
         Some(name_rust)
     }
 }

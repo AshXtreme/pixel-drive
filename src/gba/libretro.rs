@@ -875,12 +875,12 @@ impl LibretroCore {
 
         let c_path = path_hint
             .and_then(|p| std::ffi::CString::new(p).ok())
-            .unwrap_or_else(|| std::ffi::CString::new("game.gba").unwrap());
+            .unwrap_or_else(|| std::ffi::CString::new("game.gba").unwrap_or_default());
 
         let path_ptr = {
             let mut lock = ACTIVE_ROM_PATH.lock().unwrap_or_else(|e| e.into_inner());
             *lock = Some(c_path.clone());
-            lock.as_ref().unwrap().as_ptr()
+            lock.as_ref().map(|s| s.as_ptr()).unwrap_or(std::ptr::null())
         };
         self._game_path_cstr = Some(c_path);
         self._pinned_rom_data = Some(rom_bytes.to_vec());

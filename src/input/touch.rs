@@ -249,7 +249,7 @@ impl ChordHitbox {
         let t = (wx * vx + wy * vy) / len_sq;
 
         // Only activate chord when touch is in the bridge zone between buttons (25% to 75%)
-        if t < 0.20 || t > 0.80 {
+        if !(0.20..=0.80).contains(&t) {
             return false;
         }
 
@@ -1355,8 +1355,7 @@ impl TouchInputManager {
 
     /// Drains any pending non-joypad actions (e.g. fast-forward toggle, menu open).
     pub fn poll_actions(&mut self) -> Vec<TouchAction> {
-        let actions = std::mem::take(&mut self.pending_actions);
-        actions
+        std::mem::take(&mut self.pending_actions)
     }
 
     /// Returns the 32-bit mask of virtual buttons that transitioned from unpressed to pressed
